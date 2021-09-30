@@ -1,0 +1,413 @@
+Index: jellyfin-ffmpeg/libavcodec/cuviddec.c
+===================================================================
+--- jellyfin-ffmpeg.orig/libavcodec/cuviddec.c
++++ jellyfin-ffmpeg/libavcodec/cuviddec.c
+@@ -336,7 +336,8 @@ static int CUDAAPI cuvid_handle_picture_
+ 
+     av_log(avctx, AV_LOG_TRACE, "pfnDecodePicture\n");
+ 
+-    ctx->key_frame[picparams->CurrPicIdx] = picparams->intra_pic_flag;
++    if(picparams->intra_pic_flag)
++        ctx->key_frame[picparams->CurrPicIdx] = picparams->intra_pic_flag;
+ 
+     ctx->internal_error = CHECK_CU(ctx->cvdl->cuvidDecodePicture(ctx->cudecoder, picparams));
+     if (ctx->internal_error < 0)
+@@ -593,6 +594,8 @@ static int cuvid_output_frame(AVCodecCon
+         }
+ 
+         frame->key_frame = ctx->key_frame[parsed_frame.dispinfo.picture_index];
++        ctx->key_frame[parsed_frame.dispinfo.picture_index] = 0;
++
+         frame->width = avctx->width;
+         frame->height = avctx->height;
+         if (avctx->pkt_timebase.num && avctx->pkt_timebase.den)
+@@ -1150,6 +1153,7 @@ static const AVCodecHWConfigInternal *co
+         .flush          = cuvid_flush, \
+         .bsfs           = bsf_name, \
+         .capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
++        .caps_internal  = FF_CODEC_CAP_SETS_FRAME_PROPS, \
+         .pix_fmts       = (const enum AVPixelFormat[]){ AV_PIX_FMT_CUDA, \
+                                                         AV_PIX_FMT_NV12, \
+                                                         AV_PIX_FMT_P010, \
+Index: jellyfin-ffmpeg/libavcodec/decode.c
+===================================================================
+--- jellyfin-ffmpeg.orig/libavcodec/decode.c
++++ jellyfin-ffmpeg/libavcodec/decode.c
+@@ -233,9 +233,11 @@ int ff_decode_get_packet(AVCodecContext
+     if (ret < 0)
+         return ret;
+ 
+-    ret = extract_packet_props(avctx->internal, pkt);
+-    if (ret < 0)
+-        goto finish;
++    if (!(avctx->codec->caps_internal & FF_CODEC_CAP_SETS_FRAME_PROPS)) {
++        ret = extract_packet_props(avctx->internal, pkt);
++        if (ret < 0)
++            goto finish;
++    }
+ 
+     ret = apply_param_change(avctx, pkt);
+     if (ret < 0)
+@@ -502,11 +504,13 @@ FF_ENABLE_DEPRECATION_WARNINGS
+ 
+         pkt->data                += consumed;
+         pkt->size                -= consumed;
+-        avci->last_pkt_props->size -= consumed; // See extract_packet_props() comment.
+         pkt->pts                  = AV_NOPTS_VALUE;
+         pkt->dts                  = AV_NOPTS_VALUE;
+-        avci->last_pkt_props->pts = AV_NOPTS_VALUE;
+-        avci->last_pkt_props->dts = AV_NOPTS_VALUE;
++        if (!(avctx->codec->caps_internal & FF_CODEC_CAP_SETS_FRAME_PROPS)) {
++            avci->last_pkt_props->size -= consumed; // See extract_packet_props() comment.
++            avci->last_pkt_props->pts = AV_NOPTS_VALUE;
++            avci->last_pkt_props->dts = AV_NOPTS_VALUE;
++        }
+     }
+ 
+     if (got_frame)
+@@ -548,6 +552,11 @@ static int decode_receive_frame_internal
+     if (ret == AVERROR_EOF)
+         avci->draining_done = 1;
+ 
++    if (!(avctx->codec->caps_internal & FF_CODEC_CAP_SETS_FRAME_PROPS) &&
++        IS_EMPTY(avci->last_pkt_props) && av_fifo_size(avci->pkt_props) >= sizeof(*avci->last_pkt_props))
++        av_fifo_generic_read(avci->pkt_props,
++                             avci->last_pkt_props, sizeof(*avci->last_pkt_props), NULL);
++
+     if (!ret) {
+         frame->best_effort_timestamp = guess_correct_pts(avctx,
+                                                          frame->pts,
+@@ -1738,39 +1747,37 @@ int ff_decode_frame_props(AVCodecContext
+         { AV_PKT_DATA_S12M_TIMECODE,              AV_FRAME_DATA_S12M_TIMECODE },
+     };
+ 
+-    if (IS_EMPTY(pkt) && av_fifo_size(avctx->internal->pkt_props) >= sizeof(*pkt))
+-        av_fifo_generic_read(avctx->internal->pkt_props,
+-                             pkt, sizeof(*pkt), NULL);
+-
+-    frame->pts = pkt->pts;
++    if (!(avctx->codec->caps_internal & FF_CODEC_CAP_SETS_FRAME_PROPS)) {
++        frame->pts = pkt->pts;
+ #if FF_API_PKT_PTS
+ FF_DISABLE_DEPRECATION_WARNINGS
+-    frame->pkt_pts = pkt->pts;
++        frame->pkt_pts = pkt->pts;
+ FF_ENABLE_DEPRECATION_WARNINGS
+ #endif
+-    frame->pkt_pos      = pkt->pos;
+-    frame->pkt_duration = pkt->duration;
+-    frame->pkt_size     = pkt->size;
+-
+-    for (int i = 0; i < FF_ARRAY_ELEMS(sd); i++) {
+-        buffer_size_t size;
+-        uint8_t *packet_sd = av_packet_get_side_data(pkt, sd[i].packet, &size);
+-        if (packet_sd) {
+-            AVFrameSideData *frame_sd = av_frame_new_side_data(frame,
+-                                                               sd[i].frame,
+-                                                               size);
+-            if (!frame_sd)
+-                return AVERROR(ENOMEM);
++        frame->pkt_pos      = pkt->pos;
++        frame->pkt_duration = pkt->duration;
++        frame->pkt_size     = pkt->size;
++
++        for (int i = 0; i < FF_ARRAY_ELEMS(sd); i++) {
++            buffer_size_t size;
++            uint8_t *packet_sd = av_packet_get_side_data(pkt, sd[i].packet, &size);
++            if (packet_sd) {
++                AVFrameSideData *frame_sd = av_frame_new_side_data(frame,
++                                                                   sd[i].frame,
++                                                                   size);
++                if (!frame_sd)
++                    return AVERROR(ENOMEM);
+ 
+-            memcpy(frame_sd->data, packet_sd, size);
++                memcpy(frame_sd->data, packet_sd, size);
++            }
+         }
+-    }
+-    add_metadata_from_side_data(pkt, frame);
++        add_metadata_from_side_data(pkt, frame);
+ 
+-    if (pkt->flags & AV_PKT_FLAG_DISCARD) {
+-        frame->flags |= AV_FRAME_FLAG_DISCARD;
+-    } else {
+-        frame->flags = (frame->flags & ~AV_FRAME_FLAG_DISCARD);
++        if (pkt->flags & AV_PKT_FLAG_DISCARD) {
++            frame->flags |= AV_FRAME_FLAG_DISCARD;
++        } else {
++            frame->flags = (frame->flags & ~AV_FRAME_FLAG_DISCARD);
++        }
+     }
+     frame->reordered_opaque = avctx->reordered_opaque;
+ 
+Index: jellyfin-ffmpeg/libavcodec/internal.h
+===================================================================
+--- jellyfin-ffmpeg.orig/libavcodec/internal.h
++++ jellyfin-ffmpeg/libavcodec/internal.h
+@@ -78,6 +78,11 @@
+  * Codec handles avctx->thread_count == 0 (auto) internally.
+  */
+ #define FF_CODEC_CAP_AUTO_THREADS           (1 << 7)
++/**
++ * Codec handles output frame properties internally instead of letting the
++ * internal logic derive them from AVCodecInternal.last_pkt_props.
++ */
++#define FF_CODEC_CAP_SETS_FRAME_PROPS       (1 << 8)
+ 
+ /**
+  * AVCodec.codec_tags termination value
+Index: jellyfin-ffmpeg/libavcodec/nvenc.c
+===================================================================
+--- jellyfin-ffmpeg.orig/libavcodec/nvenc.c
++++ jellyfin-ffmpeg/libavcodec/nvenc.c
+@@ -144,10 +144,80 @@ static int nvenc_print_error(AVCodecCont
+     return ret;
+ }
+ 
++typedef struct GUIDTuple {
++    const GUID guid;
++    int flags;
++} GUIDTuple;
++
++#define PRESET_ALIAS(alias, name, ...) \
++    [PRESET_ ## alias] = { NV_ENC_PRESET_ ## name ## _GUID, __VA_ARGS__ }
++
++#define PRESET(name, ...) PRESET_ALIAS(name, name, __VA_ARGS__)
++
++static void nvenc_map_preset(NvencContext *ctx)
++{
++    GUIDTuple presets[] = {
++#ifdef NVENC_HAVE_NEW_PRESETS
++        PRESET(P1),
++        PRESET(P2),
++        PRESET(P3),
++        PRESET(P4),
++        PRESET(P5),
++        PRESET(P6),
++        PRESET(P7),
++        PRESET_ALIAS(SLOW,   P7, NVENC_TWO_PASSES),
++        PRESET_ALIAS(MEDIUM, P4, NVENC_ONE_PASS),
++        PRESET_ALIAS(FAST,   P1, NVENC_ONE_PASS),
++        // Compat aliases
++        PRESET_ALIAS(DEFAULT,             P4, NVENC_DEPRECATED_PRESET),
++        PRESET_ALIAS(HP,                  P1, NVENC_DEPRECATED_PRESET),
++        PRESET_ALIAS(HQ,                  P7, NVENC_DEPRECATED_PRESET),
++        PRESET_ALIAS(BD,                  P5, NVENC_DEPRECATED_PRESET),
++        PRESET_ALIAS(LOW_LATENCY_DEFAULT, P4, NVENC_DEPRECATED_PRESET | NVENC_LOWLATENCY),
++        PRESET_ALIAS(LOW_LATENCY_HP,      P1, NVENC_DEPRECATED_PRESET | NVENC_LOWLATENCY),
++        PRESET_ALIAS(LOW_LATENCY_HQ,      P7, NVENC_DEPRECATED_PRESET | NVENC_LOWLATENCY),
++        PRESET_ALIAS(LOSSLESS_DEFAULT,    P4, NVENC_DEPRECATED_PRESET | NVENC_LOSSLESS),
++        PRESET_ALIAS(LOSSLESS_HP,         P1, NVENC_DEPRECATED_PRESET | NVENC_LOSSLESS),
++#else
++        PRESET(DEFAULT),
++        PRESET(HP),
++        PRESET(HQ),
++        PRESET(BD),
++        PRESET_ALIAS(SLOW,   HQ,    NVENC_TWO_PASSES),
++        PRESET_ALIAS(MEDIUM, HQ,    NVENC_ONE_PASS),
++        PRESET_ALIAS(FAST,   HP,    NVENC_ONE_PASS),
++        PRESET(LOW_LATENCY_DEFAULT, NVENC_LOWLATENCY),
++        PRESET(LOW_LATENCY_HP,      NVENC_LOWLATENCY),
++        PRESET(LOW_LATENCY_HQ,      NVENC_LOWLATENCY),
++        PRESET(LOSSLESS_DEFAULT,    NVENC_LOSSLESS),
++        PRESET(LOSSLESS_HP,         NVENC_LOSSLESS),
++#endif
++    };
++
++    GUIDTuple *t = &presets[ctx->preset];
++
++    ctx->init_encode_params.presetGUID = t->guid;
++    ctx->flags = t->flags;
++
++#ifdef NVENC_HAVE_NEW_PRESETS
++    if (ctx->tuning_info == NV_ENC_TUNING_INFO_LOSSLESS)
++        ctx->flags |= NVENC_LOSSLESS;
++#endif
++}
++
++#undef PRESET
++#undef PRESET_ALIAS
++
+ static void nvenc_print_driver_requirement(AVCodecContext *avctx, int level)
+ {
+-#if NVENCAPI_CHECK_VERSION(11, 1)
++#if NVENCAPI_CHECK_VERSION(11, 2)
+     const char *minver = "(unknown)";
++#elif NVENCAPI_CHECK_VERSION(11, 1)
++# if defined(_WIN32) || defined(__CYGWIN__)
++    const char *minver = "471.41";
++# else
++    const char *minver = "470.57.02";
++# endif
+ #elif NVENCAPI_CHECK_VERSION(11, 0)
+ # if defined(_WIN32) || defined(__CYGWIN__)
+     const char *minver = "456.71";
+@@ -358,7 +428,7 @@ static int nvenc_check_capabilities(AVCo
+     }
+ 
+     ret = nvenc_check_cap(avctx, NV_ENC_CAPS_SUPPORT_LOSSLESS_ENCODE);
+-    if (ctx->preset >= PRESET_LOSSLESS_DEFAULT && ret <= 0) {
++    if (ctx->flags & NVENC_LOSSLESS && ret <= 0) {
+         av_log(avctx, AV_LOG_WARNING, "Lossless encoding not supported\n");
+         return AVERROR(ENOSYS);
+     }
+@@ -548,6 +618,11 @@ static av_cold int nvenc_setup_device(AV
+         return AVERROR_BUG;
+     }
+ 
++    nvenc_map_preset(ctx);
++
++    if (ctx->flags & NVENC_DEPRECATED_PRESET)
++        av_log(avctx, AV_LOG_WARNING, "The selected preset is deprecated. Use p1 to p7 + -tune or fast/medium/slow.\n");
++
+     if (avctx->pix_fmt == AV_PIX_FMT_CUDA || avctx->pix_fmt == AV_PIX_FMT_D3D11 || avctx->hw_frames_ctx || avctx->hw_device_ctx) {
+         AVHWFramesContext   *frames_ctx;
+         AVHWDeviceContext   *hwdev_ctx;
+@@ -638,65 +713,6 @@ static av_cold int nvenc_setup_device(AV
+     return 0;
+ }
+ 
+-typedef struct GUIDTuple {
+-    const GUID guid;
+-    int flags;
+-} GUIDTuple;
+-
+-#define PRESET_ALIAS(alias, name, ...) \
+-    [PRESET_ ## alias] = { NV_ENC_PRESET_ ## name ## _GUID, __VA_ARGS__ }
+-
+-#define PRESET(name, ...) PRESET_ALIAS(name, name, __VA_ARGS__)
+-
+-static void nvenc_map_preset(NvencContext *ctx)
+-{
+-    GUIDTuple presets[] = {
+-#ifdef NVENC_HAVE_NEW_PRESETS
+-        PRESET(P1),
+-        PRESET(P2),
+-        PRESET(P3),
+-        PRESET(P4),
+-        PRESET(P5),
+-        PRESET(P6),
+-        PRESET(P7),
+-        PRESET_ALIAS(SLOW,   P7, NVENC_TWO_PASSES),
+-        PRESET_ALIAS(MEDIUM, P4, NVENC_ONE_PASS),
+-        PRESET_ALIAS(FAST,   P1, NVENC_ONE_PASS),
+-        // Compat aliases
+-        PRESET_ALIAS(DEFAULT,             P4, NVENC_DEPRECATED_PRESET),
+-        PRESET_ALIAS(HP,                  P1, NVENC_DEPRECATED_PRESET),
+-        PRESET_ALIAS(HQ,                  P7, NVENC_DEPRECATED_PRESET),
+-        PRESET_ALIAS(BD,                  P5, NVENC_DEPRECATED_PRESET),
+-        PRESET_ALIAS(LOW_LATENCY_DEFAULT, P4, NVENC_DEPRECATED_PRESET | NVENC_LOWLATENCY),
+-        PRESET_ALIAS(LOW_LATENCY_HP,      P1, NVENC_DEPRECATED_PRESET | NVENC_LOWLATENCY),
+-        PRESET_ALIAS(LOW_LATENCY_HQ,      P7, NVENC_DEPRECATED_PRESET | NVENC_LOWLATENCY),
+-        PRESET_ALIAS(LOSSLESS_DEFAULT,    P4, NVENC_DEPRECATED_PRESET | NVENC_LOSSLESS),
+-        PRESET_ALIAS(LOSSLESS_HP,         P1, NVENC_DEPRECATED_PRESET | NVENC_LOSSLESS),
+-#else
+-        PRESET(DEFAULT),
+-        PRESET(HP),
+-        PRESET(HQ),
+-        PRESET(BD),
+-        PRESET_ALIAS(SLOW,   HQ,    NVENC_TWO_PASSES),
+-        PRESET_ALIAS(MEDIUM, HQ,    NVENC_ONE_PASS),
+-        PRESET_ALIAS(FAST,   HP,    NVENC_ONE_PASS),
+-        PRESET(LOW_LATENCY_DEFAULT, NVENC_LOWLATENCY),
+-        PRESET(LOW_LATENCY_HP,      NVENC_LOWLATENCY),
+-        PRESET(LOW_LATENCY_HQ,      NVENC_LOWLATENCY),
+-        PRESET(LOSSLESS_DEFAULT,    NVENC_LOSSLESS),
+-        PRESET(LOSSLESS_HP,         NVENC_LOSSLESS),
+-#endif
+-    };
+-
+-    GUIDTuple *t = &presets[ctx->preset];
+-
+-    ctx->init_encode_params.presetGUID = t->guid;
+-    ctx->flags = t->flags;
+-}
+-
+-#undef PRESET
+-#undef PRESET_ALIAS
+-
+ static av_cold void set_constqp(AVCodecContext *avctx)
+ {
+     NvencContext *ctx = avctx->priv_data;
+@@ -1043,7 +1059,7 @@ static av_cold int nvenc_setup_h264_conf
+         || vui->videoFullRangeFlag != 0);
+ 
+     h264->sliceMode = 3;
+-    h264->sliceModeData = 1;
++    h264->sliceModeData = avctx->slices > 0 ? avctx->slices : 1;
+ 
+     h264->disableSPSPPS = (avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) ? 1 : 0;
+     h264->repeatSPSPPS  = (avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) ? 0 : 1;
+@@ -1140,7 +1156,7 @@ static av_cold int nvenc_setup_hevc_conf
+         || vui->videoFullRangeFlag != 0);
+ 
+     hevc->sliceMode = 3;
+-    hevc->sliceModeData = 1;
++    hevc->sliceModeData = avctx->slices > 0 ? avctx->slices : 1;
+ 
+     hevc->disableSPSPPS = (avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) ? 1 : 0;
+     hevc->repeatSPSPPS  = (avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) ? 0 : 1;
+@@ -1254,18 +1270,15 @@ static av_cold int nvenc_setup_encoder(A
+ 
+     ctx->init_encode_params.encodeConfig = &ctx->encode_config;
+ 
+-    nvenc_map_preset(ctx);
+-
+-    if (ctx->flags & NVENC_DEPRECATED_PRESET)
+-        av_log(avctx, AV_LOG_WARNING, "The selected preset is deprecated. Use p1 to p7 + -tune or fast/medium/slow.\n");
+-
+     preset_config.version = NV_ENC_PRESET_CONFIG_VER;
+     preset_config.presetCfg.version = NV_ENC_CONFIG_VER;
+ 
+ #ifdef NVENC_HAVE_NEW_PRESETS
+     ctx->init_encode_params.tuningInfo = ctx->tuning_info;
+ 
+-    if (ctx->flags & NVENC_LOWLATENCY)
++    if (ctx->flags & NVENC_LOSSLESS)
++        ctx->init_encode_params.tuningInfo = NV_ENC_TUNING_INFO_LOSSLESS;
++    else if (ctx->flags & NVENC_LOWLATENCY)
+         ctx->init_encode_params.tuningInfo = NV_ENC_TUNING_INFO_LOW_LATENCY;
+ 
+     nv_status = p_nvenc->nvEncGetEncodePresetConfigEx(ctx->nvencoder,
+@@ -1307,9 +1320,6 @@ static av_cold int nvenc_setup_encoder(A
+      * */
+     if (ctx->rc_lookahead == 0 && ctx->encode_config.rcParams.enableLookahead)
+         ctx->rc_lookahead = ctx->encode_config.rcParams.lookaheadDepth;
+-
+-    if (ctx->init_encode_params.tuningInfo == NV_ENC_TUNING_INFO_LOSSLESS)
+-        ctx->flags |= NVENC_LOSSLESS;
+ #endif
+ 
+     if (ctx->weighted_pred == 1)
+Index: jellyfin-ffmpeg/libavcodec/nvenc.h
+===================================================================
+--- jellyfin-ffmpeg.orig/libavcodec/nvenc.h
++++ jellyfin-ffmpeg/libavcodec/nvenc.h
+@@ -103,7 +103,7 @@ enum {
+     PRESET_LOW_LATENCY_DEFAULT ,
+     PRESET_LOW_LATENCY_HQ ,
+     PRESET_LOW_LATENCY_HP,
+-    PRESET_LOSSLESS_DEFAULT, // lossless presets must be the last ones
++    PRESET_LOSSLESS_DEFAULT,
+     PRESET_LOSSLESS_HP,
+ #ifdef NVENC_HAVE_NEW_PRESETS
+     PRESET_P1,
+Index: jellyfin-ffmpeg/libavfilter/vf_yadif_cuda.c
+===================================================================
+--- jellyfin-ffmpeg.orig/libavfilter/vf_yadif_cuda.c
++++ jellyfin-ffmpeg/libavfilter/vf_yadif_cuda.c
+@@ -297,10 +297,9 @@ static int config_output(AVFilterLink *l
+         goto exit;
+     }
+ 
+-    link->time_base.num = ctx->inputs[0]->time_base.num;
+-    link->time_base.den = ctx->inputs[0]->time_base.den * 2;
+-    link->w             = ctx->inputs[0]->w;
+-    link->h             = ctx->inputs[0]->h;
++    link->time_base = av_mul_q(ctx->inputs[0]->time_base, (AVRational){1, 2});
++    link->w         = ctx->inputs[0]->w;
++    link->h         = ctx->inputs[0]->h;
+ 
+     if(y->mode & 1)
+         link->frame_rate = av_mul_q(ctx->inputs[0]->frame_rate,
