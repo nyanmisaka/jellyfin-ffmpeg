@@ -11,3 +11,4 @@
 0011-add-fixes-for-ffmpeg_hw.patch
 0012-add-d3d11-support-for-QSV.patch
 0013-add-hw_device_ctx-support-for-qsvdec.patch
+0014-add-qsv-d3d11-opencl-interop.patch
