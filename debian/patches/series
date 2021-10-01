@@ -1,3 +1,4 @@
 0001-add-fixes-for-segement-muxer.patch
 0002-add-fixes-for-hlsenc-error-introduced-in-4.4.patch
 0003-add-cuda-pixfmt-converter-impl.patch
+0004-add-cuda-tonemap-impl.patch
