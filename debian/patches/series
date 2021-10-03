@@ -5,3 +5,4 @@
 0005-add-amf-refactor-and-hevc-10-bit-encoding.patch
 0006-add-opencl-scaler-and-pixfmt-converter-impl.patch
 0007-add-bt2390-eetf-and-code-refactor-to-opencl-tonemap.patch
+0008-add-pgs-subtitle-support-and-code-refactor-to-opencl.patch
