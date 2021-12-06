@@ -52,6 +52,8 @@
 
 #define QSV_MAX_ENC_PAYLOAD 2       // # of mfxEncodeCtrl payloads supported
 
+#define QSV_PAYLOAD_SIZE 1024
+
 #define QSV_VERSION_ATLEAST(MAJOR, MINOR)   \
     (MFX_VERSION_MAJOR > (MAJOR) ||         \
      MFX_VERSION_MAJOR == (MAJOR) && MFX_VERSION_MINOR >= (MINOR))
@@ -62,7 +64,7 @@
 
 typedef struct QSVMid {
     AVBufferRef *hw_frames_ref;
-    mfxHDL handle;
+    mfxHDLPair *handle_pair;
 
     AVFrame *locked_frame;
     AVFrame *hw_frame;

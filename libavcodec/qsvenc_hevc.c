@@ -260,9 +260,9 @@ static const AVClass class = {
 static const AVCodecDefault qsv_enc_defaults[] = {
     { "b",         "1M"    },
     { "refs",      "0"     },
-    // same as the x264 default
+    // same as the x265 default
     { "g",         "248"   },
-    { "bf",        "8"     },
+    { "bf",        "4"     },
     { "qmin",      "-1"    },
     { "qmax",      "-1"    },
     { "trellis",   "-1"    },

@@ -60,6 +60,7 @@ static int opencl_filter_set_device(AVFilterContext *avctx,
 int ff_opencl_filter_config_input(AVFilterLink *inlink)
 {
     AVFilterContext   *avctx = inlink->dst;
+    AVFilterLink    *outlink = avctx->outputs[0];
     OpenCLFilterContext *ctx = avctx->priv;
     AVHWFramesContext *input_frames;
     int err;
@@ -90,12 +91,15 @@ int ff_opencl_filter_config_input(AVFilterLink *inlink)
     if (!ctx->output_height)
         ctx->output_height = inlink->h;
 
+    outlink->fixed_pool_size = inlink->fixed_pool_size;
+
     return 0;
 }
 
 int ff_opencl_filter_config_output(AVFilterLink *outlink)
 {
     AVFilterContext   *avctx = outlink->src;
+    AVFilterLink     *inlink = avctx->inputs[0];
     OpenCLFilterContext *ctx = avctx->priv;
     AVBufferRef       *output_frames_ref = NULL;
     AVHWFramesContext *output_frames;
@@ -137,6 +141,7 @@ int ff_opencl_filter_config_output(AVFilterLink *outlink)
     outlink->hw_frames_ctx = output_frames_ref;
     outlink->w = ctx->output_width;
     outlink->h = ctx->output_height;
+    outlink->fixed_pool_size = inlink->fixed_pool_size;
 
     return 0;
 fail:

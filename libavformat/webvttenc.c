@@ -49,8 +49,8 @@ static int webvtt_write_header(AVFormatContext *ctx)
     AVCodecParameters *par = ctx->streams[0]->codecpar;
     AVIOContext *pb = ctx->pb;
 
-    if (ctx->nb_streams != 1 || par->codec_id != AV_CODEC_ID_WEBVTT) {
-        av_log(ctx, AV_LOG_ERROR, "Exactly one WebVTT stream is needed.\n");
+    if (par->codec_id != AV_CODEC_ID_WEBVTT) {
+        av_log(ctx, AV_LOG_ERROR, "First stream must be WebVTT.\n");
         return AVERROR(EINVAL);
     }
 
@@ -66,6 +66,9 @@ static int webvtt_write_packet(AVFormatContext *ctx, AVPacket *pkt)
     AVIOContext  *pb = ctx->pb;
     buffer_size_t id_size, settings_size;
     uint8_t *id, *settings;
+
+    if (pkt->stream_index != 0)
+        return 0;
 
     avio_printf(pb, "\n");
 

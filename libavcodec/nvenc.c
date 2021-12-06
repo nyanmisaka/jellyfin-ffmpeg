@@ -210,8 +210,14 @@ static void nvenc_map_preset(NvencContext *ctx)
 
 static void nvenc_print_driver_requirement(AVCodecContext *avctx, int level)
 {
-#if NVENCAPI_CHECK_VERSION(11, 1)
+#if NVENCAPI_CHECK_VERSION(11, 2)
     const char *minver = "(unknown)";
+#elif NVENCAPI_CHECK_VERSION(11, 1)
+# if defined(_WIN32) || defined(__CYGWIN__)
+    const char *minver = "471.41";
+# else
+    const char *minver = "470.57.02";
+# endif
 #elif NVENCAPI_CHECK_VERSION(11, 0)
 # if defined(_WIN32) || defined(__CYGWIN__)
     const char *minver = "456.71";
@@ -1053,7 +1059,7 @@ static av_cold int nvenc_setup_h264_config(AVCodecContext *avctx)
         || vui->videoFullRangeFlag != 0);
 
     h264->sliceMode = 3;
-    h264->sliceModeData = 1;
+    h264->sliceModeData = avctx->slices > 0 ? avctx->slices : 1;
 
     h264->disableSPSPPS = (avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) ? 1 : 0;
     h264->repeatSPSPPS  = (avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) ? 0 : 1;
@@ -1150,7 +1156,7 @@ static av_cold int nvenc_setup_hevc_config(AVCodecContext *avctx)
         || vui->videoFullRangeFlag != 0);
 
     hevc->sliceMode = 3;
-    hevc->sliceModeData = 1;
+    hevc->sliceModeData = avctx->slices > 0 ? avctx->slices : 1;
 
     hevc->disableSPSPPS = (avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) ? 1 : 0;
     hevc->repeatSPSPPS  = (avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) ? 0 : 1;

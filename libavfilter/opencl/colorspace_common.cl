@@ -17,7 +17,24 @@
  */
 
 #define ST2084_MAX_LUMINANCE 10000.0f
-#define REFERENCE_WHITE 100.0f
+
+#if (defined(TONE_FUNC) && TONE_FUNC == bt2390)
+    #define REF_WHITE 203.0f
+#else
+    #define REF_WHITE 100.0f
+#endif
+
+#define ST2084_M1 0.1593017578125f
+#define ST2084_M2 78.84375f
+#define ST2084_C1 0.8359375f
+#define ST2084_C2 18.8515625f
+#define ST2084_C3 18.6875f
+
+#define ARIB_B67_A 0.17883277f
+#define ARIB_B67_B 0.28466892f
+#define ARIB_B67_C 0.55991073f
+
+#define FLOAT_EPS 1.175494351e-38f
 
 #if chroma_loc == 1
     #define chroma_sample(a,b,c,d) (((a) + (c)) * 0.5f)
@@ -33,12 +50,6 @@
     #define chroma_sample(a,b,c,d) (((a) + (b) + (c) + (d)) * 0.25f)
 #endif
 
-constant const float ST2084_M1 = 0.1593017578125f;
-constant const float ST2084_M2 = 78.84375f;
-constant const float ST2084_C1 = 0.8359375f;
-constant const float ST2084_C2 = 18.8515625f;
-constant const float ST2084_C3 = 18.6875f;
-
 float get_luma_dst(float3 c) {
     return luma_dst.x * c.x + luma_dst.y * c.y + luma_dst.z * c.z;
 }
@@ -51,61 +62,99 @@ float3 get_chroma_sample(float3 a, float3 b, float3 c, float3 d) {
     return chroma_sample(a, b, c, d);
 }
 
+// linearizer for PQ/ST2084
 float eotf_st2084(float x) {
-    float p = powr(x, 1.0f / ST2084_M2);
-    float a = max(p -ST2084_C1, 0.0f);
-    float b = max(ST2084_C2 - ST2084_C3 * p, 1e-6f);
-    float c  = powr(a / b, 1.0f / ST2084_M1);
-    return x > 0.0f ? c * ST2084_MAX_LUMINANCE / REFERENCE_WHITE : 0.0f;
+    x = max(x, 0.0f);
+    float xpow = native_powr(x, 1.0f / ST2084_M2);
+    float num = max(xpow - ST2084_C1, 0.0f);
+    float den = max(ST2084_C2 - ST2084_C3 * xpow, FLOAT_EPS);
+    x = native_powr(num / den, 1.0f / ST2084_M1);
+    return x * ST2084_MAX_LUMINANCE / REF_WHITE;
 }
 
-__constant const float HLG_A = 0.17883277f;
-__constant const float HLG_B = 0.28466892f;
-__constant const float HLG_C = 0.55991073f;
-
-// linearizer for HLG
-float inverse_oetf_hlg(float x) {
-    float a = 4.0f * x * x;
-    float b = exp((x - HLG_C) / HLG_A) + HLG_B;
-    return x < 0.5f ? a : b;
+// delinearizer for PQ/ST2084
+float inverse_eotf_st2084(float x) {
+    x = max(x, 0.0f);
+    x *= REF_WHITE / ST2084_MAX_LUMINANCE;
+    float xpow = native_powr(x, ST2084_M1);
+#if 0
+    // Original formulation from SMPTE ST 2084:2014 publication.
+    float num = ST2084_C1 + ST2084_C2 * xpow;
+    float den = 1.0f + ST2084_C3 * xpow;
+    return native_powr(num / den, ST2084_M2);
+#else
+    // More stable arrangement that avoids some cancellation error.
+    float num = (ST2084_C1 - 1.0f) + (ST2084_C2 - ST2084_C3) * xpow;
+    float den = 1.0f + ST2084_C3 * xpow;
+    return native_powr(1.0f + num / den, ST2084_M2);
+#endif
 }
 
-// delinearizer for HLG
-float oetf_hlg(float x) {
-    float a = 0.5f * sqrt(x);
-    float b = HLG_A * log(x - HLG_B) + HLG_C;
-    return x <= 1.0f ? a : b;
+float ootf_1_2(float x) {
+    return x > 0.0f ? native_powr(x, 1.2f) : x;
 }
 
-float3 ootf_hlg(float3 c, float peak) {
-    float luma = get_luma_src(c);
-    float gamma =  1.2f + 0.42f * log10(peak * REFERENCE_WHITE / 1000.0f);
-    gamma = max(1.0f, gamma);
-    float factor = peak * powr(luma, gamma - 1.0f) / powr(12.0f, gamma);
-    return c * factor;
+float inverse_ootf_1_2(float x) {
+    return x > 0.0f ? native_powr(x, 1.0f / 1.2f) : x;
 }
 
-float3 inverse_ootf_hlg(float3 c, float peak) {
-    float gamma = 1.2f + 0.42f * log10(peak * REFERENCE_WHITE / 1000.0f);
-    c *=  powr(12.0f, gamma) / peak;
-    c /= powr(get_luma_dst(c), (gamma - 1.0f) / gamma);
-    return c;
+float oetf_arib_b67(float x) {
+    x = max(x, 0.0f);
+    return x <= (1.0f / 12.0f)
+           ? native_sqrt(3.0f * x)
+           : (ARIB_B67_A * native_log(12.0f * x - ARIB_B67_B) + ARIB_B67_C);
 }
 
-float inverse_eotf_bt1886(float c) {
-    return c < 0.0f ? 0.0f : powr(c, 1.0f / 2.4f);
+float inverse_oetf_arib_b67(float x) {
+    x = max(x, 0.0f);
+    return x <= 0.5f
+           ? (x * x) * (1.0f / 3.0f)
+           : (native_exp((x - ARIB_B67_C) / ARIB_B67_A) + ARIB_B67_B) * (1.0f / 12.0f);
 }
 
-float oetf_bt709(float c) {
-    c = c < 0.0f ? 0.0f : c;
-    float r1 = 4.5f * c;
-    float r2 = 1.099f * powr(c, 0.45f) - 0.099f;
-    return c < 0.018f ? r1 : r2;
+// linearizer for HLG/ARIB-B67
+float eotf_arib_b67(float x) {
+    return ootf_1_2(inverse_oetf_arib_b67(x));
 }
-float inverse_oetf_bt709(float c) {
-    float r1 = c / 4.5f;
-    float r2 = powr((c + 0.099f) / 1.099f, 1.0f / 0.45f);
-    return c < 0.081f ? r1 : r2;
+
+// delinearizer for HLG/ARIB-B67
+float inverse_eotf_arib_b67(float x) {
+    return oetf_arib_b67(inverse_ootf_1_2(x));
+}
+
+// delinearizer for BT709, BT2020-10
+float inverse_eotf_bt1886(float x) {
+    return x > 0.0f ? native_powr(x, 1.0f / 2.4f) : 0.0f;
+}
+
+#ifdef TRC_LUT
+float linearize_lut(float x) {
+    return lin_lut[clamp(convert_int(x * 1023.0f), 0, 1023)];
+}
+
+float delinearize_lut(float x) {
+    return delin_lut[clamp(convert_int(x * 1023.0f), 0, 1023)];
+}
+#endif
+
+float linearize_pq(float x) {
+#ifdef TRC_LUT_PQ
+    return pqlin_lut[clamp(convert_int(x * 1023.0f), 0, 1023)];
+#elif defined(TRC_LUT)
+    return linearize_lut(x);
+#else
+    return eotf_st2084(x);
+#endif
+}
+
+float delinearize_pq(float x) {
+#ifdef TRC_LUT_PQ
+    return pqdelin_lut[clamp(convert_int(x * 1023.0f), 0, 1023)];
+#elif defined(TRC_LUT)
+    return delinearize_lut(x);
+#else
+    return inverse_eotf_st2084(x);
+#endif
 }
 
 float3 yuv2rgb(float y, float u, float v) {
@@ -185,21 +234,5 @@ float3 lrgb2lrgb(float3 c) {
     float gg = rgb2rgb[3] * r + rgb2rgb[4] * g + rgb2rgb[5] * b;
     float bb = rgb2rgb[6] * r + rgb2rgb[7] * g + rgb2rgb[8] * b;
     return (float3)(rr, gg, bb);
-#endif
-}
-
-float3 ootf(float3 c, float peak) {
-#ifdef ootf_impl
-    return ootf_impl(c, peak);
-#else
-    return c;
-#endif
-}
-
-float3 inverse_ootf(float3 c, float peak) {
-#ifdef inverse_ootf_impl
-    return inverse_ootf_impl(c, peak);
-#else
-    return c;
 #endif
 }

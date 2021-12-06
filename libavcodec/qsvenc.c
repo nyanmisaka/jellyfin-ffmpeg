@@ -448,7 +448,7 @@ static int init_video_param_jpeg(AVCodecContext *avctx, QSVEncContext *q)
     q->param.mfx.FrameInfo.ChromaFormat   = MFX_CHROMAFORMAT_YUV420;
     q->param.mfx.FrameInfo.BitDepthLuma   = desc->comp[0].depth;
     q->param.mfx.FrameInfo.BitDepthChroma = desc->comp[0].depth;
-    q->param.mfx.FrameInfo.Shift          = desc->comp[0].depth > 8;
+    q->param.mfx.FrameInfo.Shift          = desc->comp[0].shift > 0;
 
     q->param.mfx.FrameInfo.Width  = FFALIGN(avctx->width, 16);
     q->param.mfx.FrameInfo.Height = FFALIGN(avctx->height, 16);
@@ -510,7 +510,7 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
         }
     }
 
-    if (q->low_power) {
+    if (q->low_power == 1) {
 #if QSV_HAVE_VDENC
         q->param.mfx.LowPower = MFX_CODINGOPTION_ON;
 #else
@@ -519,7 +519,9 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
         q->low_power = 0;
         q->param.mfx.LowPower = MFX_CODINGOPTION_OFF;
 #endif
-    } else
+    } else if (q->low_power == -1)
+        q->param.mfx.LowPower = MFX_CODINGOPTION_UNKNOWN;
+    else
         q->param.mfx.LowPower = MFX_CODINGOPTION_OFF;
 
     q->param.mfx.CodecProfile       = q->profile;
@@ -527,7 +529,7 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
     q->param.mfx.GopPicSize         = FFMAX(0, avctx->gop_size);
     q->param.mfx.GopRefDist         = FFMAX(-1, avctx->max_b_frames) + 1;
     q->param.mfx.GopOptFlag         = avctx->flags & AV_CODEC_FLAG_CLOSED_GOP ?
-                                      MFX_GOP_CLOSED : 0;
+                                      MFX_GOP_CLOSED : MFX_GOP_STRICT;
     q->param.mfx.IdrInterval        = q->idr_interval;
     q->param.mfx.NumSlice           = avctx->slices;
     q->param.mfx.NumRefFrame        = FFMAX(0, avctx->refs);
@@ -550,7 +552,7 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
                                             !desc->log2_chroma_w + !desc->log2_chroma_h;
     q->param.mfx.FrameInfo.BitDepthLuma   = desc->comp[0].depth;
     q->param.mfx.FrameInfo.BitDepthChroma = desc->comp[0].depth;
-    q->param.mfx.FrameInfo.Shift          = desc->comp[0].depth > 8;
+    q->param.mfx.FrameInfo.Shift          = desc->comp[0].shift > 0;
 
     // If the minor version is greater than or equal to 19,
     // then can use the same alignment settings as H.264 for HEVC
@@ -646,7 +648,7 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
     case MFX_RATECONTROL_LA_ICQ:
         q->extco2.LookAheadDepth = q->look_ahead_depth;
     case MFX_RATECONTROL_ICQ:
-        q->param.mfx.ICQQuality  = avctx->global_quality;
+        q->param.mfx.ICQQuality  = av_clip(avctx->global_quality, 1, 51);
         break;
 #endif
 #endif
@@ -803,6 +805,24 @@ FF_ENABLE_DEPRECATION_WARNINGS
         q->extparam_internal[q->nb_extparam_internal++] = (mfxExtBuffer *)&q->exthevctiles;
     }
 #endif
+
+    q->extvsi.VideoFullRange = (avctx->color_range == AVCOL_RANGE_JPEG);
+    q->extvsi.ColourDescriptionPresent = 0;
+
+    if (avctx->color_primaries != AVCOL_PRI_UNSPECIFIED ||
+        avctx->color_trc != AVCOL_TRC_UNSPECIFIED ||
+        avctx->colorspace != AVCOL_SPC_UNSPECIFIED) {
+        q->extvsi.ColourDescriptionPresent = 1;
+        q->extvsi.ColourPrimaries = avctx->color_primaries;
+        q->extvsi.TransferCharacteristics = avctx->color_trc;
+        q->extvsi.MatrixCoefficients = avctx->colorspace;
+    }
+
+    if (q->extvsi.VideoFullRange || q->extvsi.ColourDescriptionPresent) {
+        q->extvsi.Header.BufferId = MFX_EXTBUFF_VIDEO_SIGNAL_INFO;
+        q->extvsi.Header.BufferSz = sizeof(q->extvsi);
+        q->extparam_internal[q->nb_extparam_internal++] = (mfxExtBuffer *)&q->extvsi;
+    }
 
     if (!check_enc_param(avctx,q)) {
         av_log(avctx, AV_LOG_ERROR,
@@ -1250,6 +1270,8 @@ static void clear_unused_frames(QSVEncContext *q)
     while (cur) {
         if (cur->used && !cur->surface.Data.Locked) {
             free_encoder_ctrl_payloads(&cur->enc_ctrl);
+            //do not reuse enc_ctrl from previous frame
+            memset(&cur->enc_ctrl, 0, sizeof(cur->enc_ctrl));
             if (cur->frame->format == AV_PIX_FMT_QSV) {
                 av_frame_unref(cur->frame);
             }
