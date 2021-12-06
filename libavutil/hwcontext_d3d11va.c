@@ -271,7 +271,7 @@ static int d3d11va_frames_init(AVHWFramesContext *ctx)
         .MiscFlags  = hwctx->MiscFlags | D3D11_RESOURCE_MISC_SHARED,
     };
 
-#if CONFIG_OPENCL
+#if HAVE_OPENCL_D3D11
     if (ctx->user_opaque) {
         D3D11_TEXTURE2D_DESC *desc = ctx->user_opaque;
         if (desc->BindFlags & D3D11_BIND_DECODER)

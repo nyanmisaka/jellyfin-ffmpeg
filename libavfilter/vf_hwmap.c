@@ -22,7 +22,10 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 
-#if (CONFIG_D3D11VA && CONFIG_OPENCL)
+#if HAVE_OPENCL_D3D11
+#if CONFIG_LIBMFX
+#include "libavutil/hwcontext_qsv.h"
+#endif
 #include "libavutil/hwcontext_d3d11va.h"
 #endif
 
@@ -140,33 +143,39 @@ static int hwmap_config_output(AVFilterLink *outlink)
             // overwrite the input hwframe context with a derived context
             // mapped from that back to the source type.
             AVBufferRef *source;
-            AVHWFramesContext *frames;
+            AVHWFramesContext *dst_hwfc;
 
             ctx->hwframes_ref = av_hwframe_ctx_alloc(device);
             if (!ctx->hwframes_ref) {
                 err = AVERROR(ENOMEM);
                 goto fail;
             }
-            frames = (AVHWFramesContext*)ctx->hwframes_ref->data;
+            dst_hwfc = (AVHWFramesContext*)ctx->hwframes_ref->data;
 
-            frames->format    = outlink->format;
-            frames->sw_format = hwfc->sw_format;
-            frames->width     = hwfc->width;
-            frames->height    = hwfc->height;
+            dst_hwfc->format    = outlink->format;
+            dst_hwfc->sw_format = hwfc->sw_format;
+            dst_hwfc->width     = hwfc->width;
+            dst_hwfc->height    = hwfc->height;
 
             if (inlink->fixed_pool_size)
-                frames->initial_pool_size = inlink->fixed_pool_size;
+                dst_hwfc->initial_pool_size = inlink->fixed_pool_size;
 
-            if (frames->initial_pool_size == 0) {
+            if (dst_hwfc->initial_pool_size == 0) {
                 // Dynamic allocation.
             } else if (avctx->extra_hw_frames) {
-                frames->initial_pool_size += avctx->extra_hw_frames;
+                dst_hwfc->initial_pool_size += avctx->extra_hw_frames;
             }
 
-#if (CONFIG_D3D11VA && CONFIG_OPENCL)
+#if HAVE_OPENCL_D3D11
             D3D11_TEXTURE2D_DESC texDesc = { .BindFlags = D3D11_BIND_DECODER, };
-            if (frames->format == AV_PIX_FMT_D3D11)
-                frames->user_opaque = &texDesc;
+            if (dst_hwfc->format == AV_PIX_FMT_D3D11)
+                dst_hwfc->user_opaque = &texDesc;
+#if CONFIG_LIBMFX
+            if (dst_hwfc->format == AV_PIX_FMT_QSV) {
+                AVQSVFramesContext *qsv_ctx = dst_hwfc->hwctx;
+                qsv_ctx->frame_type = MFX_MEMTYPE_VIDEO_MEMORY_DECODER_TARGET | MFX_MEMTYPE_SHARED_RESOURCE;
+            }
+#endif
 #endif
 
             err = av_hwframe_ctx_init(ctx->hwframes_ref);
