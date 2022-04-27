@@ -302,6 +302,7 @@ extern const AVFilter ff_vf_hwdownload;
 extern const AVFilter ff_vf_hwmap;
 extern const AVFilter ff_vf_hwupload;
 extern const AVFilter ff_vf_hwupload_cuda;
+extern const AVFilter ff_vf_hwupload_vaapi;
 extern const AVFilter ff_vf_hysteresis;
 extern const AVFilter ff_vf_identity;
 extern const AVFilter ff_vf_idet;
