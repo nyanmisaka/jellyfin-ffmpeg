@@ -22,6 +22,10 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 
+#if HAVE_OPENCL_D3D11
+#include "libavutil/hwcontext_d3d11va.h"
+#endif
+
 #include "avfilter.h"
 #include "formats.h"
 #include "internal.h"
@@ -122,6 +126,12 @@ static int hwmap_config_output(AVFilterLink *outlink)
                 goto fail;
             }
 
+            if (hwfc->initial_pool_size) {
+                outlink->fixed_pool_size = hwfc->initial_pool_size;
+                av_log(avctx, AV_LOG_DEBUG, "Saved the fixed_pool_size from "
+                       "initial_pool_size: %d\n", outlink->fixed_pool_size);
+            }
+
         } else if (inlink->format == hwfc->format &&
                    (desc->flags & AV_PIX_FMT_FLAG_HWACCEL) &&
                    ctx->reverse) {
@@ -144,8 +154,20 @@ static int hwmap_config_output(AVFilterLink *outlink)
             frames->width     = hwfc->width;
             frames->height    = hwfc->height;
 
-            if (avctx->extra_hw_frames >= 0)
-                frames->initial_pool_size = 2 + avctx->extra_hw_frames;
+            if (inlink->fixed_pool_size)
+                frames->initial_pool_size = inlink->fixed_pool_size;
+
+            if (frames->initial_pool_size == 0) {
+                // Dynamic allocation.
+            } else if (avctx->extra_hw_frames) {
+                frames->initial_pool_size += avctx->extra_hw_frames;
+            }
+
+#if HAVE_OPENCL_D3D11
+            D3D11_TEXTURE2D_DESC texDesc = { .BindFlags = D3D11_BIND_DECODER, };
+            if (frames->format == AV_PIX_FMT_D3D11)
+                frames->user_opaque = &texDesc;
+#endif
 
             err = av_hwframe_ctx_init(ctx->hwframes_ref);
             if (err < 0) {
