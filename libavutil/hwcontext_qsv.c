@@ -112,6 +112,40 @@ static const struct {
 #endif
 };
 
+extern int ff_qsv_get_surface_base_handle(mfxFrameSurface1 *surf,
+                                          enum AVHWDeviceType base_dev_type,
+                                          void **base_handle);
+
+/**
+ * Caller needs to allocate enough space for base_handle pointer.
+ **/
+int ff_qsv_get_surface_base_handle(mfxFrameSurface1 *surf,
+                                   enum AVHWDeviceType base_dev_type,
+                                   void **base_handle)
+{
+    mfxHDLPair *handle_pair;
+    handle_pair = surf->Data.MemId;
+    switch (base_dev_type) {
+#if CONFIG_VAAPI
+    case AV_HWDEVICE_TYPE_VAAPI:
+        base_handle[0] = handle_pair->first;
+        return 0;
+#endif
+#if CONFIG_D3D11VA
+    case AV_HWDEVICE_TYPE_D3D11VA:
+        base_handle[0] = handle_pair->first;
+        base_handle[1] = handle_pair->second;
+        return 0;
+#endif
+#if CONFIG_DXVA2
+    case AV_HWDEVICE_TYPE_DXVA2:
+        base_handle[0] = handle_pair->first;
+        return 0;
+#endif
+    }
+    return AVERROR(EINVAL);
+}
+
 static uint32_t qsv_fourcc_from_pix_fmt(enum AVPixelFormat pix_fmt)
 {
     int i;
@@ -1191,7 +1225,7 @@ static int qsv_frames_derive_to(AVHWFramesContext *dst_ctx,
     case AV_HWDEVICE_TYPE_VAAPI:
         {
             AVVAAPIFramesContext *src_hwctx = src_ctx->hwctx;
-            s->handle_pairs_internal = av_calloc(src_ctx->initial_pool_size,
+            s->handle_pairs_internal = av_calloc(src_hwctx->nb_surfaces,
                                                  sizeof(*s->handle_pairs_internal));
             if (!s->handle_pairs_internal)
                 return AVERROR(ENOMEM);
@@ -1214,15 +1248,15 @@ static int qsv_frames_derive_to(AVHWFramesContext *dst_ctx,
     case AV_HWDEVICE_TYPE_D3D11VA:
         {
             AVD3D11VAFramesContext *src_hwctx = src_ctx->hwctx;
-            s->handle_pairs_internal = av_calloc(src_ctx->initial_pool_size,
+            s->handle_pairs_internal = av_calloc(src_hwctx->nb_surfaces,
                                                  sizeof(*s->handle_pairs_internal));
             if (!s->handle_pairs_internal)
                 return AVERROR(ENOMEM);
-            s->surfaces_internal = av_calloc(src_ctx->initial_pool_size,
+            s->surfaces_internal = av_calloc(src_hwctx->nb_surfaces,
                                              sizeof(*s->surfaces_internal));
             if (!s->surfaces_internal)
                 return AVERROR(ENOMEM);
-            for (i = 0; i < src_ctx->initial_pool_size; i++) {
+            for (i = 0; i < src_hwctx->nb_surfaces; i++) {
                 qsv_init_surface(dst_ctx, &s->surfaces_internal[i]);
                 s->handle_pairs_internal[i].first = (mfxMemId)src_hwctx->texture_infos[i].texture;
                 if (src_hwctx->BindFlags & D3D11_BIND_RENDER_TARGET) {
@@ -1232,7 +1266,7 @@ static int qsv_frames_derive_to(AVHWFramesContext *dst_ctx,
                 }
                 s->surfaces_internal[i].Data.MemId = (mfxMemId)&s->handle_pairs_internal[i];
             }
-            dst_hwctx->nb_surfaces = src_ctx->initial_pool_size;
+            dst_hwctx->nb_surfaces = src_hwctx->nb_surfaces;
             if (src_hwctx->BindFlags & D3D11_BIND_RENDER_TARGET) {
                 dst_hwctx->frame_type |= MFX_MEMTYPE_VIDEO_MEMORY_PROCESSOR_TARGET;
             } else {
@@ -1245,7 +1279,7 @@ static int qsv_frames_derive_to(AVHWFramesContext *dst_ctx,
     case AV_HWDEVICE_TYPE_DXVA2:
         {
             AVDXVA2FramesContext *src_hwctx = src_ctx->hwctx;
-            s->handle_pairs_internal = av_calloc(src_ctx->initial_pool_size,
+            s->handle_pairs_internal = av_calloc(src_hwctx->nb_surfaces,
                                                  sizeof(*s->handle_pairs_internal));
             if (!s->handle_pairs_internal)
                 return AVERROR(ENOMEM);
@@ -1541,14 +1575,10 @@ static int qsv_device_create(AVHWDeviceContext *ctx, const char *device,
         }
     } else if (CONFIG_VAAPI) {
         child_device_type = AV_HWDEVICE_TYPE_VAAPI;
-    } else if (CONFIG_DXVA2) {
-        av_log(NULL, AV_LOG_WARNING,
-                "WARNING: defaulting child_device_type to AV_HWDEVICE_TYPE_DXVA2 for compatibility "
-                "with old commandlines. This behaviour will be removed "
-                "in the future. Please explicitly set device type via \"-init_hw_device\" option.\n");
-        child_device_type = AV_HWDEVICE_TYPE_DXVA2;
     } else if (CONFIG_D3D11VA) {
         child_device_type = AV_HWDEVICE_TYPE_D3D11VA;
+    } else if (CONFIG_DXVA2) {
+        child_device_type = AV_HWDEVICE_TYPE_DXVA2;
     } else {
         av_log(ctx, AV_LOG_ERROR, "No supported child device type is enabled\n");
         return AVERROR(ENOSYS);
@@ -1597,7 +1627,13 @@ static int qsv_device_create(AVHWDeviceContext *ctx, const char *device,
 
     impl = choose_implementation(device, child_device_type);
 
-    return qsv_device_derive_from_child(ctx, impl, child_device, 0);
+    ret = qsv_device_derive_from_child(ctx, impl, child_device, 0);
+    if (ret == 0) {
+        ctx->internal->source_device = av_buffer_ref(priv->child_device_ctx);
+        if (!ctx->internal->source_device)
+            ret = AVERROR(ENOMEM);
+    }
+    return ret;
 }
 
 const HWContextType ff_hwcontext_type_qsv = {

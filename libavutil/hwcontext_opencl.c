@@ -82,6 +82,12 @@ typedef CL_API_ENTRY cl_mem(CL_API_CALL *clConvertImageAMD_fn)(
 #include "hwcontext_drm.h"
 #endif
 
+#if HAVE_OPENCL_VAAPI_INTEL_MEDIA && CONFIG_LIBMFX
+extern int ff_qsv_get_surface_base_handle(mfxFrameSurface1 *surf,
+                                          enum AVHWDeviceType base_dev_typ,
+                                          void **base_handle);
+#endif
+
 typedef struct OpenCLDeviceContext {
     // Default command queue to use for transfer/mapping operations on
     // the device.  If the user supplies one, this is a reference to it.
@@ -2291,8 +2297,14 @@ static int opencl_map_from_qsv(AVHWFramesContext *dst_fc, AVFrame *dst,
 
 #if CONFIG_LIBMFX
     if (src->format == AV_PIX_FMT_QSV) {
+        void *base_handle;
         mfxFrameSurface1 *mfx_surface = (mfxFrameSurface1*)src->data[3];
-        va_surface = *(VASurfaceID*)mfx_surface->Data.MemId;
+        err = ff_qsv_get_surface_base_handle(mfx_surface,
+                                             AV_HWDEVICE_TYPE_VAAPI,
+                                             &base_handle);
+        if (err < 0)
+            return err;
+        va_surface = *(VASurfaceID *)base_handle;
     } else
 #endif
         if (src->format == AV_PIX_FMT_VAAPI) {
