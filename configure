@@ -3143,6 +3143,8 @@ scale_cuda_filter_deps="ffnvcodec"
 scale_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
 thumbnail_cuda_filter_deps="ffnvcodec"
 thumbnail_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
+tonemap_cuda_filter_deps="ffnvcodec const_nan"
+tonemap_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
 transpose_npp_filter_deps="ffnvcodec libnpp"
 overlay_cuda_filter_deps="ffnvcodec"
 overlay_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
@@ -6409,7 +6411,7 @@ fi
 if enabled cuda_nvcc; then
     nvccflags="$nvccflags -ptx"
 else
-    nvccflags="$nvccflags -S -nocudalib -nocudainc --cuda-device-only -Wno-c++11-narrowing -include ${source_link}/compat/cuda/cuda_runtime.h"
+    nvccflags="$nvccflags -S -nocudalib -nocudainc --cuda-device-only -Wno-c++11-narrowing -std=c++14 -include ${source_link}/compat/cuda/cuda_runtime.h"
     check_nvcc cuda_llvm
 fi
 
