@@ -189,11 +189,13 @@ enum AVPixelFormat ff_qsv_map_fourcc(uint32_t fourcc)
     case MFX_FOURCC_NV12: return AV_PIX_FMT_NV12;
     case MFX_FOURCC_P010: return AV_PIX_FMT_P010;
     case MFX_FOURCC_P8:   return AV_PIX_FMT_PAL8;
-#if CONFIG_VAAPI
     case MFX_FOURCC_YUY2: return AV_PIX_FMT_YUYV422;
+#if QSV_VERSION_ATLEAST(1, 17)
+    case MFX_FOURCC_AYUV: return AV_PIX_FMT_0YUV;
+#endif
 #if QSV_VERSION_ATLEAST(1, 27)
     case MFX_FOURCC_Y210: return AV_PIX_FMT_Y210;
-#endif
+    case MFX_FOURCC_Y410: return AV_PIX_FMT_Y410;
 #endif
     }
     return AV_PIX_FMT_NONE;
@@ -211,17 +213,25 @@ int ff_qsv_map_pixfmt(enum AVPixelFormat format, uint32_t *fourcc)
     case AV_PIX_FMT_P010:
         *fourcc = MFX_FOURCC_P010;
         return AV_PIX_FMT_P010;
-#if CONFIG_VAAPI
     case AV_PIX_FMT_YUV422P:
     case AV_PIX_FMT_YUYV422:
         *fourcc = MFX_FOURCC_YUY2;
         return AV_PIX_FMT_YUYV422;
+#if QSV_VERSION_ATLEAST(1, 17)
+    case AV_PIX_FMT_0YUV:
+    case AV_PIX_FMT_YUV444P:
+        *fourcc = MFX_FOURCC_AYUV;
+        return AV_PIX_FMT_0YUV;
+#endif
 #if QSV_VERSION_ATLEAST(1, 27)
     case AV_PIX_FMT_YUV422P10:
     case AV_PIX_FMT_Y210:
         *fourcc = MFX_FOURCC_Y210;
         return AV_PIX_FMT_Y210;
-#endif
+    case AV_PIX_FMT_Y410:
+    case AV_PIX_FMT_YUV444P10:
+        *fourcc = MFX_FOURCC_Y410;
+        return AV_PIX_FMT_Y410;
 #endif
     default:
         return AVERROR(ENOSYS);

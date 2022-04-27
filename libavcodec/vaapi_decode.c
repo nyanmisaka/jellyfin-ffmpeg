@@ -265,9 +265,23 @@ static const struct {
     MAP(422V, YUV440P),
     // 4:4:4
     MAP(444P, YUV444P),
+    MAP(AYUV,    0YUV),
+    // 4:4:4 10-bit
+#ifdef VA_FOURCC_Y410
+    MAP(Y410,    Y410),
+#endif
     // 4:2:0 10-bit
 #ifdef VA_FOURCC_P010
     MAP(P010, P010),
+#endif
+#ifdef VA_FOURCC_P012
+    MAP(P012, P012),
+#endif
+#ifdef VA_FOURCC_Y212
+    MAP(Y212, Y212),
+#endif
+#ifdef VA_FOURCC_Y412
+    MAP(Y412, Y412),
 #endif
 #ifdef VA_FOURCC_I010
     MAP(I010, YUV420P10),
@@ -284,6 +298,7 @@ static int vaapi_decode_find_best_format(AVCodecContext *avctx,
     VAStatus vas;
     VASurfaceAttrib *attr;
     enum AVPixelFormat source_format, best_format, format;
+    const AVPixFmtDescriptor *desc, *desc_s;
     uint32_t best_fourcc, fourcc;
     int i, j, nb_attr;
 
@@ -330,6 +345,13 @@ static int vaapi_decode_find_best_format(AVCodecContext *avctx,
         format = vaapi_format_map[j].pix_fmt;
         av_log(avctx, AV_LOG_DEBUG, "Considering format %#x -> %s.\n",
                fourcc, av_get_pix_fmt_name(format));
+
+        if (best_format != AV_PIX_FMT_NONE) {
+            desc = av_pix_fmt_desc_get(format);
+            desc_s = av_pix_fmt_desc_get(source_format);
+            if (desc->comp[0].depth != desc_s->comp[0].depth)
+                continue;
+        }
 
         best_format = av_find_best_pix_fmt_of_2(format, best_format,
                                                 source_format, 0, NULL);
@@ -408,7 +430,9 @@ static const struct {
     MAP(VP9,         VP9_0,           VP9Profile0 ),
 #endif
 #if VA_CHECK_VERSION(0, 39, 0)
+    MAP(VP9,         VP9_1,           VP9Profile1 ),
     MAP(VP9,         VP9_2,           VP9Profile2 ),
+    MAP(VP9,         VP9_3,           VP9Profile3 ),
 #endif
 #if VA_CHECK_VERSION(1, 8, 0)
     MAP(AV1,         AV1_MAIN,        AV1Profile0),
