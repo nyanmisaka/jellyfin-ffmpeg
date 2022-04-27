@@ -509,6 +509,7 @@ extern const AVFilter ff_vf_zscale;
 
 extern const AVFilter ff_vsrc_allrgb;
 extern const AVFilter ff_vsrc_allyuv;
+extern const AVFilter ff_vsrc_alphasrc;
 extern const AVFilter ff_vsrc_cellauto;
 extern const AVFilter ff_vsrc_color;
 extern const AVFilter ff_vsrc_colorspectrum;
