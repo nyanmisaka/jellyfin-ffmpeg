@@ -16,10 +16,10 @@ CONFIG := --prefix=${TARGET_DIR} \
 	--disable-doc \
 	--disable-ffplay \
 	--disable-shared \
+	--disable-ptx-compression \
 	--disable-libxcb \
 	--disable-sdl2 \
 	--disable-xlib \
-	--enable-lto \
 	--enable-gpl \
 	--enable-version3 \
 	--enable-static \
