@@ -57,10 +57,9 @@ enum var_name {
 };
 
 typedef struct QSVOverlayContext {
-    const AVClass      *class;
+    QSVVPPContext      qsv;
 
     FFFrameSync fs;
-    QSVVPPContext      *qsv;
     QSVVPPParam        qsv_param;
     mfxExtVPPComposite comp_conf;
     double             var_values[VAR_VARS_NB];
@@ -229,40 +228,51 @@ static int config_overlay_input(AVFilterLink *inlink)
 
 static int process_frame(FFFrameSync *fs)
 {
-    AVFilterContext  *ctx = fs->parent;
-    QSVOverlayContext  *s = fs->opaque;
-    AVFrame        *frame = NULL;
-    int               ret = 0, i;
+    AVFilterContext *ctx = fs->parent;
+    QSVVPPContext   *qsv = fs->opaque;
+    AVFilterLink    *in0 = ctx->inputs[0];
+    AVFilterLink    *in1 = ctx->inputs[1];
+    AVFrame        *main = NULL;
+    AVFrame     *overlay = NULL;
+    int              ret = 0;
 
-    for (i = 0; i < ctx->nb_inputs; i++) {
-        ret = ff_framesync_get_frame(fs, i, &frame, 0);
-        if (ret == 0)
-            ret = ff_qsvvpp_filter_frame(s->qsv, ctx->inputs[i], frame);
-        if (ret < 0 && ret != AVERROR(EAGAIN))
-            break;
-    }
+    ret = ff_framesync_get_frame(fs, 0, &main, 0);
+    if (ret < 0)
+        return ret;
+    ret = ff_framesync_get_frame(fs, 1, &overlay, 0);
+    if (ret < 0)
+        return ret;
 
-    return ret;
+    if (!main)
+        return AVERROR_BUG;
+
+    /* composite main frame */
+    ret = ff_qsvvpp_filter_frame(qsv, in0, main);
+    if (ret < 0 && ret != AVERROR(EAGAIN))
+        return ret;
+
+    /* remove all side data of the overlay frame*/
+    if (overlay)
+        av_frame_remove_all_side_data(overlay);
+
+    /* composite overlay frame */
+    /* or overwrite main frame again if the overlay frame isn't ready yet */
+    return ff_qsvvpp_filter_frame(qsv, overlay ? in1 : in0, overlay ? overlay : main);
 }
 
 static int init_framesync(AVFilterContext *ctx)
 {
-    QSVOverlayContext *s = ctx->priv;
-    int ret, i;
+    QSVOverlayContext  *s = ctx->priv;
+    AVFilterLink *outlink = ctx->outputs[0];
+    int ret;
 
-    s->fs.on_event = process_frame;
-    s->fs.opaque   = s;
-    ret = ff_framesync_init(&s->fs, ctx, ctx->nb_inputs);
+    ret = ff_framesync_init_dualinput(&s->fs, ctx);
     if (ret < 0)
         return ret;
 
-    for (i = 0; i < ctx->nb_inputs; i++) {
-        FFFrameSyncIn *in = &s->fs.in[i];
-        in->before    = EXT_STOP;
-        in->after     = EXT_INFINITY;
-        in->sync      = i ? 1 : 2;
-        in->time_base = ctx->inputs[i]->time_base;
-    }
+    s->fs.time_base = outlink->time_base;
+    s->fs.on_event  = process_frame;
+    s->fs.opaque    = s;
 
     return ff_framesync_configure(&s->fs);
 }
@@ -280,14 +290,6 @@ static int config_output(AVFilterLink *outlink)
         (in0->format != AV_PIX_FMT_QSV && in1->format == AV_PIX_FMT_QSV)) {
         av_log(ctx, AV_LOG_ERROR, "Mixing hardware and software pixel formats is not supported.\n");
         return AVERROR(EINVAL);
-    } else if (in0->format == AV_PIX_FMT_QSV) {
-        AVHWFramesContext *hw_frame0 = (AVHWFramesContext *)in0->hw_frames_ctx->data;
-        AVHWFramesContext *hw_frame1 = (AVHWFramesContext *)in1->hw_frames_ctx->data;
-
-        if (hw_frame0->device_ctx != hw_frame1->device_ctx) {
-            av_log(ctx, AV_LOG_ERROR, "Inputs with different underlying QSV devices are forbidden.\n");
-            return AVERROR(EINVAL);
-        }
     }
 
     outlink->w          = vpp->var_values[VAR_MW];
@@ -299,7 +301,7 @@ static int config_output(AVFilterLink *outlink)
     if (ret < 0)
         return ret;
 
-    return ff_qsvvpp_create(ctx, &vpp->qsv, &vpp->qsv_param);
+    return ff_qsvvpp_init(ctx, &vpp->qsv_param);
 }
 
 /*
@@ -348,7 +350,7 @@ static av_cold void overlay_qsv_uninit(AVFilterContext *ctx)
 {
     QSVOverlayContext *vpp = ctx->priv;
 
-    ff_qsvvpp_free(&vpp->qsv);
+    ff_qsvvpp_close(ctx);
     ff_framesync_uninit(&vpp->fs);
     av_freep(&vpp->comp_conf.InputStream);
     av_freep(&vpp->qsv_param.ext_buf);

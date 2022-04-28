@@ -179,7 +179,7 @@ int ff_qsv_print_warning(void *log_ctx, mfxStatus err,
 {
     const char *desc;
     int ret = qsv_map_error(err, &desc);
-    av_log(log_ctx, AV_LOG_WARNING, "%s: %s (%d)\n", warning_string, desc, err);
+    av_log(log_ctx, AV_LOG_VERBOSE, "%s: %s (%d)\n", warning_string, desc, err);
     return ret;
 }
 
