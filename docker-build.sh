@@ -112,8 +112,7 @@ prepare_extra_amd64() {
     ./autogen.sh
     ./configure --prefix=${TARGET_DIR}
     make -j$(nproc) && make install && make install DESTDIR=${SOURCE_DIR}/intel
-    echo "intel${TARGET_DIR}/lib/libva.so* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
-    echo "intel${TARGET_DIR}/lib/libva-drm.so* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+    echo "intel${TARGET_DIR}/lib/libva* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
     popd
     popd
 
@@ -183,7 +182,7 @@ prepare_extra_amd64() {
     mkdir build && pushd build
     cmake -DCMAKE_INSTALL_PREFIX=${TARGET_DIR} ..
     make -j$(nproc) && make install && make install DESTDIR=${SOURCE_DIR}/intel
-    echo "intel${TARGET_DIR}/lib/libmfx-gen.so* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+    echo "intel${TARGET_DIR}/lib/libmfx-gen* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
     popd
     popd
     popd
@@ -205,6 +204,105 @@ prepare_extra_amd64() {
     mkdir -p ${SOURCE_DIR}/intel/dri
     cp ${TARGET_DIR}/lib/dri/iHD*.so ${SOURCE_DIR}/intel/dri
     echo "intel/dri/iHD*.so usr/lib/jellyfin-ffmpeg/lib/dri" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+    popd
+    popd
+    popd
+
+    # Vulkan-Headers
+    pushd ${SOURCE_DIR}
+    git clone -b v1.3.212 --depth=1 https://github.com/KhronosGroup/Vulkan-Headers
+    pushd Vulkan-Headers
+    mkdir build && pushd build
+    cmake \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=${TARGET_DIR} ..
+    make -j$(nproc) && make install
+    popd
+    popd
+    popd
+
+    # Vulkan-Loader
+    pushd ${SOURCE_DIR}
+    git clone -b v1.3.212 --depth=1 https://github.com/KhronosGroup/Vulkan-Loader
+    pushd Vulkan-Loader
+    mkdir build && pushd build
+    cmake \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=${TARGET_DIR} \
+        -DVULKAN_HEADERS_INSTALL_DIR=${TARGET_DIR} \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DBUILD_TESTS=OFF \
+        -DBUILD_WSI_{XCB,XLIB,WAYLAND}_SUPPORT=ON ..
+    make -j$(nproc) && make install
+    cp ${TARGET_DIR}/lib/libvulkan.so* ${SOURCE_DIR}/Vulkan-Loader
+    echo "Vulkan-Loader/libvulkan* usr/lib/jellyfin-ffmpeg/lib" ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+    popd
+    popd
+    popd
+
+    # Shaderc
+    pushd ${SOURCE_DIR}
+    git clone -b v2022.1 --depth=1 https://github.com/google/shaderc
+    pushd shaderc
+    ./utils/git-sync-deps
+    mkdir build && pushd build
+    cmake \
+        -GNinja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=${TARGET_DIR} \
+        -DSHADERC_SKIP_{TESTS,EXAMPLES,COPYRIGHT_CHECK}=ON \
+        -DENABLE_EXCEPTIONS=ON \
+        -DENABLE_{CTEST,GLSLANG_BINARIES}=OFF \
+        -DSPIRV_SKIP_EXECUTABLES=ON \
+        -DSPIRV_TOOLS_BUILD_STATIC=OFF \
+        -DBUILD_SHARED_LIBS=ON ..
+    ninja -j$(nproc)
+    ninja install
+    cp ${TARGET_DIR}/lib/{libshaderc_shared,libSPIRV,libSPIRV-Tools,libSPIRV-Tools-opt}.so* ${SOURCE_DIR}/shaderc
+    echo "shaderc/libshaderc_shared* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+    echo "shaderc/libSPIRV* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+    popd
+    popd
+    popd
+
+    # SPIRV-Cross
+    pushd ${SOURCE_DIR}
+    git clone -b sdk-1.3.211.0 --depth=1 https://github.com/KhronosGroup/SPIRV-Cross
+    pushd SPIRV-Cross
+    mkdir build && pushd build
+    cmake \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=${TARGET_DIR} \
+        -DSPIRV_CROSS_{SHARED,FORCE_PIC}=ON \
+        -DSPIRV_CROSS_{STATIC,CLI}=OFF \
+        -DSPIRV_CROSS_ENABLE_{TESTS,CPP}=OFF ..
+    make -j$(nproc)
+    make install
+    cp ${TARGET_DIR}/lib/libspirv-cross-c-shared.so* ${SOURCE_DIR}/SPIRV-Cross
+    echo "SPIRV-Cross/libspirv-cross-c-shared* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+    popd
+    popd
+    popd
+
+    # libplacebo
+    pushd ${SOURCE_DIR}
+    git clone --depth=1 https://github.com/haasn/libplacebo
+    pushd libplacebo
+    mkdir build && pushd build
+    meson \
+        --prefix=${TARGET_DIR} \
+        --buildtype=release \
+        --default-library=shared \
+        -Dvulkan=enabled \
+        -Dvulkan-link=false \
+        -Dvulkan-registry=${TARGET_DIR}/share/vulkan/registry/vk.xml \
+        -Dshaderc=enabled \
+        -Dglslang=disabled \
+        -D{demos,tests,bench,fuzz}=false ..
+    ninja -j$(nproc)
+    ninja install
+    cp ${TARGET_DIR}/lib/x86_64-linux-gnu/libplacebo.so* ${SOURCE_DIR}/libplacebo
+    echo "libplacebo/libplacebo* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
     popd
     popd
     popd

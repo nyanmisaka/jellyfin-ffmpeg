@@ -10,7 +10,7 @@ ENV GCC_VER=GCC_RELEASE_VERSION
 ENV SOURCE_DIR=/ffmpeg
 ENV ARTIFACT_DIR=/dist
 ENV TARGET_DIR=/usr/lib/jellyfin-ffmpeg
-ENV PKG_CONFIG_PATH=${TARGET_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
+ENV PKG_CONFIG_PATH=${TARGET_DIR}/lib/pkgconfig:${TARGET_DIR}/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
 ENV LD_LIBRARY_PATH=${TARGET_DIR}/lib:${TARGET_DIR}/lib/mfx:${TARGET_DIR}/lib/xorg:${LD_LIBRARY_PATH}
 ENV LDFLAGS=-Wl,-rpath=${TARGET_DIR}/lib
 ENV CXXFLAGS="-I${TARGET_DIR}/include $CXXFLAGS"
@@ -19,7 +19,7 @@ ENV CFLAGS="-I${TARGET_DIR}/include $CFLAGS"
 
 # Prepare Debian build environment
 RUN apt-get update \
- && yes | apt-get install -y apt-transport-https curl ninja-build debhelper gnupg wget devscripts mmv equivs git nasm pkg-config subversion dh-autoreconf libdrm-dev libpciaccess-dev python3-pip
+ && yes | apt-get install -y apt-transport-https curl ninja-build debhelper gnupg wget devscripts mmv equivs git nasm pkg-config subversion dh-autoreconf libdrm-dev libpciaccess-dev libwayland-dev libx11-dev libxext-dev libxfixes-dev libxcb1-dev libxrandr-dev python3-pip python3-mako
 
 # Install meson and cmake
 RUN pip3 install meson cmake
