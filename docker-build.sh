@@ -10,7 +10,7 @@ PORTS_ADDR=http://ports.ubuntu.com/
 
 # Prepare common extra libs for amd64, armhf and arm64
 prepare_extra_common() {
-    # Download and install zimg for zscale filter
+    # zimg
     pushd ${SOURCE_DIR}
     git clone --depth=1 https://github.com/sekrit-twc/zimg
     pushd zimg
@@ -32,12 +32,9 @@ prepare_extra_common() {
     popd
     popd
 
-    # Download and install dav1d
+    # dav1d
     pushd ${SOURCE_DIR}
     git clone -b 1.0.0 --depth=1 https://code.videolan.org/videolan/dav1d.git
-    pushd dav1d
-    mkdir build
-    pushd build
     nasmver="$(nasm -v | cut -d ' ' -f3)"
     nasmminver="2.14.0"
     if [ "$(printf '%s\n' "$nasmminver" "$nasmver" | sort -V | head -n1)" = "$nasmminver" ]; then
@@ -46,38 +43,42 @@ prepare_extra_common() {
         x86asm=false
     fi
     if [ "${ARCH}" = "amd64" ]; then
-        meson -Denable_asm=$x86asm \
-              -Denable_{tools,tests,examples}=false \
-              -Ddefault_library=shared \
-              --prefix=${TARGET_DIR} ..
-        ninja
-        meson install
-        cp ${TARGET_DIR}/lib/x86_64-linux-gnu/pkgconfig/dav1d.pc  /usr/lib/pkgconfig
-        cp ${TARGET_DIR}/lib/x86_64-linux-gnu/*dav1d* ${SOURCE_DIR}/dav1d
-        echo "dav1d/*dav1d* /usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+        meson setup dav1d dav1d_build \
+            --prefix=${TARGET_DIR} \
+            --libdir=lib \
+            --buildtype=release \
+            -Ddefault_library=shared \
+            -Denable_asm=$x86asm \
+            -Denable_{tools,tests,examples}=false
+        meson configure dav1d_build
+        ninja -C dav1d_build install
+        cp ${TARGET_DIR}/lib/libdav1d.so* ${SOURCE_DIR}/dav1d
+        echo "dav1d/libdav1d.so* /usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
     fi
     if [ "${ARCH}" = "armhf" ] || [ "${ARCH}" = "arm64" ]; then
-        meson -Denable_asm=true \
-              -Denable_{tools,tests,examples}=false \
-              -Ddefault_library=shared \
-              --cross-file=${SOURCE_DIR}/cross-${ARCH}.meson \
-              --prefix=${TARGET_DIR} ..
-        ninja
-        meson install
-        cp ${TARGET_DIR}/lib/pkgconfig/dav1d.pc  /usr/lib/pkgconfig
-        cp ${TARGET_DIR}/lib/*dav1d* ${SOURCE_DIR}/dav1d
-        echo "dav1d/*dav1d* /usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+        meson setup dav1d dav1d_build \
+            --cross-file=${SOURCE_DIR}/cross-${ARCH}.meson \
+            --prefix=${TARGET_DIR}
+            --libdir=lib \
+            --buildtype=release \
+            -Ddefault_library=shared \
+            -Denable_asm=true \
+            -Denable_{tools,tests,examples}=false
+        meson configure dav1d_build
+        ninja -C dav1d_build install
+        cp ${TARGET_DIR}/lib/libdav1d.so* ${SOURCE_DIR}/dav1d
+        echo "dav1d/libdav1d.so* /usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
     fi
     popd
-    popd
-    popd
 
-    # Download and install fdk-aac-stripped
+    # fdk-aac-stripped
     pushd ${SOURCE_DIR}
     git clone -b stripped4 --depth=1 https://gitlab.freedesktop.org/wtaymans/fdk-aac-stripped.git
     pushd fdk-aac-stripped
     ./autogen.sh
-    ./configure --disable-silent-rules --disable-static --prefix=${TARGET_DIR} CFLAGS="-O3 -DNDEBUG" CXXFLAGS="-O3 -DNDEBUG" ${CROSS_OPT}
+    ./configure \
+        --disable-{static,silent-rules} \
+        --prefix=${TARGET_DIR} CFLAGS="-O3 -DNDEBUG" CXXFLAGS="-O3 -DNDEBUG" ${CROSS_OPT}
     make -j$(nproc) && make install && make install DESTDIR=${SOURCE_DIR}/fdk-aac-stripped
     echo "fdk-aac-stripped${TARGET_DIR}/lib/libfdk-aac.so* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
     popd
@@ -86,7 +87,7 @@ prepare_extra_common() {
 
 # Prepare extra headers, libs and drivers for x86_64-linux-gnu
 prepare_extra_amd64() {
-    # Download and install the nvidia headers
+    # nv-codec-headers
     pushd ${SOURCE_DIR}
     git clone -b n11.0.10.1 --depth=1 https://git.videolan.org/git/ffmpeg/nv-codec-headers.git
     pushd nv-codec-headers
@@ -95,7 +96,7 @@ prepare_extra_amd64() {
     popd
     popd
 
-    # Download and setup AMD AMF headers
+    # AMF
     # https://www.ffmpeg.org/general.html#AMD-AMF_002fVCE
     git clone --depth=1 https://github.com/GPUOpen-LibrariesAndSDKs/AMF
     pushd AMF/amf/public/include
@@ -103,20 +104,41 @@ prepare_extra_amd64() {
     mv * /usr/include/AMF
     popd
 
-    # Download and install libva
+    # drm
+    pushd ${SOURCE_DIR}
+    git clone -b libdrm-2.4.110 --depth=1 https://gitlab.freedesktop.org/mesa/drm.git
+    meson setup drm drm_build \
+        --prefix=${TARGET_DIR} \
+        --libdir=lib \
+        --buildtype=release \
+        -D{amdgpu,radeon,intel,udev}=true \
+        -D{libkms,valgrind,freedreno,vc4,vmwgfx,nouveau,man-pages}=false
+    meson configure drm_build
+    ninja -C drm_build install
+    cp ${TARGET_DIR}/lib/libdrm*.so* ${SOURCE_DIR}/drm
+    cp ${TARGET_DIR}/share/libdrm/*.ids ${SOURCE_DIR}/drm
+    echo "drm/libdrm*.so* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+    echo "drm/*.ids usr/lib/jellyfin-ffmpeg/share/libdrm" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+    popd
+
+    # libva
     pushd ${SOURCE_DIR}
     git clone --depth=1 https://github.com/intel/libva
     pushd libva
     sed -i 's|getenv("LIBVA_DRIVERS_PATH")|"/usr/lib/jellyfin-ffmpeg/lib/dri:/usr/lib/x86_64-linux-gnu/dri:/usr/lib/dri:/usr/local/lib/dri"|g' va/va.c
     sed -i 's|getenv("LIBVA_DRIVER_NAME")|getenv("LIBVA_DRIVER_NAME_JELLYFIN")|g' va/va.c
     ./autogen.sh
-    ./configure --prefix=${TARGET_DIR}
+    ./configure \
+        --prefix=${TARGET_DIR} \
+        --enable-drm \
+        --disable-{glx,x11,wayland,docs}
     make -j$(nproc) && make install && make install DESTDIR=${SOURCE_DIR}/intel
-    echo "intel${TARGET_DIR}/lib/libva* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+    echo "intel${TARGET_DIR}/lib/libva.so* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+    echo "intel${TARGET_DIR}/lib/libva-drm.so* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
     popd
     popd
 
-    # Download and install libva-utils
+    # libva-utils
     pushd ${SOURCE_DIR}
     git clone --depth=1 https://github.com/intel/libva-utils
     pushd libva-utils
@@ -127,7 +149,7 @@ prepare_extra_amd64() {
     popd
     popd
 
-    # Download and install intel-vaapi-driver
+    # intel-vaapi-driver
     pushd ${SOURCE_DIR}
     git clone --depth=1 https://github.com/intel/intel-vaapi-driver
     pushd intel-vaapi-driver
@@ -140,7 +162,7 @@ prepare_extra_amd64() {
     popd
     popd
 
-    # Download and install gmmlib
+    # gmmlib
     pushd ${SOURCE_DIR}
     git clone -b intel-gmmlib-22.1.2 --depth=1 https://github.com/intel/gmmlib
     pushd gmmlib
@@ -153,7 +175,7 @@ prepare_extra_amd64() {
     popd
     popd
 
-    # Download and install MediaSDK
+    # MediaSDK
     # Provides MSDK runtime (libmfxhw64.so.1) for 11th Gen Rocket Lake and older
     # Provides MFX dispatcher (libmfx.so.1) for FFmpeg
     pushd ${SOURCE_DIR}
@@ -173,7 +195,7 @@ prepare_extra_amd64() {
     popd
     popd
 
-    # Download and install oneVPL-intel-gpu
+    # oneVPL-intel-gpu
     # Provides VPL runtime (libmfx-gen.so.1.2) for 11th Gen Tiger Lake and newer
     # Both MSDK and VPL runtime can be loaded by MFX dispatcher (libmfx.so.1)
     pushd ${SOURCE_DIR}
@@ -187,12 +209,13 @@ prepare_extra_amd64() {
     popd
     popd
 
-    # Download and install media-driver
+    # media-driver
     # Full Feature Build: ENABLE_KERNELS=ON(Default) ENABLE_NONFREE_KERNELS=ON(Default)
     # Free Kernel Build: ENABLE_KERNELS=ON ENABLE_NONFREE_KERNELS=OFF
     pushd ${SOURCE_DIR}
     git clone -b intel-media-22.3.1 --depth=1 https://github.com/intel/media-driver
     pushd media-driver
+    sed -i 's|find_package(X11)||g' media_softlet/media_top_cmake.cmake media_driver/media_top_cmake.cmake
     mkdir build && pushd build
     cmake -DCMAKE_INSTALL_PREFIX=${TARGET_DIR} \
           -DENABLE_KERNELS=ON \
@@ -229,13 +252,15 @@ prepare_extra_amd64() {
     cmake \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=${TARGET_DIR} \
-        -DVULKAN_HEADERS_INSTALL_DIR=${TARGET_DIR} \
+        -DVULKAN_HEADERS_INSTALL_DIR="${TARGET_DIR}" \
+        -DCMAKE_INSTALL_SYSCONFDIR=${TARGET_DIR}/share \
+        -DCMAKE_INSTALL_DATADIR=${TARGET_DIR}/share \
         -DCMAKE_INSTALL_LIBDIR=lib \
         -DBUILD_TESTS=OFF \
         -DBUILD_WSI_{XCB,XLIB,WAYLAND}_SUPPORT=ON ..
     make -j$(nproc) && make install
     cp ${TARGET_DIR}/lib/libvulkan.so* ${SOURCE_DIR}/Vulkan-Loader
-    echo "Vulkan-Loader/libvulkan* usr/lib/jellyfin-ffmpeg/lib" ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+    echo "Vulkan-Loader/libvulkan.so* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
     popd
     popd
     popd
@@ -251,8 +276,8 @@ prepare_extra_amd64() {
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=${TARGET_DIR} \
         -DSHADERC_SKIP_{TESTS,EXAMPLES,COPYRIGHT_CHECK}=ON \
-        -DENABLE_EXCEPTIONS=ON \
-        -DENABLE_{CTEST,GLSLANG_BINARIES}=OFF \
+        -DENABLE_{GLSLANG_BINARIES,EXCEPTIONS}=ON \
+        -DENABLE_CTEST=OFF \
         -DSPIRV_SKIP_EXECUTABLES=ON \
         -DSPIRV_TOOLS_BUILD_STATIC=OFF \
         -DBUILD_SHARED_LIBS=ON ..
@@ -264,6 +289,61 @@ prepare_extra_amd64() {
     popd
     popd
     popd
+
+    # Mesa
+    # For AMD VAAPI, AMD RADV and Intel ANV
+    if [[ $( lsb_release -c -s ) != "bionic" ]]; then
+        # llvm >= 11
+        apt-get install -y llvm-11-dev
+        pushd ${SOURCE_DIR}
+        git clone -b mesa-22.0.2 --depth=1 https://gitlab.freedesktop.org/mesa/mesa.git
+        meson setup mesa mesa_build \
+            --prefix=${TARGET_DIR} \
+            --libdir=lib \
+            --buildtype=release \
+            --wrap-mode=nofallback \
+            -Db_ndebug=true \
+            -Db_lto=false \
+            -Dplatforms=x11\
+            -Ddri-drivers=[] \
+            -Dgallium-drivers=radeonsi \
+            -Dvulkan-drivers=amd,intel \
+            -Dvulkan-layers=device-select,overlay \
+            -Ddri3=enabled \
+            -Degl=disabled \
+            -Dgallium-{extra-hud,nine}=false \
+            -Dgallium-{omx,vdpau,xa,xvmc,opencl}=disabled \
+            -Dgallium-va=enabled \
+            -Dgbm=disabled \
+            -Dgles1=disabled \
+            -Dgles2=disabled \
+            -Dopengl=false \
+            -Dglvnd=false \
+            -Dglx=disabled \
+            -Dlibunwind=disabled \
+            -Dllvm=enabled \
+            -Dlmsensors=disabled \
+            -Dosmesa=false \
+            -Dshared-glapi=disabled \
+            -Dvalgrind=disabled \
+            -Dtools=[] \
+            -Dzstd=enabled \
+            -Dmicrosoft-clc=disabled
+        meson configure mesa_build
+        ninja -C mesa_build install
+        cp ${TARGET_DIR}/lib/libvulkan_*.so ${SOURCE_DIR}/mesa
+        cp ${TARGET_DIR}/lib/libVkLayer_MESA*.so ${SOURCE_DIR}/mesa
+        cp ${TARGET_DIR}/lib/dri/radeonsi_drv_video.so ${SOURCE_DIR}/mesa
+        echo "mesa/lib*.so usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+        echo "mesa/radeonsi_drv_video.so usr/lib/jellyfin-ffmpeg/lib/dri" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+        cp ${TARGET_DIR}/share/drirc.d/*.conf ${SOURCE_DIR}/mesa
+        echo "mesa/*defaults.conf usr/lib/jellyfin-ffmpeg/share/drirc.d" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+        cp ${TARGET_DIR}/share/vulkan/{icd.d,explicit_layer.d,implicit_layer.d}/*.json ${SOURCE_DIR}/mesa
+        echo "mesa/*icd.x86_64.json usr/lib/jellyfin-ffmpeg/share/vulkan/icd.d" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+        echo "mesa/*overlay.json usr/lib/jellyfin-ffmpeg/share/vulkan/explicit_layer.d" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+        echo "mesa/*device_select.json usr/lib/jellyfin-ffmpeg/share/vulkan/implicit_layer.d" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
+        popd
+    fi
 
     # SPIRV-Cross
     pushd ${SOURCE_DIR}
@@ -287,10 +367,9 @@ prepare_extra_amd64() {
     # libplacebo
     pushd ${SOURCE_DIR}
     git clone --depth=1 https://github.com/haasn/libplacebo
-    pushd libplacebo
-    mkdir build && pushd build
-    meson \
+    meson setup libplacebo placebo_build \
         --prefix=${TARGET_DIR} \
+        --libdir=lib \
         --buildtype=release \
         --default-library=shared \
         -Dvulkan=enabled \
@@ -298,13 +377,11 @@ prepare_extra_amd64() {
         -Dvulkan-registry=${TARGET_DIR}/share/vulkan/registry/vk.xml \
         -Dshaderc=enabled \
         -Dglslang=disabled \
-        -D{demos,tests,bench,fuzz}=false ..
-    ninja -j$(nproc)
-    ninja install
-    cp ${TARGET_DIR}/lib/x86_64-linux-gnu/libplacebo.so* ${SOURCE_DIR}/libplacebo
+        -D{demos,tests,bench,fuzz}=false
+    meson configure placebo_build
+    ninja -C placebo_build install
+    cp ${TARGET_DIR}/lib/libplacebo.so* ${SOURCE_DIR}/libplacebo
     echo "libplacebo/libplacebo* usr/lib/jellyfin-ffmpeg/lib" >> ${SOURCE_DIR}/debian/jellyfin-ffmpeg.install
-    popd
-    popd
     popd
 }
 
