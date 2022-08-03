@@ -132,6 +132,24 @@ prepare_extra_common() {
 
 # Prepare extra headers, libs and drivers for x86_64-linux-gnu
 prepare_extra_amd64() {
+    # SVT-AV1
+    pushd ${SOURCE_DIR}
+    git clone -b v1.2.0 --depth=1 https://gitlab.com/AOMediaCodec/SVT-AV1.git
+    pushd SVT-AV1
+    mkdir build
+    pushd build
+    cmake \
+        -DCMAKE_INSTALL_PREFIX=${TARGET_DIR} \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DENABLE_AVX512=ON \
+        -DBUILD_SHARED_LIBS=ON \
+        -DBUILD_{TESTING,APPS,DEC}=OFF \
+        ..
+    make -j$(nproc) && make install && make install DESTDIR=${SOURCE_DIR}/SVT-AV1
+    echo "SVT-AV1${TARGET_DIR}/lib/libSvtAv1Enc.so* usr/lib/jellyfin-ffmpeg/lib" >> ${DPKG_INSTALL_LIST}
+    popd
+    popd
+
     # FFNVCODEC
     pushd ${SOURCE_DIR}
     git clone -b n11.1.5.1 --depth=1 https://github.com/FFmpeg/nv-codec-headers
@@ -220,7 +238,6 @@ prepare_extra_amd64() {
     mkdir build && pushd build
     cmake -DCMAKE_INSTALL_PREFIX=${TARGET_DIR} ..
     make -j$(nproc) && make install && make install DESTDIR=${SOURCE_DIR}/intel
-    make install
     echo "intel${TARGET_DIR}/lib/libigdgmm.so* usr/lib/jellyfin-ffmpeg/lib" >> ${DPKG_INSTALL_LIST}
     popd
     popd
