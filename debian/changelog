@@ -1,3 +1,10 @@
+jellyfin-ffmpeg (5.1.2-9) unstable; urgency=medium
+
+  * Use archive mode to copy shared libs
+  * Update dependencies
+
+ -- nyanmisaka <nst799610810@gmail.com>  Tue, 28 Feb 2023 19:50:24 +0800
+
 jellyfin-ffmpeg (5.1.2-8) unstable; urgency=medium
 
   * Remove the changed vulkan video extensions
