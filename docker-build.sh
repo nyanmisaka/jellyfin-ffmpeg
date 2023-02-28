@@ -242,7 +242,7 @@ prepare_extra_amd64() {
 
     # GMMLIB
     pushd ${SOURCE_DIR}
-    git clone -b intel-gmmlib-22.3.3 --depth=1 https://github.com/intel/gmmlib
+    git clone -b intel-gmmlib-22.3.4 --depth=1 https://github.com/intel/gmmlib
     pushd gmmlib
     mkdir build && pushd build
     cmake -DCMAKE_INSTALL_PREFIX=${TARGET_DIR} ..
@@ -256,7 +256,7 @@ prepare_extra_amd64() {
     # Provides MSDK runtime (libmfxhw64.so.1) for 11th Gen Rocket Lake and older
     # Provides MFX dispatcher (libmfx.so.1) for FFmpeg
     pushd ${SOURCE_DIR}
-    git clone -b intel-mediasdk-23.1.1 --depth=1 https://github.com/Intel-Media-SDK/MediaSDK
+    git clone -b intel-mediasdk-23.1.2 --depth=1 https://github.com/Intel-Media-SDK/MediaSDK
     pushd MediaSDK
     sed -i 's|MFX_PLUGINS_CONF_DIR "/plugins.cfg"|"/usr/lib/jellyfin-ffmpeg/lib/mfx/plugins.cfg"|g' api/mfx_dispatch/linux/mfxloader.cpp
     mkdir build && pushd build
@@ -276,7 +276,7 @@ prepare_extra_amd64() {
     # Provides VPL runtime (libmfx-gen.so.1.2) for 11th Gen Tiger Lake and newer
     # Both MSDK and VPL runtime can be loaded by MFX dispatcher (libmfx.so.1)
     pushd ${SOURCE_DIR}
-    git clone -b intel-onevpl-23.1.1 --depth=1 https://github.com/oneapi-src/oneVPL-intel-gpu
+    git clone -b intel-onevpl-23.1.2 --depth=1 https://github.com/oneapi-src/oneVPL-intel-gpu
     pushd oneVPL-intel-gpu
     mkdir build && pushd build
     cmake -DCMAKE_INSTALL_PREFIX=${TARGET_DIR} ..
@@ -290,7 +290,7 @@ prepare_extra_amd64() {
     # Full Feature Build: ENABLE_KERNELS=ON(Default) ENABLE_NONFREE_KERNELS=ON(Default)
     # Free Kernel Build: ENABLE_KERNELS=ON ENABLE_NONFREE_KERNELS=OFF
     pushd ${SOURCE_DIR}
-    git clone -b intel-media-23.1.1 --depth=1 https://github.com/intel/media-driver
+    git clone -b intel-media-23.1.2 --depth=1 https://github.com/intel/media-driver
     pushd media-driver
     # Possible fix for TGLx timeout caused by 'HCP Scalability Decode' under heavy load
     wget -q -O - https://github.com/intel/media-driver/commit/284750bf2619112627dd8c60bd5c8032c7780606.patch | git apply
@@ -372,25 +372,21 @@ prepare_extra_amd64() {
     if [[ ${LLVM_VER} -ge 11 ]]; then
         apt-get install -y llvm-${LLVM_VER}-dev libudev-dev
         pushd ${SOURCE_DIR}
-        mkdir mesa
+        mesa_commit="12f0dadd"
+        git clone -b main https://gitlab.freedesktop.org/mesa/mesa.git
         pushd mesa
-        mesa_ver="22.3.5"
-        mesa_link="https://mesa.freedesktop.org/archive/mesa-${mesa_ver}.tar.xz"
-        wget ${mesa_link} -O mesa.tar.xz
-        tar xaf mesa.tar.xz
-        # reduce encode overhead with optimized buffer types
-        wget -O - https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/20376.patch | git apply
-        wget -O - https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/20989.patch | git apply
+        git reset --hard ${mesa_commit}
+        popd
         # disable the broken hevc packed header
-        MESA_VA_PIC="mesa-${mesa_ver}/src/gallium/frontends/va/picture.c"
-        MESA_VA_CONF="mesa-${mesa_ver}/src/gallium/frontends/va/config.c"
+        MESA_VA_PIC="mesa/src/gallium/frontends/va/picture.c"
+        MESA_VA_CONF="mesa/src/gallium/frontends/va/config.c"
         sed -i 's|handleVAEncPackedHeaderParameterBufferType(context, buf);||g' ${MESA_VA_PIC}
         sed -i 's|handleVAEncPackedHeaderDataBufferType(context, buf);||g' ${MESA_VA_PIC}
         sed -i 's|if (u_reduce_video_profile(ProfileToPipe(profile)) == PIPE_VIDEO_FORMAT_HEVC)|if (0)|g' ${MESA_VA_CONF}
         # force reporting all packed headers are supported
         sed -i 's|value = VA_ENC_PACKED_HEADER_NONE;|value = 0x0000001f;|g' ${MESA_VA_CONF}
         sed -i 's|if (attrib_list\[i\].type == VAConfigAttribEncPackedHeaders)|if (0)|g' ${MESA_VA_CONF}
-        meson setup mesa-${mesa_ver} mesa_build \
+        meson setup mesa mesa_build \
             --prefix=${TARGET_DIR} \
             --libdir=lib \
             --buildtype=release \
@@ -398,7 +394,6 @@ prepare_extra_amd64() {
             -Db_ndebug=true \
             -Db_lto=false \
             -Dplatforms=x11 \
-            -Ddri-drivers=[] \
             -Dgallium-drivers=radeonsi \
             -Dvulkan-drivers=amd,intel \
             -Dvulkan-layers=device-select,overlay \
