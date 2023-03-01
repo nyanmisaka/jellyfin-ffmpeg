@@ -10,7 +10,15 @@ Index: jellyfin-ffmpeg/libavformat/assenc.c
  
  typedef struct DialogueLine {
      int readorder;
-@@ -70,9 +71,20 @@ static int write_header(AVFormatContext
+@@ -56,6 +57,7 @@ static int write_header(AVFormatContext
+     avpriv_set_pts_info(s->streams[0], 64, 1, 100);
+     if (par->extradata_size > 0) {
+         size_t header_size = par->extradata_size;
++        char *header_string = NULL;
+         uint8_t *trailer = strstr(par->extradata, "\n[Events]");
+ 
+         if (trailer)
+@@ -70,9 +72,20 @@ static int write_header(AVFormatContext
                  ass->trailer = trailer;
          }
  
