@@ -16,8 +16,8 @@ Index: jellyfin-ffmpeg/fftools/ffmpeg.c
  FilterGraph **filtergraphs;
  int        nb_filtergraphs;
  
-+paused_start = 0;
-+paused_time = 0;
++int64_t paused_start = 0;
++int64_t paused_time = 0;
 +
  #if HAVE_TERMIOS_H
  
