@@ -1,0 +1,68 @@
+Index: jellyfin-ffmpeg/libavcodec/vaapi_decode.c
+===================================================================
+--- jellyfin-ffmpeg.orig/libavcodec/vaapi_decode.c
++++ jellyfin-ffmpeg/libavcodec/vaapi_decode.c
+@@ -593,6 +593,9 @@ static int vaapi_decode_make_config(AVCo
+         if (err < 0)
+             goto fail;
+ 
++#if CONFIG_VAAPI_1
++        frames->initial_pool_size = 0;
++#else
+         frames->initial_pool_size = 1;
+         // Add per-codec number of surfaces used for storing reference frames.
+         switch (avctx->codec_id) {
+@@ -610,6 +613,7 @@ static int vaapi_decode_make_config(AVCo
+         default:
+             frames->initial_pool_size += 2;
+         }
++#endif
+     }
+ 
+     av_hwframe_constraints_free(&constraints);
+Index: jellyfin-ffmpeg/libavfilter/vaapi_vpp.c
+===================================================================
+--- jellyfin-ffmpeg.orig/libavfilter/vaapi_vpp.c
++++ jellyfin-ffmpeg/libavfilter/vaapi_vpp.c
+@@ -187,7 +187,11 @@ int ff_vaapi_vpp_config_output(AVFilterL
+     output_frames->width     = ctx->output_width;
+     output_frames->height    = ctx->output_height;
+ 
++#if CONFIG_VAAPI_1
++    output_frames->initial_pool_size = 0;
++#else
+     output_frames->initial_pool_size = 4;
++#endif
+ 
+     err = ff_filter_init_hw_frames(avctx, outlink, 10);
+     if (err < 0)
+Index: jellyfin-ffmpeg/libavutil/hwcontext_vaapi.c
+===================================================================
+--- jellyfin-ffmpeg.orig/libavutil/hwcontext_vaapi.c
++++ jellyfin-ffmpeg/libavutil/hwcontext_vaapi.c
+@@ -609,7 +609,7 @@ static int vaapi_frames_init(AVHWFramesC
+             }
+         } else {
+             // This pool allows dynamic sizing, and will not be usable as a
+-            // render target.
++            // render target with libva. It can be used with libva2
+             avfc->nb_surfaces = 0;
+             avfc->surface_ids = NULL;
+         }
+Index: jellyfin-ffmpeg/libavutil/hwcontext_vaapi.h
+===================================================================
+--- jellyfin-ffmpeg.orig/libavutil/hwcontext_vaapi.h
++++ jellyfin-ffmpeg/libavutil/hwcontext_vaapi.h
+@@ -25,9 +25,10 @@
+  * @file
+  * API-specific header for AV_HWDEVICE_TYPE_VAAPI.
+  *
+- * Dynamic frame pools are supported, but note that any pool used as a render
++ * Dynamic frame pools are supported. Note that any pool used as a render
+  * target is required to be of fixed size in order to be be usable as an
+- * argument to vaCreateContext().
++ * argument to vaCreateContext() with libva. When libva2 (VAAPI 1) is used,
++ * a pool used as a render target can be dynamic.
+  *
+  * For user-allocated pools, AVHWFramesContext.pool must return AVBufferRefs
+  * with the data pointer set to a VASurfaceID.

@@ -24,7 +24,7 @@
 0025-add-sub2video-option-to-subtitles-filter.patch
 0026-add-alphasrc-source-video-filter.patch
 0027-improve-vaapi-encoding-speed-with-vulkan.patch
-0028-add-fixes-for-vaapi-mapping-error.patch
+0028-use-dynamic-frame-pool-for-vaapi-dec-and-vpp.patch
 0029-add-fixes-for-hevc-vaapi-encoding-on-tgl.patch
 0030-add-fixes-for-vulkan-vaapi-interop.patch
 0031-add-multiple-values-tags-and-webp-support-for-id3v2.patch
