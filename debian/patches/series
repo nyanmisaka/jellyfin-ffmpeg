@@ -17,7 +17,6 @@
 0017-add-fixes-for-vaapi-tonemap.patch
 0018-add-fixes-for-nvdec-exceed-32-surfaces-error.patch
 0019-add-misc-fixes-for-qsv-from-upstream.patch
-0020-add-qsv-vaapi-422-444-decoding.patch
 0021-add-new-frame-sidedata-func.patch
 0022-add-code-polishing-to-qsv-filters.patch
 0023-suppress-overlay-warning-logs.patch
