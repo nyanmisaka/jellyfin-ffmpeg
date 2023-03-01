@@ -148,7 +148,7 @@ Index: jellyfin-ffmpeg/compat/cuda/cuda_runtime.h
  // Template calling tex instruction and converting the output to the selected type
  template<typename T>
 -inline __device__ T tex2D(cudaTextureObject_t texObject, float x, float y)
-+static __inline__ __device__ T tex2D(cudaTextureObject_t texObject, float x, float y)
++__inline__ __device__ T tex2D(cudaTextureObject_t texObject, float x, float y)
  {
 -  T ret;
 -  unsigned ret1, ret2, ret3, ret4;
@@ -168,23 +168,23 @@ Index: jellyfin-ffmpeg/compat/cuda/cuda_runtime.h
  
  template<>
 -inline __device__ float4 tex2D<float4>(cudaTextureObject_t texObject, float x, float y)
-+static __inline__ __device__ float4 tex2D<float4>(cudaTextureObject_t texObject, float x, float y)
++__inline__ __device__ float4 tex2D<float4>(cudaTextureObject_t texObject, float x, float y)
  {
      float4 ret;
      asm("tex.2d.v4.f32.f32 {%0, %1, %2, %3}, [%4, {%5, %6}];" :
-@@ -156,36 +148,41 @@ inline __device__ float4 tex2D<float4>(c
+@@ -156,37 +148,41 @@ inline __device__ float4 tex2D<float4>(c
  }
  
  template<>
 -inline __device__ float tex2D<float>(cudaTextureObject_t texObject, float x, float y)
-+static __inline__ __device__ float tex2D<float>(cudaTextureObject_t texObject, float x, float y)
++__inline__ __device__ float tex2D<float>(cudaTextureObject_t texObject, float x, float y)
  {
      return tex2D<float4>(texObject, x, y).x;
  }
  
  template<>
 -inline __device__ float2 tex2D<float2>(cudaTextureObject_t texObject, float x, float y)
-+static __inline__ __device__ float2 tex2D<float2>(cudaTextureObject_t texObject, float x, float y)
++__inline__ __device__ float2 tex2D<float2>(cudaTextureObject_t texObject, float x, float y)
  {
      float4 ret = tex2D<float4>(texObject, x, y);
      return make_float2(ret.x, ret.y);
@@ -209,6 +209,7 @@ Index: jellyfin-ffmpeg/compat/cuda/cuda_runtime.h
 -static inline __device__ float __sinf(float a) { return __nvvm_sin_approx_f(a); }
 -static inline __device__ float __cosf(float a) { return __nvvm_cos_approx_f(a); }
 -static inline __device__ float __expf(float a) { return __nvvm_ex2_approx_f(a * (float)__builtin_log2(__builtin_exp(1))); }
+-static inline __device__ float __powf(float a, float b) { return __nvvm_ex2_approx_f(__nvvm_lg2_approx_f(a) * b); }
 +static __inline__ __device__ float floorf(float a) { return __builtin_floorf(a); }
 +static __inline__ __device__ float floor(float a) { return __builtin_floorf(a); }
 +static __inline__ __device__ double floor(double a) { return __builtin_floor(a); }
@@ -231,6 +232,6 @@ Index: jellyfin-ffmpeg/compat/cuda/cuda_runtime.h
 +static __inline__ __device__ float __log2f(float a) { return __nvvm_lg2_approx_f(a); }
 +static __inline__ __device__ float __logf(float a) { return __nvvm_lg2_approx_f(a) * 0.693147f; }
 +static __inline__ __device__ float __log10f(float a) { return __nvvm_lg2_approx_f(a) * 0.30103f; }
-+static __inline__ __device__ float __powf(float a, float b) { return __nvvm_ex2_approx_f(b * __nvvm_lg2_approx_f(a)); }
++static __inline__ __device__ float __powf(float a, float b) { return __nvvm_ex2_approx_f(__nvvm_lg2_approx_f(a) * b); }
  
  #endif /* COMPAT_CUDA_CUDA_RUNTIME_H */
