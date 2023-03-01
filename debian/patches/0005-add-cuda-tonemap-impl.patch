@@ -985,7 +985,7 @@ Index: jellyfin-ffmpeg/libavfilter/cuda/tonemap.cu
 ===================================================================
 --- /dev/null
 +++ jellyfin-ffmpeg/libavfilter/cuda/tonemap.cu
-@@ -0,0 +1,448 @@
+@@ -0,0 +1,449 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -1016,6 +1016,7 @@ Index: jellyfin-ffmpeg/libavfilter/cuda/tonemap.cu
 +extern __constant__ const float dither_size;
 +extern __constant__ const float dither_quantization;
 +
++#define clamp(a, b, c) min(max((a), (b)), (c))
 +#define mix(x, y, a) ((x) + ((y) - (x)) * (a))
 +#define dot3(a, b) ((a).z * (b).z + ((a).y * (b).y + (a).x * (b).x))
 +#define dot4(a, b) ((a).w * (b).w + ((a).z * (b).z + ((a).y * (b).y + (a).x * (b).x)))
