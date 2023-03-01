@@ -10,14 +10,7 @@ Index: jellyfin-ffmpeg/compat/cuda/cuda_runtime.h
  #define __global__ __attribute__((global))
  #define __device__ __attribute__((device))
  #define __device_builtin__ __attribute__((device_builtin))
-@@ -33,65 +34,66 @@
- #define max(a, b) ((a) > (b) ? (a) : (b))
- #define min(a, b) ((a) < (b) ? (a) : (b))
- #define abs(x) ((x) < 0 ? -(x) : (x))
-+#define clamp(a, b, c) min(max((a), (b)), (c))
- 
- #define atomicAdd(a, b) (__atomic_fetch_add(a, b, __ATOMIC_SEQ_CST))
- 
+@@ -39,59 +40,59 @@
  // Basic typedefs
  typedef __device_builtin__ unsigned long long cudaTextureObject_t;
  
@@ -123,7 +116,7 @@ Index: jellyfin-ffmpeg/compat/cuda/cuda_runtime.h
      uint3 ret; \
      unsigned tmp; \
      GETCOMP(reg, x) \
-@@ -109,18 +111,8 @@ GET(getThreadIdx, tid)
+@@ -109,18 +110,8 @@ GET(getThreadIdx, tid)
  #define blockDim (getBlockDim())
  #define threadIdx (getThreadIdx())
  
@@ -143,7 +136,7 @@ Index: jellyfin-ffmpeg/compat/cuda/cuda_runtime.h
  
  TEX2D(unsigned char, a & 0xFF)
  TEX2D(unsigned short, a & 0xFFFF)
-@@ -134,19 +126,19 @@ TEX2D(float4, make_float4(a, b, c, d))
+@@ -134,19 +125,19 @@ TEX2D(float4, make_float4(a, b, c, d))
  
  // Template calling tex instruction and converting the output to the selected type
  template<typename T>
@@ -172,7 +165,7 @@ Index: jellyfin-ffmpeg/compat/cuda/cuda_runtime.h
  {
      float4 ret;
      asm("tex.2d.v4.f32.f32 {%0, %1, %2, %3}, [%4, {%5, %6}];" :
-@@ -156,37 +148,41 @@ inline __device__ float4 tex2D<float4>(c
+@@ -156,37 +147,41 @@ inline __device__ float4 tex2D<float4>(c
  }
  
  template<>
