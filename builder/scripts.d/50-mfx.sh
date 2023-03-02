@@ -5,7 +5,7 @@ SCRIPT_COMMIT="5a3f178be7f406cec920b9f52f46c1ae29f29bb2"
 
 ffbuild_enabled() {
     [[ $TARGET == *arm64 ]] && return -1
-    return 0
+    return -1
 }
 
 ffbuild_dockerstage() {
@@ -47,9 +47,11 @@ ffbuild_dockerbuild() {
 }
 
 ffbuild_configure() {
+    return 0
     [[ $TARGET != *arm64 ]] && echo --enable-libmfx
 }
 
 ffbuild_unconfigure() {
+    return 0
     [[ $TARGET != *arm64 ]] && echo --disable-libmfx
 }
