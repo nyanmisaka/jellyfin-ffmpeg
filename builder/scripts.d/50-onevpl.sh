@@ -5,6 +5,7 @@ SCRIPT_COMMIT="6ca7a09c4b5b2c1ae6b52d73bc44c334ab66adbc"
 
 ffbuild_enabled() {
     [[ $TARGET == *arm64 ]] && return -1
+    return 0
 }
 
 ffbuild_dockerbuild() {
@@ -28,7 +29,6 @@ ffbuild_dockerbuild() {
 }
 
 ffbuild_configure() {
-    return 0
     [[ $TARGET != *arm64 ]] && echo --enable-libvpl
 }
 
