@@ -44,3 +44,5 @@
 0044-add-fixes-for-vaapi-drm-vulkan-tearing.patch
 0045-add-fixes-for-the-incorrect-null-terminator-in-assenc.patch
 0046-skip-loading-plugins-on-vpl-runtime.patch
+0047-update-the-default-params-of-qsv-encoders.patch
+0048-fix-nvenc-potential-null-pointer-dereference.patch
