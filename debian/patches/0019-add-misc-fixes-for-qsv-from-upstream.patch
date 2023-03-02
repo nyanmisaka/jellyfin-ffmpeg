@@ -408,6 +408,25 @@ Index: jellyfin-ffmpeg/libavcodec/qsvenc.c
      HW_CONFIG_ENCODER_DEVICE(NV12, QSV),
      HW_CONFIG_ENCODER_DEVICE(P010, QSV),
      NULL,
+Index: jellyfin-ffmpeg/libavcodec/qsvenc_av1.c
+===================================================================
+--- jellyfin-ffmpeg.orig/libavcodec/qsvenc_av1.c
++++ jellyfin-ffmpeg/libavcodec/qsvenc_av1.c
+@@ -149,10 +149,13 @@ FFCodec ff_av1_qsv_encoder = {
+     .p.pix_fmts       = (const enum AVPixelFormat[]){ AV_PIX_FMT_NV12,
+                                                     AV_PIX_FMT_P010,
+                                                     AV_PIX_FMT_QSV,
++                                                    AV_PIX_FMT_VAAPI,
++                                                    AV_PIX_FMT_D3D11,
+                                                     AV_PIX_FMT_NONE },
+     .p.priv_class     = &class,
+     .defaults       = qsv_enc_defaults,
+-    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
++    .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE |
++                      FF_CODEC_CAP_INIT_CLEANUP,
+     .p.wrapper_name   = "qsv",
+     .hw_configs     = ff_qsv_enc_hw_configs,
+ };
 Index: jellyfin-ffmpeg/libavcodec/qsvenc_h264.c
 ===================================================================
 --- jellyfin-ffmpeg.orig/libavcodec/qsvenc_h264.c
