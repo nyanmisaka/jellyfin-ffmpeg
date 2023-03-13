@@ -156,9 +156,8 @@ prepare_extra_amd64() {
 
     # FFNVCODEC
     pushd ${SOURCE_DIR}
-    git clone --depth=1 https://github.com/FFmpeg/nv-codec-headers.git
+    git clone -b n12.0.16.0 --depth=1 https://github.com/FFmpeg/nv-codec-headers.git
     pushd nv-codec-headers
-    git reset --hard "c5e4af7"
     make && make install
     popd
     popd
