@@ -21,6 +21,7 @@
 #include <stdint.h>
 
 #include "ffmpeg.h"
+#include "ffmpeg_subs.h"
 
 #include "libavfilter/avfilter.h"
 #include "libavfilter/buffersink.h"

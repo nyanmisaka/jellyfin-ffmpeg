@@ -19,11 +19,14 @@
 #include "ffmpeg.h"
 #include "ffmpeg_subs.h"
 
+#include "config.h"
+#include "config_components.h"
+
 #include <sys/types.h>
 #include <limits.h>
 #include "strings.h"
 #include "libavcodec/mpegvideo.h"
-#include "libavfilter/vf_inlineass.h"
+#include "libavfilter/vf_inlinesubs.h"
 #include "libavutil/timestamp.h"
 #include "libavformat/internal.h"
 
@@ -31,9 +34,12 @@ SubsContext subsCtx = {0};
 
 void subs_prepare_setup_input_streams(InputStream* ist)
 {
-#if CONFIG_INLINESUBS_FILTER
+//#if CONFIG_INLINESUBS_FILTER
     int i;
-    for (i = 0; i < subsCtx.nb_inlineass_ctxs; i++) {
+
+    av_log(NULL, AV_LOG_VERBOSE, "subs_prepare_setup_input_streams!\n");
+
+    for (i = 0; i < subsCtx.nb_inlinesubs_ctxs; i++) {
         InlineSubsContext *ctx = &subsCtx.inlinesubs_ctxs[i];
         if (ist->st->index == ctx->stream_index &&
             ist->file_index == ctx->file_index) {
@@ -41,13 +47,16 @@ void subs_prepare_setup_input_streams(InputStream* ist)
             ist->st->discard = AVDISCARD_NONE;
         }
     }
-#endif
+//#endif
 }
 
 void subs_link_subtitles_to_graph(AVFilterGraph* g)
 {
-#if CONFIG_INLINESUBS_FILTER
+//#if CONFIG_INLINESUBS_FILTER
     int contextId = 0;
+
+    av_log(NULL, AV_LOG_VERBOSE, "subs_link_subtitles_to_graph!\n");
+
     for (int i = 0; i < nb_filtergraphs && contextId < subsCtx.nb_inlinesubs_ctxs; i++) {
         AVFilterGraph* graph = filtergraphs[i]->graph;
         if (!graph)
@@ -59,18 +68,28 @@ void subs_link_subtitles_to_graph(AVFilterGraph* g)
                 InlineSubsContext *inlineSubsCtx = &subsCtx.inlinesubs_ctxs[contextId++];
                 inlineSubsCtx->ctx = ctx;
 
-                for (int j = 0; j < nb_input_streams; j++) {
-                    InputStream *ist = input_streams[j];
-                    if (ist->st->codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT)
-                        avfilter_inlinesubs_add_attachment(ctx, ist->st);
-                    if (ist->file_index == assCtx->file_index &&
-                        ist->st->index == assCtx->stream_index &&
-                        ist->sub2video.sub_queue) {
-                        while (av_fifo_size(ist->sub2video.sub_queue)) {
-                            AVSubtitle tmp;
-                            av_fifo_generic_read(ist->sub2video.sub_queue, &tmp, sizeof(tmp), NULL);
-                            process_subtitles(ist, &tmp); //TODO
-                            avsubtitle_free(&tmp);
+                for (int i = 0; i < nb_input_files; i++) {
+                    InputFile *ifile = input_files[i];
+                    for (int j = 0; j < ifile->nb_streams; j++) {
+                        InputStream *ist = ifile->streams[j];
+                        if (ist->st->codecpar->codec_type == AVMEDIA_TYPE_ATTACHMENT)
+                            avfilter_inlinesubs_add_attachment(ctx, ist->st);
+                        if (ist->file_index == inlineSubsCtx->file_index &&
+                            ist->st->index == inlineSubsCtx->stream_index &&
+                            ist->sub2video.sub_queue) {
+/*
+                            while (av_fifo_size(ist->sub2video.sub_queue)) {
+                                AVSubtitle tmp;
+                                av_fifo_generic_read(ist->sub2video.sub_queue, &tmp, sizeof(tmp), NULL);
+                                subs_process_subtitles(ist, &tmp);
+                                avsubtitle_free(&tmp);
+                            }
+*/
+                            AVSubtitle sub;
+                            while (av_fifo_read(ist->sub2video.sub_queue, &sub, 1) >= 0) {
+                                subs_process_subtitles(ist, &sub);
+                                avsubtitle_free(&sub);
+                            }
                         }
                     }
                 }
@@ -79,16 +98,18 @@ void subs_link_subtitles_to_graph(AVFilterGraph* g)
             }
         }
     }
-#endif
+//#endif
 }
 
 int subs_opt_subtitle_stream(void *optctx, const char *opt, const char *arg)
 {
-#if CONFIG_INLINESUBS_FILTER
+//#if CONFIG_INLINESUBS_FILTER
     InlineSubsContext *m = NULL;
     int i, file_idx;
     char *p;
     char *map = av_strdup(arg);
+
+    av_log(NULL, AV_LOG_VERBOSE, "subs_opt_subtitle_stream!\n");
 
     file_idx = strtol(map, &p, 0);
     if (file_idx >= nb_input_files || file_idx < 0) {
@@ -117,14 +138,17 @@ finish:
         av_log(NULL, AV_LOG_ERROR, "Subtitle stream map '%s' matches no streams.\n", arg);
 
     av_freep(&map);
-#endif
+//#endif
     return 0;
 }
 
 int subs_process_subtitles(const InputStream *ist, AVSubtitle *sub)
 {
-#if CONFIG_INLINESUBS_FILTER
+//#if CONFIG_INLINESUBS_FILTER
     int i;
+
+    av_log(NULL, AV_LOG_VERBOSE, "subs_process_subtitles!\n");
+
     /* If we're burning subtitles, pass discarded subtitle packets of the
      * appropriate stream to the subtitle renderer */
     for (i = 0; i < subsCtx.nb_inlinesubs_ctxs; i++) {
@@ -137,6 +161,6 @@ int subs_process_subtitles(const InputStream *ist, AVSubtitle *sub)
             return 2;
         }
     }
-#endif
+//#endif
     return 0;
 }

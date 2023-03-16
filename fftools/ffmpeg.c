@@ -103,6 +103,7 @@
 #include <time.h>
 
 #include "ffmpeg.h"
+#include "ffmpeg_subs.h"
 #include "cmdutils.h"
 #include "sync_queue.h"
 
@@ -2334,6 +2335,8 @@ static int process_subtitle(InputStream *ist, AVSubtitle *subtitle, int *got_out
     int ret = 0;
     int free_sub = 1;
 
+    av_log(NULL, AV_LOG_VERBOSE, "process_subtitle!\n");
+
     if (ist->fix_sub_duration) {
         int end = 1;
         if (ist->prev_sub.got_output) {
@@ -2359,7 +2362,7 @@ static int process_subtitle(InputStream *ist, AVSubtitle *subtitle, int *got_out
 
     if (ist->sub2video.frame) {
         sub2video_update(ist, INT64_MIN, subtitle);
-    } else if (ist->nb_filters || || subs_process_subtitles(ist, &subtitle) == 1) {
+    } else if (ist->nb_filters || subs_process_subtitles(ist, &subtitle) == 1) {
         if (!ist->sub2video.sub_queue)
             ist->sub2video.sub_queue = av_fifo_alloc2(8, sizeof(AVSubtitle), AV_FIFO_FLAG_AUTO_GROW);
         if (!ist->sub2video.sub_queue)

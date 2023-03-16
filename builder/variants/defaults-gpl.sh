@@ -1,4 +1,4 @@
-FF_CONFIGURE="--enable-gpl --enable-version3 --enable-lto --disable-ffplay --disable-debug --disable-doc --disable-ptx-compression --disable-sdl2"
+FF_CONFIGURE="--enable-gpl --enable-version3 --disable-ffplay --disable-debug --disable-doc --disable-ptx-compression --disable-sdl2"
 FF_CFLAGS=""
 FF_CXXFLAGS=""
 FF_LDFLAGS=""

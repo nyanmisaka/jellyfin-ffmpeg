@@ -37,6 +37,7 @@
 #include "libavutil/imgutils.h"
 #include "libavutil/opt.h"
 #include "libavutil/parseutils.h"
+#include "vf_inlinesubs.h"
 #include "drawutils.h"
 #include "avfilter.h"
 #include "internal.h"
@@ -55,6 +56,7 @@ typedef struct AssContext {
     uint8_t rgba_map[4];
     int original_w, original_h;
     int shaping;
+    int got_header;
     FFDrawContext draw;
 } AssContext;
 
@@ -197,7 +199,7 @@ static int process_header(AVFilterContext *link, AVCodecContext *dec_ctx)
     int ret = 0;
     AssContext *ass = link->priv;
     ASS_Track *track = ass->track;
-    enum AVCodecID codecID = dec_ctx->codec_id;
+//    enum AVCodecID codecID = dec_ctx->codec_id;
 
     if (!track)
         return AVERROR(EINVAL);
@@ -210,25 +212,31 @@ static int process_header(AVFilterContext *link, AVCodecContext *dec_ctx)
         while (ptr) {
             av_dynarray_add(&list, &i, ptr);
             if (!list) {
-                ret = AVERROR(ENOMEM);
-                goto end;
+                return AVERROR(ENOMEM);
             }
             ptr = av_strtok(NULL, ",", &temp);
         }
         av_dynarray_add(&list, &i, NULL);
         if (!list) {
-            ret = AVERROR(ENOMEM);
-            goto end;
+            return AVERROR(ENOMEM);
         }
         ass_set_style_overrides(ass->library, list);
         av_free(list);
     }
+
+
     /* Decode subtitles and push them into the renderer (libass) */
+
     if (dec_ctx->subtitle_header)
         ass_process_codec_private(ass->track,
                                   dec_ctx->subtitle_header,
                                   dec_ctx->subtitle_header_size);
-
+/*
+    if (codecID == AV_CODEC_ID_ASS) {
+        ass_process_codec_private(track, dec_ctx->extradata,
+                                  dec_ctx->extradata_size);
+    }
+*/
     ass->got_header = 1;
 
     return ret;
@@ -243,11 +251,13 @@ void avfilter_inlinesubs_append_data(AVFilterContext *link, AVCodecContext *dec_
     if (!ass->got_header)
         process_header(link, dec_ctx);
 
+    av_log(NULL, AV_LOG_VERBOSE, "avfilter_inlinesubs_append_data!\n");
+
     for (i = 0; i < sub->num_rects; i++) {
+        const char *ass_line = sub->rects[i]->ass;
         int64_t duration = sub->end_display_time - sub->start_display_time;
         int64_t start = av_rescale_q(sub->pts, AV_TIME_BASE_Q, ASS_TIME_BASE);
-        start        += sub->start_display_time;
-        char *ass_line = sub->rects[i]->ass;
+        start += sub->start_display_time;
         if (!ass_line)
             break;
         ass_process_chunk(ass->track, ass_line, strlen(ass_line), start, duration);
@@ -279,8 +289,8 @@ void avfilter_inlinesubs_add_attachment(AVFilterContext *context, AVStream *st)
         return;
 
     filename = av_dict_get(st->metadata, "filename", NULL, 0);
-    if (!f) {
-        av_log(ctx, AV_LOG_WARNING,
+    if (!filename) {
+        av_log(context, AV_LOG_WARNING,
                "Font attachment has no filename, ignored.\n");
         return;
     }
@@ -289,7 +299,7 @@ void avfilter_inlinesubs_add_attachment(AVFilterContext *context, AVStream *st)
     if (mimetype) {
         for (i = 0; font_mimetypes[i]; i++) {
             if (av_strcasecmp(font_mimetypes[i], mimetype->value) == 0) {
-                av_log(ctx, AV_LOG_DEBUG, "Loading attached font: %s\n",
+                av_log(context, AV_LOG_DEBUG, "Loading attached font: %s\n",
                        filename->value);
                 ass_add_font(ass->library, filename->value,
                              st->codecpar->extradata,
@@ -306,12 +316,6 @@ void avfilter_inlinesubs_set_fonts(AVFilterContext *context)
 
     /* Initialize fonts */
     ass_set_fonts(ass->renderer, NULL, NULL, 1, NULL, 1);
-}
-
-void avfilter_inlinesubs_set_storage_size(AVFilterContext *context, int w, int h)
-{
-    AssContext *ass = (AssContext *)context->priv;
-    ass_set_storage_size(ass->renderer, w, h);
 }
 
 static const AVFilterPad inlinesubs_inputs[] = {
@@ -331,7 +335,7 @@ static const AVFilterPad inlinesubs_outputs[] = {
     },
 };
 
-static const AVOption subtitles_options[] = {
+static const AVOption inlinesubs_options[] = {
     {"original_size",  "set the size of the original video (used to scale fonts)", OFFSET(original_w), AV_OPT_TYPE_IMAGE_SIZE, {.str = NULL},  0, 0, FLAGS },
     {"fontsdir",       "set the directory containing the fonts to read",           OFFSET(fontsdir),   AV_OPT_TYPE_STRING,     {.str = NULL},  0, 0, FLAGS },
     {"alpha",          "enable processing of alpha channel",                       OFFSET(alpha),      AV_OPT_TYPE_BOOL,       {.i64 = 0   },  0, 1, FLAGS },
