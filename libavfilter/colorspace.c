@@ -51,6 +51,18 @@ void ff_matrix_invert_3x3(const double in[3][3], double out[3][3])
     }
 }
 
+void ff_matrix_transpose_3x3(const double in[3][3], double out[3][3])
+{
+    int i, j;
+    double *out_p = &out[0][0];
+    const double *in_p = &in[0][0];
+
+    for (i = 0; i < 3; i++) {
+        for (j = 0; j < 3; j++)
+            out_p[i * 3 + j] = in_p[j * 3 + i];
+    }
+}
+
 void ff_matrix_mul_3x3(double dst[3][3],
                const double src1[3][3], const double src2[3][3])
 {
@@ -190,4 +202,158 @@ void ff_update_hdr_metadata(AVFrame *in, double peak)
         if (metadata->has_luminance)
             metadata->max_luminance = av_d2q(peak * REFERENCE_WHITE, 10000);
     }
+}
+
+double ff_determine_dovi_signal_peak(const AVDOVIMetadata *data)
+{
+    float peak;
+    const AVDOVIColorMetadata *color;
+
+    // Fallback to the peak of 10000 if SMPTE ST.2084
+    if (!data)
+        return 100.0f;
+
+    color = av_dovi_get_color(data);
+    peak = color->source_max_pq / 4095.0f;
+    if (!peak)
+        return peak;
+
+    peak = powf(peak, 1.0f / ST2084_M2);
+    peak = fmaxf(peak - ST2084_C1, 0.0f) / (ST2084_C2 - ST2084_C3 * peak);
+    peak = powf(peak, 1.0f / ST2084_M1);
+    peak *= 10000.0f;
+    peak *= REFERENCE_WHITE_ALT;
+
+    return peak;
+}
+
+void ff_map_dovi_metadata(struct DoviMetadata *out, const AVDOVIMetadata *data)
+{
+    int c, i, j, k;
+    const AVDOVIRpuDataHeader *header;
+    const AVDOVIDataMapping *mapping;
+    const AVDOVIColorMetadata *color;
+
+    if (!data)
+        return;
+
+    header = av_dovi_get_header(data);
+    mapping = av_dovi_get_mapping(data);
+    color = av_dovi_get_color(data);
+
+    for (i = 0; i < 3; i++)
+        out->nonlinear_offset[i] = av_q2d(color->ycc_to_rgb_offset[i]);
+    for (i = 0; i < 9; i++) {
+        double *nonlinear = &out->nonlinear[0][0];
+        double *linear = &out->linear[0][0];
+        nonlinear[i] = av_q2d(color->ycc_to_rgb_matrix[i]);
+        linear[i] = av_q2d(color->rgb_to_lms_matrix[i]);
+    }
+    for (c = 0; c < 3; c++) {
+        const AVDOVIReshapingCurve *csrc = &mapping->curves[c];
+        struct ReshapeData *cdst = &out->comp[c];
+        cdst->num_pivots = csrc->num_pivots;
+        for (i = 0; i < csrc->num_pivots; i++) {
+            const float scale = 1.0f / ((1 << header->bl_bit_depth) - 1);
+            cdst->pivots[i] = scale * csrc->pivots[i];
+        }
+        for (i = 0; i < csrc->num_pivots - 1; i++) {
+            const float scale = 1.0f / (1 << header->coef_log2_denom);
+            cdst->method[i] = csrc->mapping_idc[i];
+            switch (csrc->mapping_idc[i]) {
+            case AV_DOVI_MAPPING_POLYNOMIAL:
+                for (k = 0; k < 3; k++) {
+                    cdst->poly_coeffs[i][k] = (k <= csrc->poly_order[i])
+                        ? scale * csrc->poly_coef[i][k]
+                        : 0.0f;
+                }
+                break;
+            case AV_DOVI_MAPPING_MMR:
+                cdst->mmr_order[i] = csrc->mmr_order[i];
+                cdst->mmr_constant[i] = scale * csrc->mmr_constant[i];
+                for (j = 0; j < csrc->mmr_order[i]; j++) {
+                    for (k = 0; k < 7; k++)
+                        cdst->mmr_coeffs[i][j][k] = scale * csrc->mmr_coef[i][j][k];
+                }
+                break;
+            }
+        }
+    }
+}
+
+// linearizer for PQ/ST2084
+float eotf_st2084_common(float x)
+{
+    x = FFMAX(x, 0.0f);
+    float xpow = powf(x, 1.0f / ST2084_M2);
+    float num = FFMAX(xpow - ST2084_C1, 0.0f);
+    float den = FFMAX(ST2084_C2 - ST2084_C3 * xpow, FLOAT_EPS);
+    x = powf(num / den, 1.0f / ST2084_M1);
+    return x;
+}
+
+float eotf_st2084(float x, float ref_white)
+{
+    return eotf_st2084_common(x) * ST2084_MAX_LUMINANCE / ref_white;
+}
+
+// delinearizer for PQ/ST2084
+float inverse_eotf_st2084_common(float x)
+{
+    x = FFMAX(x, 0.0f);
+    float xpow = powf(x, ST2084_M1);
+#if 0
+    // Original formulation from SMPTE ST 2084:2014 publication.
+    float num = ST2084_C1 + ST2084_C2 * xpow;
+    float den = 1.0f + ST2084_C3 * xpow;
+    return powf(num / den, ST2084_M2);
+#else
+    // More stable arrangement that avoids some cancellation error.
+    float num = (ST2084_C1 - 1.0f) + (ST2084_C2 - ST2084_C3) * xpow;
+    float den = 1.0f + ST2084_C3 * xpow;
+    return powf(1.0f + num / den, ST2084_M2);
+#endif
+}
+
+float inverse_eotf_st2084(float x, float ref_white)
+{
+    x *= ref_white / ST2084_MAX_LUMINANCE;
+    return inverse_eotf_st2084_common(x);
+}
+
+float ootf_1_2(float x) {
+    return x > 0.0f ? powf(x, 1.2f) : x;
+}
+
+float inverse_ootf_1_2(float x) {
+    return x > 0.0f ? powf(x, 1.0f / 1.2f) : x;
+}
+
+float oetf_arib_b67(float x) {
+    x = FFMAX(x, 0.0f);
+    return x <= (1.0f / 12.0f)
+           ? sqrtf(3.0f * x)
+           : (ARIB_B67_A * logf(12.0f * x - ARIB_B67_B) + ARIB_B67_C);
+}
+
+float inverse_oetf_arib_b67(float x) {
+    x = FFMAX(x, 0.0f);
+    return x <= 0.5f
+           ? (x * x) * (1.0f / 3.0f)
+           : (expf((x - ARIB_B67_C) / ARIB_B67_A) + ARIB_B67_B) * (1.0f / 12.0f);
+}
+
+// linearizer for HLG/ARIB-B67
+float eotf_arib_b67(float x) {
+    return ootf_1_2(inverse_oetf_arib_b67(x));
+}
+
+// delinearizer for HLG/ARIB-B67
+float inverse_eotf_arib_b67(float x) {
+    return oetf_arib_b67(inverse_ootf_1_2(x));
+}
+
+// delinearizer for BT709, BT2020-10
+float inverse_eotf_bt1886(float x) {
+    return x > 0.0f ? powf(x, 1.0f / 2.4f) : 0.0f;
 }

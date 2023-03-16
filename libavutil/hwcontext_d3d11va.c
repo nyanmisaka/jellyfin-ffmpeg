@@ -89,6 +89,13 @@ static const struct {
     { DXGI_FORMAT_B8G8R8A8_UNORM,    AV_PIX_FMT_BGRA },
     { DXGI_FORMAT_R10G10B10A2_UNORM, AV_PIX_FMT_X2BGR10 },
     { DXGI_FORMAT_R16G16B16A16_FLOAT, AV_PIX_FMT_RGBAF16 },
+    { DXGI_FORMAT_AYUV,         AV_PIX_FMT_VUYX },
+    { DXGI_FORMAT_YUY2,         AV_PIX_FMT_YUYV422 },
+    { DXGI_FORMAT_Y210,         AV_PIX_FMT_Y210 },
+    { DXGI_FORMAT_Y410,         AV_PIX_FMT_XV30 },
+    { DXGI_FORMAT_P016,         AV_PIX_FMT_P012 },
+    { DXGI_FORMAT_Y216,         AV_PIX_FMT_Y212 },
+    { DXGI_FORMAT_Y416,         AV_PIX_FMT_XV36 },
     // Special opaque formats. The pix_fmt is merely a place holder, as the
     // opaque format cannot be accessed directly.
     { DXGI_FORMAT_420_OPAQUE,   AV_PIX_FMT_YUV420P },
@@ -213,7 +220,7 @@ static AVBufferRef *d3d11va_alloc_single(AVHWFramesContext *ctx)
         .ArraySize  = 1,
         .Usage      = D3D11_USAGE_DEFAULT,
         .BindFlags  = hwctx->BindFlags,
-        .MiscFlags  = hwctx->MiscFlags,
+        .MiscFlags  = hwctx->MiscFlags | D3D11_RESOURCE_MISC_SHARED,
     };
 
     hr = ID3D11Device_CreateTexture2D(device_hwctx->device, &texDesc, NULL, &tex);
@@ -277,8 +284,16 @@ static int d3d11va_frames_init(AVHWFramesContext *ctx)
         .ArraySize  = ctx->initial_pool_size,
         .Usage      = D3D11_USAGE_DEFAULT,
         .BindFlags  = hwctx->BindFlags,
-        .MiscFlags  = hwctx->MiscFlags,
+        .MiscFlags  = hwctx->MiscFlags | D3D11_RESOURCE_MISC_SHARED,
     };
+
+#if HAVE_OPENCL_D3D11
+    if (ctx->user_opaque) {
+        D3D11_TEXTURE2D_DESC *desc = ctx->user_opaque;
+        if (desc->BindFlags & D3D11_BIND_DECODER)
+            texDesc.BindFlags = D3D11_BIND_DECODER;
+    }
+#endif
 
     if (hwctx->texture) {
         D3D11_TEXTURE2D_DESC texDesc2;
@@ -545,15 +560,47 @@ static void d3d11va_device_uninit(AVHWDeviceContext *hwdev)
     }
 }
 
+static int d3d11va_check_uma_support(AVHWDeviceContext *ctx)
+{
+    AVD3D11VADeviceContext *device_hwctx = ctx->hwctx;
+    D3D11_FEATURE_DATA_D3D11_OPTIONS2 data = {};
+    HRESULT hr = ID3D11Device_CheckFeatureSupport(device_hwctx->device,
+                                                  D3D11_FEATURE_D3D11_OPTIONS2,
+                                                  &data, sizeof(data));
+    return SUCCEEDED(hr) && data.UnifiedMemoryArchitecture;
+}
+
+static void d3d11va_query_device_desc(AVHWDeviceContext *ctx,
+                                      DXGI_ADAPTER_DESC *desc)
+{
+    AVD3D11VADeviceContext *device_hwctx = ctx->hwctx;
+    IDXGIDevice *pDXGIDevice = NULL;
+    IDXGIAdapter *pDXGIAdapter = NULL;
+    HRESULT hr = ID3D11Device_QueryInterface(device_hwctx->device, &IID_IDXGIDevice,
+                                             (void **)&pDXGIDevice);
+    if (SUCCEEDED(hr) && pDXGIDevice) {
+        hr = IDXGIDevice_GetParent(pDXGIDevice, &IID_IDXGIAdapter,
+                                   (void **)&pDXGIAdapter);
+        if (SUCCEEDED(hr) && pDXGIAdapter) {
+            IDXGIAdapter_GetDesc(pDXGIAdapter, desc);
+            IDXGIAdapter_Release(pDXGIAdapter);
+        }
+        IDXGIDevice_Release(pDXGIDevice);
+    }
+}
+
 static int d3d11va_device_create(AVHWDeviceContext *ctx, const char *device,
                                  AVDictionary *opts, int flags)
 {
     AVD3D11VADeviceContext *device_hwctx = ctx->hwctx;
 
     HRESULT hr;
+    AVDictionaryEntry *e;
     IDXGIAdapter           *pAdapter = NULL;
     ID3D10Multithread      *pMultithread;
     UINT creationFlags = D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
+    int adapter = -1;
+    long int vendor_id = -1;
     int is_debug       = !!av_dict_get(opts, "debug", NULL, 0);
     int ret;
 
@@ -573,13 +620,45 @@ static int d3d11va_device_create(AVHWDeviceContext *ctx, const char *device,
         return AVERROR_UNKNOWN;
     }
 
+    e = av_dict_get(opts, "vendor", NULL, 0);
+    if (e) {
+        vendor_id = strtol(e->value, NULL, 0);
+    }
+
     if (device) {
+        adapter = atoi(device);
+    }
+
+    if (adapter >= 0 || vendor_id != -1) {
         IDXGIFactory2 *pDXGIFactory;
         hr = mCreateDXGIFactory(&IID_IDXGIFactory2, (void **)&pDXGIFactory);
         if (SUCCEEDED(hr)) {
-            int adapter = atoi(device);
-            if (FAILED(IDXGIFactory2_EnumAdapters(pDXGIFactory, adapter, &pAdapter)))
+            if (adapter < 0) {
+                int adapter_cnt = 0;
+                while (IDXGIFactory2_EnumAdapters(pDXGIFactory, adapter_cnt++, &pAdapter) != DXGI_ERROR_NOT_FOUND) {
+                    DXGI_ADAPTER_DESC adapter_desc;
+                    hr = IDXGIAdapter2_GetDesc(pAdapter, &adapter_desc);
+                    if (FAILED(hr)) {
+                        av_log(ctx, AV_LOG_ERROR, "IDXGIAdapter2_GetDesc returned error with adapter id %d\n", adapter_cnt);
+                        continue;
+                    }
+
+                    if (adapter_desc.VendorId == vendor_id) {
+                        break;
+                    }
+
+                    if (adapter)
+                        IDXGIAdapter_Release(pAdapter);
+                }
+                if (adapter_cnt < 0) {
+                    av_log(ctx, AV_LOG_ERROR, "Failed to find d3d11va adapter by vendor id %ld\n", vendor_id);
+                    IDXGIFactory2_Release(pDXGIFactory);
+                    return AVERROR_UNKNOWN;
+                }
+            } else {
+                if (FAILED(IDXGIFactory2_EnumAdapters(pDXGIFactory, adapter, &pAdapter)))
                 pAdapter = NULL;
+            }
             IDXGIFactory2_Release(pDXGIFactory);
         }
     }
@@ -607,6 +686,9 @@ static int d3d11va_device_create(AVHWDeviceContext *ctx, const char *device,
         ID3D10Multithread_SetMultithreadProtected(pMultithread, TRUE);
         ID3D10Multithread_Release(pMultithread);
     }
+
+    device_hwctx->is_uma = d3d11va_check_uma_support(ctx);
+    d3d11va_query_device_desc(ctx, &device_hwctx->device_desc);
 
 #if !HAVE_UWP && HAVE_DXGIDEBUG_H
     if (is_debug) {

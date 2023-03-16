@@ -76,6 +76,9 @@ int ff_opencl_filter_config_input(AVFilterLink *inlink)
     if (!ctx->output_height)
         ctx->output_height = inlink->h;
 
+    if (avctx->nb_outputs > 0)
+        avctx->outputs[0]->fixed_pool_size = inlink->fixed_pool_size;
+
     return 0;
 }
 
@@ -124,6 +127,9 @@ int ff_opencl_filter_config_output(AVFilterLink *outlink)
     outlink->w = ctx->output_width;
     outlink->h = ctx->output_height;
 
+    if (avctx->nb_inputs > 0)
+        outlink->fixed_pool_size = avctx->inputs[0]->fixed_pool_size;
+
     return 0;
 fail:
     av_buffer_unref(&output_frames_ref);
@@ -170,7 +176,7 @@ int ff_opencl_filter_load_program(AVFilterContext *avctx,
     }
 
     cle = clBuildProgram(ctx->program, 1, &ctx->hwctx->device_id,
-                         NULL, NULL, NULL);
+                         "-cl-finite-math-only -cl-unsafe-math-optimizations", NULL, NULL);
     if (cle != CL_SUCCESS) {
         av_log(avctx, AV_LOG_ERROR, "Failed to build program: %d.\n", cle);
 
@@ -331,7 +337,7 @@ void ff_opencl_print_const_matrix_3x3(AVBPrint *buf, const char *name_str,
     av_bprintf(buf, "__constant float %s[9] = {\n", name_str);
     for (i = 0; i < 3; i++) {
         for (j = 0; j < 3; j++)
-            av_bprintf(buf, " %.5ff,", mat[i][j]);
+            av_bprintf(buf, " %ff,", mat[i][j]);
         av_bprintf(buf, "\n");
     }
     av_bprintf(buf, "};\n");

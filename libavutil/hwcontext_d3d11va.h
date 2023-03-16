@@ -94,6 +94,16 @@ typedef struct AVD3D11VADeviceContext {
     void (*lock)(void *lock_ctx);
     void (*unlock)(void *lock_ctx);
     void *lock_ctx;
+
+    /**
+     * DXGI adapter description of the device.
+     */
+    DXGI_ADAPTER_DESC device_desc;
+
+    /**
+     * Whether the device is an UMA device.
+     */
+    int is_uma;
 } AVD3D11VADeviceContext;
 
 /**
