@@ -28,6 +28,7 @@
 #endif
 
 #include "ffmpeg.h"
+#include "ffmpeg_subs.h"
 #include "cmdutils.h"
 #include "opt_common.h"
 #include "sync_queue.h"
@@ -1770,6 +1771,9 @@ const OptionDef options[] = {
         "initialise hardware device", "args" },
     { "filter_hw_device", HAS_ARG | OPT_EXPERT, { .func_arg = opt_filter_hw_device },
         "set hardware device used when filtering", "device" },
+
+    { "map_inlinesubs", HAS_ARG | OPT_EXPERT | OPT_PERFILE | OPT_OUTPUT, { .func_arg = subs_opt_subtitle_stream },
+        "index of the subtitle stream to burn into the video", "input_file_id:stream_specifier" },
 
     { NULL, },
 };

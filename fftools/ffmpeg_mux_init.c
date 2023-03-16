@@ -23,6 +23,7 @@
 #include "cmdutils.h"
 #include "ffmpeg.h"
 #include "ffmpeg_mux.h"
+#include "ffmpeg_subs.h"
 #include "fopen_utf8.h"
 
 #include "libavformat/avformat.h"
@@ -1421,6 +1422,20 @@ static void create_streams(Muxer *mux, const OptionsContext *o)
             case AVMEDIA_TYPE_SUBTITLE: auto_disable_s = 1; break;
             }
             init_output_filter(ofilter, o, mux);
+        }
+    }
+
+    /* we need to detect the format of the subtitle stream (if any) and init
+     some stuff before we do the actual pre set-up */
+
+    /* we need to choose the subtitle stream we want to burn in
+     (needs to be processed BEFORE the video stream is set up
+     as this call will configer the vfilters) */
+    for (int i = 0; i < nb_input_files; i++) {
+        InputFile *ifile = input_files[i];
+        for (int j = 0; j < ifile->nb_streams; j++) {
+            InputStream *ist = ifile->streams[j];
+            subs_prepare_setup_input_streams(ist);
         }
     }
 

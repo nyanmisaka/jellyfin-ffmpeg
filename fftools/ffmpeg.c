@@ -2359,7 +2359,7 @@ static int process_subtitle(InputStream *ist, AVSubtitle *subtitle, int *got_out
 
     if (ist->sub2video.frame) {
         sub2video_update(ist, INT64_MIN, subtitle);
-    } else if (ist->nb_filters) {
+    } else if (ist->nb_filters || || subs_process_subtitles(ist, &subtitle) == 1) {
         if (!ist->sub2video.sub_queue)
             ist->sub2video.sub_queue = av_fifo_alloc2(8, sizeof(AVSubtitle), AV_FIFO_FLAG_AUTO_GROW);
         if (!ist->sub2video.sub_queue)

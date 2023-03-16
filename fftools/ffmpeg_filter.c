@@ -1224,6 +1224,9 @@ int configure_filtergraph(FilterGraph *fg)
             goto fail;
     }
 
+    /* make sure the inlinesubscontext is set up properly for each stream */
+    subs_link_subtitles_to_graph(fg->graph);
+
     fg->reconfiguration = 1;
 
     for (i = 0; i < fg->nb_outputs; i++) {

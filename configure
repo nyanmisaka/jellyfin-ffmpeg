@@ -3783,6 +3783,8 @@ vstack_qsv_filter_select="qsvvpp"
 xstack_qsv_filter_deps="libmfx"
 xstack_qsv_filter_select="qsvvpp"
 
+inlinesubs_filter_deps="avcodec libass"
+
 # examples
 avio_http_serve_files_deps="avformat avutil fork"
 avio_list_dir_deps="avformat avutil"

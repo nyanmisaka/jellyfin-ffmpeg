@@ -598,6 +598,8 @@ OBJS-$(CONFIG_YUVTESTSRC_FILTER)             += vsrc_testsrc.o
 
 OBJS-$(CONFIG_NULLSINK_FILTER)               += vsink_nullsink.o
 
+OBJS-$(CONFIG_INLINESUBS_FILTER)              += vf_inlinesubs.o
+
 # multimedia filters
 OBJS-$(CONFIG_A3DSCOPE_FILTER)               += avf_a3dscope.o
 OBJS-$(CONFIG_ABITSCOPE_FILTER)              += avf_abitscope.o
