@@ -258,6 +258,9 @@ void avfilter_inlinesubs_append_data(AVFilterContext *link, AVCodecContext *dec_
         int64_t duration = sub->end_display_time - sub->start_display_time;
         int64_t start = av_rescale_q(sub->pts, AV_TIME_BASE_Q, ASS_TIME_BASE);
         start += sub->start_display_time;
+
+        av_log(NULL, AV_LOG_VERBOSE, "rects: %d, assline: %d\n", sub->num_rects, !!ass_line);
+
         if (!ass_line)
             break;
         ass_process_chunk(ass->track, ass_line, strlen(ass_line), start, duration);
