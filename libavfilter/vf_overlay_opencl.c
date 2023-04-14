@@ -27,72 +27,117 @@
 #include "opencl_source.h"
 #include "video.h"
 
+static const enum AVPixelFormat supported_main_formats[] = {
+    AV_PIX_FMT_NV12,
+    AV_PIX_FMT_YUV420P,
+    AV_PIX_FMT_P010,
+    AV_PIX_FMT_P016,
+    AV_PIX_FMT_NONE,
+};
+
+static const enum AVPixelFormat supported_overlay_formats[] = {
+    AV_PIX_FMT_NV12,
+    AV_PIX_FMT_YUV420P,
+    AV_PIX_FMT_YUVA420P,
+    AV_PIX_FMT_NONE,
+};
+
 typedef struct OverlayOpenCLContext {
     OpenCLFilterContext ocf;
 
+    enum AVPixelFormat in_fmt_main, in_fmt_overlay;
+    const AVPixFmtDescriptor *in_desc_main, *in_desc_overlay;
+    int in_planes_main, in_planes_overlay;
+
     int              initialised;
     cl_kernel        kernel;
+    cl_kernel        kernel_pass;
+    cl_kernel        kernel_uv;
+    const char      *kernel_name;
+    const char      *kernel_name_pass;
+    const char      *kernel_name_uv;
     cl_command_queue command_queue;
 
     FFFrameSync      fs;
 
-    int              nb_planes;
     int              x_subsample;
     int              y_subsample;
-    int              alpha_separate;
+    int              alpha;
 
     int              x_position;
     int              y_position;
+
+    int              opt_repeatlast;
+    int              opt_shortest;
+    int              opt_eof_action;
 } OverlayOpenCLContext;
 
-static int overlay_opencl_load(AVFilterContext *avctx,
-                               enum AVPixelFormat main_format,
-                               enum AVPixelFormat overlay_format)
+static int format_is_supported(const enum AVPixelFormat fmts[], enum AVPixelFormat fmt)
+{
+    for (int i = 0; fmts[i] != AV_PIX_FMT_NONE; i++)
+        if (fmts[i] == fmt)
+            return 1;
+    return 0;
+}
+
+static int formats_match(const enum AVPixelFormat fmt_main, const enum AVPixelFormat fmt_overlay) {
+    switch(fmt_main) {
+    case AV_PIX_FMT_NV12:
+    case AV_PIX_FMT_P010:
+    case AV_PIX_FMT_P016:
+        return fmt_overlay == AV_PIX_FMT_NV12 ||
+               fmt_overlay == AV_PIX_FMT_YUV420P ||
+               fmt_overlay == AV_PIX_FMT_YUVA420P;
+    case AV_PIX_FMT_YUV420P:
+        return fmt_overlay == AV_PIX_FMT_YUV420P ||
+               fmt_overlay == AV_PIX_FMT_YUVA420P;
+    default:
+        return 0;
+    }
+}
+
+static int overlay_opencl_load(AVFilterContext *avctx)
 {
     OverlayOpenCLContext *ctx = avctx->priv;
     cl_int cle;
-    const char *source = ff_opencl_source_overlay;
-    const char *kernel;
-    const AVPixFmtDescriptor *main_desc, *overlay_desc;
-    int err, i, main_planes, overlay_planes;
+    int err;
 
-    main_desc    = av_pix_fmt_desc_get(main_format);
-    overlay_desc = av_pix_fmt_desc_get(overlay_format);
-
-    main_planes = overlay_planes = 0;
-    for (i = 0; i < main_desc->nb_components; i++)
-        main_planes = FFMAX(main_planes,
-                            main_desc->comp[i].plane + 1);
-    for (i = 0; i < overlay_desc->nb_components; i++)
-        overlay_planes = FFMAX(overlay_planes,
-                               overlay_desc->comp[i].plane + 1);
-
-    ctx->nb_planes = main_planes;
-    ctx->x_subsample = 1 << main_desc->log2_chroma_w;
-    ctx->y_subsample = 1 << main_desc->log2_chroma_h;
+    ctx->x_subsample = 1 << ctx->in_desc_main->log2_chroma_w;
+    ctx->y_subsample = 1 << ctx->in_desc_main->log2_chroma_h;
 
     if (ctx->x_position % ctx->x_subsample ||
         ctx->y_position % ctx->y_subsample) {
-        av_log(avctx, AV_LOG_WARNING, "Warning: overlay position (%d, %d) "
+        av_log(avctx, AV_LOG_WARNING, "Overlay position (%d, %d) "
                "does not match subsampling (%d, %d).\n",
                ctx->x_position, ctx->y_position,
                ctx->x_subsample, ctx->y_subsample);
     }
 
-    if (main_planes == overlay_planes) {
-        if (main_desc->nb_components == overlay_desc->nb_components)
-            kernel = "overlay_no_alpha";
-        else
-            kernel = "overlay_internal_alpha";
-        ctx->alpha_separate = 0;
-    } else {
-        kernel = "overlay_external_alpha";
-        ctx->alpha_separate = 1;
+    switch(ctx->in_fmt_overlay) {
+    case AV_PIX_FMT_NV12:
+    case AV_PIX_FMT_YUV420P:
+        ctx->alpha = 0;
+        ctx->kernel_name = "overlay_noalpha";
+        break;
+    case AV_PIX_FMT_YUVA420P:
+        ctx->alpha = 1;
+        ctx->kernel_name = "overlay_alpha";
+        break;
+    default:
+        err = AVERROR_BUG;
+        goto fail;
     }
 
-    av_log(avctx, AV_LOG_DEBUG, "Using kernel %s.\n", kernel);
+    if (ctx->in_planes_main == 2 && ctx->in_planes_overlay > 2) {
+        if (ctx->alpha)
+            ctx->kernel_name_uv = "overlay_alpha_uv";
+        else
+            ctx->kernel_name_uv = "overlay_noalpha_uv";
+    }
 
-    err = ff_opencl_filter_load_program(avctx, &source, 1);
+    av_log(avctx, AV_LOG_DEBUG, "Using kernel %s.\n", ctx->kernel_name);
+
+    err = ff_opencl_filter_load_program(avctx, &ff_opencl_source_overlay, 1);
     if (err < 0)
         goto fail;
 
@@ -102,10 +147,20 @@ static int overlay_opencl_load(AVFilterContext *avctx,
     CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to create OpenCL "
                      "command queue %d.\n", cle);
 
-    ctx->kernel = clCreateKernel(ctx->ocf.program, kernel, &cle);
+    ctx->kernel = clCreateKernel(ctx->ocf.program, ctx->kernel_name, &cle);
     CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to create kernel %d.\n", cle);
 
+    ctx->kernel_name_pass = "overlay_pass";
+    ctx->kernel_pass = clCreateKernel(ctx->ocf.program, ctx->kernel_name_pass, &cle);
+    CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to create kernel_pass %d.\n", cle);
+
+    if (ctx->kernel_name_uv) {
+        ctx->kernel_uv = clCreateKernel(ctx->ocf.program, ctx->kernel_name_uv, &cle);
+        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to create kernel_uv %d.\n", cle);
+    }
+
     ctx->initialised = 1;
+
     return 0;
 
 fail:
@@ -113,21 +168,113 @@ fail:
         clReleaseCommandQueue(ctx->command_queue);
     if (ctx->kernel)
         clReleaseKernel(ctx->kernel);
+    if (ctx->kernel_pass)
+        clReleaseKernel(ctx->kernel_pass);
+    if (ctx->kernel_uv)
+        clReleaseKernel(ctx->kernel_uv);
+    return err;
+}
+
+static int launch_kernel(AVFilterContext *avctx, AVFrame *output, AVFrame *input_main,
+                         AVFrame *input_overlay, int plane, int passthrough) {
+    OverlayOpenCLContext *ctx = avctx->priv;
+    cl_mem mem;
+    cl_int cle, x, y;
+    cl_kernel kernel;
+    size_t global_work[2];
+    int idx_arg = 0;
+    int err;
+
+    if (passthrough)
+        kernel = ctx->kernel_pass;
+    else if (plane == 1 && ctx->in_planes_main == 2 && ctx->in_planes_overlay > 2)
+        kernel = ctx->kernel_uv;
+    else
+        kernel = ctx->kernel;
+
+    // dst
+    mem = (cl_mem)output->data[plane];
+    if (!mem) {
+        err = AVERROR(EIO);
+        goto fail;
+    }
+    CL_SET_KERNEL_ARG(kernel, idx_arg++, cl_mem, &mem);
+
+    // main
+    mem = (cl_mem)input_main->data[plane];
+    if (!mem) {
+        err = AVERROR(EIO);
+        goto fail;
+    }
+    CL_SET_KERNEL_ARG(kernel, idx_arg++, cl_mem, &mem);
+
+    if (!passthrough) {
+        // overlay
+        mem = (cl_mem)input_overlay->data[plane];
+        if (!mem) {
+            err = AVERROR(EIO);
+            goto fail;
+        }
+        CL_SET_KERNEL_ARG(kernel, idx_arg++, cl_mem, &mem);
+
+        // non-semi planar on top of the semi planar
+        if (plane == 1 && ctx->in_planes_main == 2 && ctx->in_planes_overlay > 2) {
+            mem = (cl_mem)input_overlay->data[plane + 1];
+            if (!mem) {
+                err = AVERROR(EIO);
+                goto fail;
+            }
+            CL_SET_KERNEL_ARG(kernel, idx_arg++, cl_mem, &mem);
+        }
+
+        // alpha
+        if (ctx->alpha) {
+            mem = (cl_mem)input_overlay->data[ctx->in_planes_overlay - 1];
+            if (!mem) {
+                err = AVERROR(EIO);
+                goto fail;
+            }
+            CL_SET_KERNEL_ARG(kernel, idx_arg++, cl_mem, &mem);
+        }
+
+        x = ctx->x_position / (plane == 0 ? 1 : ctx->x_subsample);
+        y = ctx->y_position / (plane == 0 ? 1 : ctx->y_subsample);
+        CL_SET_KERNEL_ARG(kernel, idx_arg++, cl_int, &x);
+        CL_SET_KERNEL_ARG(kernel, idx_arg++, cl_int, &y);
+
+        if (ctx->alpha) {
+            cl_int alpha_adj_x = plane == 0 ? 1 : ctx->x_subsample;
+            cl_int alpha_adj_y = plane == 0 ? 1 : ctx->y_subsample;
+            CL_SET_KERNEL_ARG(kernel, idx_arg++, cl_int, &alpha_adj_x);
+            CL_SET_KERNEL_ARG(kernel, idx_arg++, cl_int, &alpha_adj_y);
+        }
+    }
+
+    err = ff_opencl_filter_work_size_from_image(avctx, global_work,
+                                                input_main, plane, 0);
+    if (err < 0)
+        goto fail;
+
+    cle = clEnqueueNDRangeKernel(ctx->command_queue, kernel, 2, NULL,
+                                 global_work, NULL, 0, NULL, NULL);
+    CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to enqueue overlay kernel "
+                     "for plane %d: %d.\n", plane, cle);
+    return 0;
+
+fail:
     return err;
 }
 
 static int overlay_opencl_blend(FFFrameSync *fs)
 {
-    AVFilterContext    *avctx = fs->parent;
-    AVFilterLink     *outlink = avctx->outputs[0];
+    AVFilterContext *avctx = fs->parent;
+    AVFilterLink    *outlink = avctx->outputs[0];
     OverlayOpenCLContext *ctx = avctx->priv;
     AVFrame *input_main, *input_overlay;
     AVFrame *output;
-    cl_mem mem;
-    cl_int cle, x, y;
-    size_t global_work[2];
-    int kernel_arg = 0;
-    int err, plane;
+    cl_int cle;
+    int passthrough = 0;
+    int err, p;
 
     err = ff_framesync_get_frame(fs, 0, &input_main, 0);
     if (err < 0)
@@ -136,14 +283,14 @@ static int overlay_opencl_blend(FFFrameSync *fs)
     if (err < 0)
         return err;
 
-    if (!ctx->initialised) {
-        AVHWFramesContext *main_fc =
-            (AVHWFramesContext*)input_main->hw_frames_ctx->data;
-        AVHWFramesContext *overlay_fc =
-            (AVHWFramesContext*)input_overlay->hw_frames_ctx->data;
+    if (!input_main)
+        return AVERROR_BUG;
 
-        err = overlay_opencl_load(avctx, main_fc->sw_format,
-                                  overlay_fc->sw_format);
+    if (!input_overlay)
+        passthrough = 1;
+
+    if (!ctx->initialised) {
+        err = overlay_opencl_load(avctx);
         if (err < 0)
             return err;
     }
@@ -154,54 +301,10 @@ static int overlay_opencl_blend(FFFrameSync *fs)
         goto fail;
     }
 
-    for (plane = 0; plane < ctx->nb_planes; plane++) {
-        kernel_arg = 0;
-
-        mem = (cl_mem)output->data[plane];
-        CL_SET_KERNEL_ARG(ctx->kernel, kernel_arg, cl_mem, &mem);
-        kernel_arg++;
-
-        mem = (cl_mem)input_main->data[plane];
-        CL_SET_KERNEL_ARG(ctx->kernel, kernel_arg, cl_mem, &mem);
-        kernel_arg++;
-
-        mem = (cl_mem)input_overlay->data[plane];
-        CL_SET_KERNEL_ARG(ctx->kernel, kernel_arg, cl_mem, &mem);
-        kernel_arg++;
-
-        if (ctx->alpha_separate) {
-            mem = (cl_mem)input_overlay->data[ctx->nb_planes];
-            CL_SET_KERNEL_ARG(ctx->kernel, kernel_arg, cl_mem, &mem);
-            kernel_arg++;
-        }
-
-        x = ctx->x_position / (plane == 0 ? 1 : ctx->x_subsample);
-        y = ctx->y_position / (plane == 0 ? 1 : ctx->y_subsample);
-
-        CL_SET_KERNEL_ARG(ctx->kernel, kernel_arg, cl_int, &x);
-        kernel_arg++;
-        CL_SET_KERNEL_ARG(ctx->kernel, kernel_arg, cl_int, &y);
-        kernel_arg++;
-
-        if (ctx->alpha_separate) {
-            cl_int alpha_adj_x = plane == 0 ? 1 : ctx->x_subsample;
-            cl_int alpha_adj_y = plane == 0 ? 1 : ctx->y_subsample;
-
-            CL_SET_KERNEL_ARG(ctx->kernel, kernel_arg, cl_int, &alpha_adj_x);
-            kernel_arg++;
-            CL_SET_KERNEL_ARG(ctx->kernel, kernel_arg, cl_int, &alpha_adj_y);
-            kernel_arg++;
-        }
-
-        err = ff_opencl_filter_work_size_from_image(avctx, global_work,
-                                                    output, plane, 0);
+    for (p = 0; p < ctx->in_planes_main; p++) {
+        err = launch_kernel(avctx, output, input_main, input_overlay, p, passthrough);
         if (err < 0)
-            goto fail;
-
-        cle = clEnqueueNDRangeKernel(ctx->command_queue, ctx->kernel, 2, NULL,
-                                     global_work, NULL, 0, NULL, NULL);
-        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to enqueue overlay kernel "
-                         "for plane %d: %d.\n", plane, cle);
+            return err;
     }
 
     cle = clFinish(ctx->command_queue);
@@ -216,6 +319,9 @@ static int overlay_opencl_blend(FFFrameSync *fs)
     return ff_filter_frame(outlink, output);
 
 fail:
+    clFinish(ctx->command_queue);
+    av_frame_free(&input_main);
+    av_frame_free(&input_overlay);
     av_frame_free(&output);
     return err;
 }
@@ -224,7 +330,48 @@ static int overlay_opencl_config_output(AVFilterLink *outlink)
 {
     AVFilterContext *avctx = outlink->src;
     OverlayOpenCLContext *ctx = avctx->priv;
+
+    AVFilterLink *inlink = avctx->inputs[0];
+    AVHWFramesContext *frames_ctx_main = (AVHWFramesContext*)inlink->hw_frames_ctx->data;
+
+    AVFilterLink *inlink_overlay = avctx->inputs[1];
+    AVHWFramesContext *frames_ctx_overlay = (AVHWFramesContext*)inlink_overlay->hw_frames_ctx->data;
+
     int err;
+
+    if (!frames_ctx_main) {
+        av_log(ctx, AV_LOG_ERROR, "No hw context provided on main input\n");
+        return AVERROR(EINVAL);
+    }
+
+    ctx->in_fmt_main = frames_ctx_main->sw_format;
+    ctx->in_desc_main = av_pix_fmt_desc_get(frames_ctx_main->sw_format);
+    ctx->in_planes_main = av_pix_fmt_count_planes(frames_ctx_main->sw_format);
+    if (!format_is_supported(supported_main_formats, ctx->in_fmt_main)) {
+        av_log(ctx, AV_LOG_ERROR, "Unsupported main input format: %s\n",
+               av_get_pix_fmt_name(ctx->in_fmt_main));
+        return AVERROR(ENOSYS);
+    }
+
+    if (!frames_ctx_overlay) {
+        av_log(ctx, AV_LOG_ERROR, "No hw context provided on overlay input\n");
+        return AVERROR(EINVAL);
+    }
+
+    ctx->in_fmt_overlay = frames_ctx_overlay->sw_format;
+    ctx->in_desc_overlay = av_pix_fmt_desc_get(frames_ctx_overlay->sw_format);
+    ctx->in_planes_overlay = av_pix_fmt_count_planes(frames_ctx_overlay->sw_format);
+    if (!format_is_supported(supported_overlay_formats, ctx->in_fmt_overlay)) {
+        av_log(ctx, AV_LOG_ERROR, "Unsupported overlay input format: %s\n",
+            av_get_pix_fmt_name(ctx->in_fmt_overlay));
+        return AVERROR(ENOSYS);
+    }
+
+    if (!formats_match(ctx->in_fmt_main, ctx->in_fmt_overlay)) {
+        av_log(ctx, AV_LOG_ERROR, "Can't overlay %s on %s \n",
+            av_get_pix_fmt_name(ctx->in_fmt_overlay), av_get_pix_fmt_name(ctx->in_fmt_main));
+        return AVERROR(EINVAL);
+    }
 
     err = ff_opencl_filter_config_output(outlink);
     if (err < 0)
@@ -233,6 +380,11 @@ static int overlay_opencl_config_output(AVFilterLink *outlink)
     err = ff_framesync_init_dualinput(&ctx->fs, avctx);
     if (err < 0)
         return err;
+
+    ctx->fs.opt_repeatlast = ctx->opt_repeatlast;
+    ctx->fs.opt_shortest = ctx->opt_shortest;
+    ctx->fs.opt_eof_action = ctx->opt_eof_action;
+    ctx->fs.time_base = outlink->time_base = inlink->time_base;
 
     return ff_framesync_configure(&ctx->fs);
 }
@@ -265,6 +417,20 @@ static av_cold void overlay_opencl_uninit(AVFilterContext *avctx)
                    "kernel: %d.\n", cle);
     }
 
+    if (ctx->kernel_pass) {
+        cle = clReleaseKernel(ctx->kernel_pass);
+        if (cle != CL_SUCCESS)
+            av_log(avctx, AV_LOG_ERROR, "Failed to release "
+                   "kernel_pass: %d.\n", cle);
+    }
+
+    if (ctx->kernel_uv) {
+        cle = clReleaseKernel(ctx->kernel_uv);
+        if (cle != CL_SUCCESS)
+            av_log(avctx, AV_LOG_ERROR, "Failed to release "
+                   "kernel_uv: %d.\n", cle);
+    }
+
     if (ctx->command_queue) {
         cle = clReleaseCommandQueue(ctx->command_queue);
         if (cle != CL_SUCCESS)
@@ -279,11 +445,20 @@ static av_cold void overlay_opencl_uninit(AVFilterContext *avctx)
 
 #define OFFSET(x) offsetof(OverlayOpenCLContext, x)
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
+
 static const AVOption overlay_opencl_options[] = {
     { "x", "Overlay x position",
       OFFSET(x_position), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, .flags = FLAGS },
     { "y", "Overlay y position",
       OFFSET(y_position), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, .flags = FLAGS },
+    { "eof_action", "Action to take when encountering EOF from secondary input ",
+        OFFSET(opt_eof_action), AV_OPT_TYPE_INT, { .i64 = EOF_ACTION_REPEAT },
+        EOF_ACTION_REPEAT, EOF_ACTION_PASS, .flags = FLAGS, "eof_action" },
+        { "repeat", "Repeat the previous frame.",   0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_REPEAT }, .flags = FLAGS, "eof_action" },
+        { "endall", "End both streams.",            0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_ENDALL }, .flags = FLAGS, "eof_action" },
+        { "pass",   "Pass through the main input.", 0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_PASS },   .flags = FLAGS, "eof_action" },
+    { "shortest", "force termination when the shortest input terminates", OFFSET(opt_shortest), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
+    { "repeatlast", "repeat overlay of the last overlay frame", OFFSET(opt_repeatlast), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
     { NULL },
 };
 

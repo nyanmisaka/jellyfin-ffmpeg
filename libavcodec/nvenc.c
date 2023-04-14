@@ -24,6 +24,7 @@
 
 #include "nvenc.h"
 #include "hevc_sei.h"
+#include "put_bits.h"
 #if CONFIG_AV1_NVENC_ENCODER
 #include "av1.h"
 #endif
@@ -33,6 +34,7 @@
 #include "libavutil/hwcontext.h"
 #include "libavutil/cuda_check.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/mastering_display_metadata.h"
 #include "libavutil/mem.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/mathematics.h"
@@ -177,6 +179,8 @@ typedef struct FrameData {
 static void reorder_queue_flush(AVFifo *queue)
 {
     FrameData fd;
+
+    av_assert0(queue);
 
     while (av_fifo_read(queue, &fd, 1) >= 0)
         av_buffer_unref(&fd.frame_opaque_ref);
@@ -457,7 +461,7 @@ static int nvenc_check_cap(AVCodecContext *avctx, NV_ENC_CAPS cap)
 static int nvenc_check_capabilities(AVCodecContext *avctx)
 {
     NvencContext *ctx = avctx->priv_data;
-    int ret;
+    int tmp, ret;
 
     ret = nvenc_check_codec_support(avctx);
     if (ret < 0) {
@@ -538,16 +542,18 @@ static int nvenc_check_capabilities(AVCodecContext *avctx)
     }
 
 #ifdef NVENC_HAVE_BFRAME_REF_MODE
+    tmp = (ctx->b_ref_mode >= 0) ? ctx->b_ref_mode : NV_ENC_BFRAME_REF_MODE_DISABLED;
     ret = nvenc_check_cap(avctx, NV_ENC_CAPS_SUPPORT_BFRAME_REF_MODE);
-    if (ctx->b_ref_mode == NV_ENC_BFRAME_REF_MODE_EACH && ret != 1 && ret != 3) {
+    if (tmp == NV_ENC_BFRAME_REF_MODE_EACH && ret != 1 && ret != 3) {
         av_log(avctx, AV_LOG_WARNING, "Each B frame as reference is not supported\n");
         return AVERROR(ENOSYS);
-    } else if (ctx->b_ref_mode != NV_ENC_BFRAME_REF_MODE_DISABLED && ret == 0) {
+    } else if (tmp != NV_ENC_BFRAME_REF_MODE_DISABLED && ret == 0) {
         av_log(avctx, AV_LOG_WARNING, "B frames as references are not supported\n");
         return AVERROR(ENOSYS);
     }
 #else
-    if (ctx->b_ref_mode != 0) {
+    tmp = (ctx->b_ref_mode >= 0) ? ctx->b_ref_mode : 0;
+    if (tmp > 0) {
         av_log(avctx, AV_LOG_WARNING, "B frames as references need SDK 8.1 at build time\n");
         return AVERROR(ENOSYS);
     }
@@ -1853,8 +1859,11 @@ av_cold int ff_nvenc_encode_close(AVCodecContext *avctx)
         p_nvenc->nvEncEncodePicture(ctx->nvencoder, &params);
     }
 
-    reorder_queue_flush(ctx->reorder_queue);
-    av_fifo_freep2(&ctx->reorder_queue);
+    if (ctx->reorder_queue) {
+        reorder_queue_flush(ctx->reorder_queue);
+        av_fifo_freep2(&ctx->reorder_queue);
+    }
+
     av_fifo_freep2(&ctx->output_surface_ready_queue);
     av_fifo_freep2(&ctx->output_surface_queue);
     av_fifo_freep2(&ctx->unused_surface_queue);
@@ -2442,6 +2451,80 @@ static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
                     ctx->sei_data[sei_count].payloadType = SEI_TYPE_TIME_CODE;
 
                 sei_count++;
+            }
+        }
+    }
+
+    if (avctx->codec->id == AV_CODEC_ID_HEVC) {
+        AVFrameSideData *sd = av_frame_get_side_data(frame, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
+
+        if (sd) {
+            AVMasteringDisplayMetadata *mdm = (AVMasteringDisplayMetadata *)sd->data;
+            // HEVC uses a g,b,r ordering, which we convert from a more natural r,g,b
+            const int mapping[3] = {2, 0, 1};
+            const int chroma_den = 50000;
+            const int luma_den = 10000;
+
+            if (mdm->has_primaries && mdm->has_luminance) {
+                void *tmp = av_fast_realloc(ctx->sei_data,
+                                            &ctx->sei_data_size,
+                                            (sei_count + 1) * sizeof(*ctx->sei_data));
+                if (!tmp) {
+                    res = AVERROR(ENOMEM);
+                    goto error;
+                } else {
+                    ctx->sei_data = tmp;
+                    ctx->sei_data[sei_count].payloadSize = 24;
+                    ctx->sei_data[sei_count].payloadType = SEI_TYPE_MASTERING_DISPLAY_COLOUR_VOLUME;
+                    ctx->sei_data[sei_count].payload = av_mallocz(ctx->sei_data[sei_count].payloadSize);
+                    if (ctx->sei_data[sei_count].payload) {
+                        PutBitContext pb;
+
+                        init_put_bits(&pb, ctx->sei_data[sei_count].payload, ctx->sei_data[sei_count].payloadSize);
+                        for (i = 0; i < 3; i++) {
+                            const int j = mapping[i];
+                            put_bits(&pb, 16, (uint16_t)(chroma_den * av_q2d(mdm->display_primaries[j][0])));
+                            put_bits(&pb, 16, (uint16_t)(chroma_den * av_q2d(mdm->display_primaries[j][1])));
+                        }
+                        put_bits(&pb, 16, (uint16_t)(chroma_den * av_q2d(mdm->white_point[0])));
+                        put_bits(&pb, 16, (uint16_t)(chroma_den * av_q2d(mdm->white_point[1])));
+                        put_bits(&pb, 32, (uint32_t)(luma_den * av_q2d(mdm->max_luminance)));
+                        put_bits(&pb, 32, (uint32_t)(luma_den * av_q2d(mdm->min_luminance)));
+                        flush_put_bits(&pb);
+
+                        sei_count++;
+                    }
+                }
+            }
+        }
+    }
+
+    if (avctx->codec->id == AV_CODEC_ID_HEVC) {
+        AVFrameSideData *sd = av_frame_get_side_data(frame, AV_FRAME_DATA_CONTENT_LIGHT_LEVEL);
+
+        if (sd) {
+            AVContentLightMetadata *clm = (AVContentLightMetadata *)sd->data;
+            void *tmp = av_fast_realloc(ctx->sei_data,
+                                        &ctx->sei_data_size,
+                                        (sei_count + 1) * sizeof(*ctx->sei_data));
+            if (!tmp) {
+                res = AVERROR(ENOMEM);
+                goto error;
+            } else {
+                ctx->sei_data = tmp;
+                ctx->sei_data[sei_count].payloadSize = 4;
+                ctx->sei_data[sei_count].payloadType = SEI_TYPE_CONTENT_LIGHT_LEVEL_INFO;
+                ctx->sei_data[sei_count].payload = av_mallocz(ctx->sei_data[sei_count].payloadSize);
+                if (ctx->sei_data[sei_count].payload) {
+                    PutBitContext pb;
+
+                    init_put_bits(&pb, ctx->sei_data[sei_count].payload, ctx->sei_data[sei_count].payloadSize);
+                    put_bits(&pb, 16, (uint16_t)(FFMIN(clm->MaxCLL, 65535)));
+                    put_bits(&pb, 16, (uint16_t)(FFMIN(clm->MaxFALL, 65535)));
+                    flush_put_bits(&pb);
+
+                    sei_count++;
+                }
             }
         }
     }

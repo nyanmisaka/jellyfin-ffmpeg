@@ -92,6 +92,8 @@ const FFCodec ff_mjpeg_qsv_encoder = {
                                                     AV_PIX_FMT_YUYV422,
                                                     AV_PIX_FMT_BGRA,
                                                     AV_PIX_FMT_QSV,
+                                                    AV_PIX_FMT_VAAPI,
+                                                    AV_PIX_FMT_D3D11,
                                                     AV_PIX_FMT_NONE },
     .p.priv_class   = &class,
     .defaults       = qsv_enc_defaults,

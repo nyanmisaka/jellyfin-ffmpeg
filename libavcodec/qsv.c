@@ -196,7 +196,7 @@ int ff_qsv_print_warning(void *log_ctx, mfxStatus err,
 {
     const char *desc;
     int ret = qsv_map_error(err, &desc);
-    av_log(log_ctx, AV_LOG_WARNING, "%s: %s (%d)\n", warning_string, desc, err);
+    av_log(log_ctx, AV_LOG_VERBOSE, "%s: %s (%d)\n", warning_string, desc, err);
     return ret;
 }
 
@@ -208,7 +208,6 @@ enum AVPixelFormat ff_qsv_map_fourcc(uint32_t fourcc)
     case MFX_FOURCC_P8:   return AV_PIX_FMT_PAL8;
     case MFX_FOURCC_A2RGB10: return AV_PIX_FMT_X2RGB10;
     case MFX_FOURCC_RGB4: return AV_PIX_FMT_BGRA;
-#if CONFIG_VAAPI
     case MFX_FOURCC_YUY2: return AV_PIX_FMT_YUYV422;
     case MFX_FOURCC_Y210: return AV_PIX_FMT_Y210;
     case MFX_FOURCC_AYUV: return AV_PIX_FMT_VUYX;
@@ -217,7 +216,6 @@ enum AVPixelFormat ff_qsv_map_fourcc(uint32_t fourcc)
     case MFX_FOURCC_P016: return AV_PIX_FMT_P012;
     case MFX_FOURCC_Y216: return AV_PIX_FMT_Y212;
     case MFX_FOURCC_Y416: return AV_PIX_FMT_XV36;
-#endif
 #endif
     }
     return AV_PIX_FMT_NONE;
@@ -245,7 +243,6 @@ int ff_qsv_map_pixfmt(enum AVPixelFormat format, uint32_t *fourcc, uint16_t *shi
         *fourcc = MFX_FOURCC_RGB4;
         *shift = 0;
         return AV_PIX_FMT_BGRA;
-#if CONFIG_VAAPI
     case AV_PIX_FMT_YUV422P:
     case AV_PIX_FMT_YUYV422:
         *fourcc = MFX_FOURCC_YUY2;
@@ -277,7 +274,6 @@ int ff_qsv_map_pixfmt(enum AVPixelFormat format, uint32_t *fourcc, uint16_t *shi
         *fourcc = MFX_FOURCC_Y416;
         *shift = 1;
         return AV_PIX_FMT_XV36;
-#endif
 #endif
     default:
         return AVERROR(ENOSYS);
@@ -409,8 +405,16 @@ static int qsv_load_plugins(mfxSession session, const char *load_plugins,
                             void *logctx)
 {
 #if QSV_HAVE_USER_PLUGIN
+    mfxVersion ver;
     if (!load_plugins || !*load_plugins)
         return 0;
+
+    // Plugins have been removed in VPL runtime, don't load them
+    // if using the VPL runtime with MSDK loader to avoid failure.
+    if (MFXQueryVersion(session, &ver) == MFX_ERR_NONE &&
+        QSV_RUNTIME_VERSION_ATLEAST(ver, 1, 255)) {
+        return 0;
+    }
 
     while (*load_plugins) {
         mfxPluginUID uid;
@@ -830,7 +834,7 @@ static mfxStatus qsv_frame_alloc(mfxHDL pthis, mfxFrameAllocRequest *req,
         AVHWFramesContext *frames_ctx = (AVHWFramesContext*)ctx->hw_frames_ctx->data;
         AVQSVFramesContext *frames_hwctx = frames_ctx->hwctx;
         mfxFrameInfo      *i  = &req->Info;
-        mfxFrameInfo      *i1 = &frames_hwctx->surfaces[0].Info;
+        mfxFrameInfo      *i1 = &frames_hwctx->reserve_surface.Info;
 
         if (i->Width  > i1->Width  || i->Height > i1->Height ||
             i->FourCC != i1->FourCC || i->ChromaFormat != i1->ChromaFormat) {
@@ -945,7 +949,7 @@ static mfxStatus qsv_frame_lock(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr)
     if (!qsv_mid->hw_frame->hw_frames_ctx)
         goto fail;
 
-    qsv_mid->surf.Info = hw_frames_hwctx->surfaces[0].Info;
+    qsv_mid->surf.Info = hw_frames_hwctx->reserve_surface.Info;
     qsv_mid->surf.Data.MemId = qsv_mid->handle_pair;
 
     /* map the data to the system memory */

@@ -1774,7 +1774,6 @@ EXTERNAL_LIBRARY_GPL_LIST="
 
 EXTERNAL_LIBRARY_NONFREE_LIST="
     decklink
-    libfdk_aac
     libtls
 "
 
@@ -1814,6 +1813,7 @@ EXTERNAL_LIBRARY_LIST="
     libdav1d
     libdc1394
     libdrm
+    libfdk_aac
     libflite
     libfontconfig
     libfreetype
@@ -3143,6 +3143,8 @@ scale_cuda_filter_deps="ffnvcodec"
 scale_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
 thumbnail_cuda_filter_deps="ffnvcodec"
 thumbnail_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
+tonemap_cuda_filter_deps="ffnvcodec const_nan"
+tonemap_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
 transpose_npp_filter_deps="ffnvcodec libnpp"
 overlay_cuda_filter_deps="ffnvcodec"
 overlay_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
@@ -3678,6 +3680,7 @@ gblur_vulkan_filter_deps="vulkan spirv_compiler"
 hflip_vulkan_filter_deps="vulkan spirv_compiler"
 histeq_filter_deps="gpl"
 hqdn3d_filter_deps="gpl"
+hwupload_vaapi_filter_deps="vaapi"
 iccdetect_filter_deps="lcms2"
 iccgen_filter_deps="lcms2"
 interlace_filter_deps="gpl"
@@ -3723,6 +3726,7 @@ rubberband_filter_deps="librubberband"
 sab_filter_deps="gpl swscale"
 scale2ref_filter_deps="swscale"
 scale_filter_deps="swscale"
+scale_opencl_filter_deps="opencl"
 scale_qsv_filter_deps="libmfx"
 scale_qsv_filter_select="qsvvpp"
 scdet_filter_select="scene_sad"
@@ -3911,7 +3915,7 @@ enable doc
 enable faan faandct faanidct
 enable large_tests
 enable optimizations
-enable ptx_compression
+disable ptx_compression
 enable runtime_cpudetect
 enable safe_bitstream_reader
 enable static
@@ -4456,7 +4460,7 @@ if enabled cuda_nvcc; then
     nvccflags_default="-gencode arch=compute_30,code=sm_30 -O2"
 else
     nvcc_default="clang"
-    nvccflags_default="--cuda-gpu-arch=sm_30 -O2"
+    nvccflags_default="--cuda-gpu-arch=sm_30 -O2 -ffast-math"
     NVCC_C=""
 fi
 
@@ -6458,7 +6462,7 @@ fi
 if enabled cuda_nvcc; then
     nvccflags="$nvccflags -ptx"
 else
-    nvccflags="$nvccflags -S -nocudalib -nocudainc --cuda-device-only -Wno-c++11-narrowing -include ${source_link}/compat/cuda/cuda_runtime.h"
+    nvccflags="$nvccflags -S -nocudalib -nocudainc --cuda-device-only -Wno-c++11-narrowing -std=c++14 -include ${source_link}/compat/cuda/cuda_runtime.h"
     check_nvcc cuda_llvm
 fi
 
@@ -7193,6 +7197,8 @@ if enabled lto; then
     test "$cc_type" != "$ld_type" && die "LTO requires same compiler and linker"
     check_cflags  -flto
     check_ldflags -flto $cpuflags
+    check_cflags  -flto=auto
+    check_ldflags -flto=auto $cpuflags
     disable inline_asm_direct_symbol_refs
 fi
 
@@ -7231,7 +7237,9 @@ if enabled icc; then
             disable aligned_stack
     fi
 elif enabled gcc; then
-    check_optflags -fno-tree-vectorize
+    case $gcc_basever in
+        2|2.*|3.*|4.*|5.*|6.*) check_optflags -fno-tree-vectorize ;;
+    esac
     check_cflags -Werror=format-security
     check_cflags -Werror=implicit-function-declaration
     check_cflags -Werror=missing-prototypes

@@ -483,10 +483,9 @@ int ff_vaapi_encode_close(AVCodecContext *avctx);
       OFFSET(common.desired_b_depth), AV_OPT_TYPE_INT, \
       { .i64 = 1 }, 1, INT_MAX, FLAGS }, \
     { "async_depth", "Maximum processing parallelism. " \
-      "Increase this to improve single channel performance. This option " \
-      "doesn't work if driver doesn't implement vaSyncBuffer function.", \
+      "Increase this to improve single channel performance.", \
       OFFSET(common.async_depth), AV_OPT_TYPE_INT, \
-      { .i64 = 2 }, 1, MAX_ASYNC_DEPTH, FLAGS }, \
+      { .i64 = 4 }, 1, MAX_ASYNC_DEPTH, FLAGS }, \
     { "max_frame_size", \
       "Maximum frame size (in bytes)",\
       OFFSET(common.max_frame_size), AV_OPT_TYPE_INT, \
