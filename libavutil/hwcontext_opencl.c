@@ -2806,6 +2806,11 @@ static void opencl_unmap_from_d3d11(AVHWFramesContext *dst_fc,
 static int opencl_map_from_d3d11(AVHWFramesContext *dst_fc, AVFrame *dst,
                                  const AVFrame *src, int flags)
 {
+    AVHWFramesContext *src_fc =
+        (AVHWFramesContext*)src->hw_frames_ctx->data;
+    //AVD3D11VAFramesContext *src_hwctx = src_fc->hwctx;
+    AVD3D11VADeviceContext *device_hwctx = src_fc->device_ctx->hwctx;
+
     OpenCLDeviceContext  *device_priv = dst_fc->device_ctx->internal->priv;
     OpenCLFramesContext  *frames_priv = dst_fc->internal->priv;
     AVOpenCLFrameDescriptor *desc;
@@ -2838,6 +2843,40 @@ static int opencl_map_from_d3d11(AVHWFramesContext *dst_fc, AVFrame *dst,
             return AVERROR(EIO);
         }
     } else if (device_priv->d3d11_map_intel) {
+#if 1
+        int srcIdx = (intptr_t)src->data[1];
+        ID3D11Resource *srcTex = (ID3D11Resource *)(ID3D11Texture2D *)src->data[0];
+        ID3D11Texture2D *tmpTex = NULL;
+        D3D11_TEXTURE2D_DESC srcTexDesc;
+        D3D11_TEXTURE2D_DESC tmpTexDesc = {
+            .Width          = src_fc->width,
+            .Height         = src_fc->height,
+            .MipLevels      = 1,
+            .SampleDesc     = { .Count = 1 },
+            .ArraySize      = 1,
+            .Usage          = D3D11_USAGE_DEFAULT, //D3D11_USAGE_STAGING,
+            //.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE,
+        };
+
+        ID3D11Texture2D_GetDesc((ID3D11Texture2D *)srcTex, &srcTexDesc);
+        tmpTexDesc.Format = srcTexDesc.Format;
+
+        device_hwctx->lock(device_hwctx->lock_ctx);
+
+        HRESULT hr = ID3D11Device_CreateTexture2D(device_hwctx->device, &tmpTexDesc, NULL, &tmpTex);
+        if (FAILED(hr)) {
+            av_log(src_fc, AV_LOG_ERROR, "Could not create the tmp texture (%lx)\n", (long)hr);
+            device_hwctx->unlock(device_hwctx->lock_ctx);
+            return AVERROR_UNKNOWN;
+        }
+
+        ID3D11DeviceContext_CopySubresourceRegion(device_hwctx->device_context,
+                                                  tmpTex, 0, 0, 0, 0,
+                                                  srcTex, srcIdx, NULL);
+        ID3D11Texture2D_Release(tmpTex);
+
+        device_hwctx->unlock(device_hwctx->lock_ctx);
+#endif
         cle = device_priv->clEnqueueAcquireD3D11ObjectsKHR(
             frames_priv->command_queue, nb_planes, desc->planes,
             0, NULL, &event);
