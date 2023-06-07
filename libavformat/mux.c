@@ -543,7 +543,7 @@ static int compute_muxer_pkt_fields(AVFormatContext *s, AVStream *st, AVPacket *
           st->codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE &&
           st->codecpar->codec_type != AVMEDIA_TYPE_DATA &&
           sti->cur_dts >= pkt->dts) || sti->cur_dts > pkt->dts)) {
-        av_log(s, AV_LOG_ERROR,
+        av_log(s, AV_LOG_DEBUG,
                "Application provided invalid, non monotonically increasing dts to muxer in stream %d: %s >= %s\n",
                st->index, av_ts2str(sti->cur_dts), av_ts2str(pkt->dts));
         return AVERROR(EINVAL);
