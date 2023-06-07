@@ -23,6 +23,7 @@ CONFIG := --prefix=${TARGET_DIR} \
 	--enable-gmp \
 	--enable-gnutls \
 	--enable-chromaprint \
+	--enable-opencl \
 	--enable-libdrm \
 	--enable-libass \
 	--enable-libfreetype \
@@ -45,6 +46,7 @@ CONFIG := --prefix=${TARGET_DIR} \
 
 CONFIG_ARM_COMMON := --toolchain=hardened \
 	--enable-cross-compile \
+	--enable-rkmpp \
 
 CONFIG_ARM := ${CONFIG_ARM_COMMON} \
 	--arch=armhf \
@@ -59,7 +61,6 @@ CONFIG_x86 := --arch=amd64 \
 	--enable-libshaderc \
 	--enable-libplacebo \
 	--enable-vulkan \
-	--enable-opencl \
 	--enable-vaapi \
 	--enable-amf \
 	--enable-libvpl \
