@@ -6990,7 +6990,7 @@ fi
 if enabled_all opencl libdrm ; then
     check_type "CL/cl_intel.h" "clCreateImageFromFdINTEL_fn" &&
         enable opencl_drm_beignet
-    check_func_headers "CL/cl_ext.h" clImportMemoryARM &&
+    enabled_any arm aarch64 &&
         enable opencl_drm_arm
 fi
 
