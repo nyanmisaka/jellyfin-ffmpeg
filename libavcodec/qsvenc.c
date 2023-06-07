@@ -680,7 +680,9 @@ static int is_strict_gop(QSVEncContext *q) {
 
 static int init_video_param_jpeg(AVCodecContext *avctx, QSVEncContext *q)
 {
-    enum AVPixelFormat sw_format = avctx->pix_fmt == AV_PIX_FMT_QSV ?
+    enum AVPixelFormat sw_format = avctx->pix_fmt == AV_PIX_FMT_QSV ||
+                                   avctx->pix_fmt == AV_PIX_FMT_VAAPI ||
+                                   avctx->pix_fmt == AV_PIX_FMT_D3D11 ?
                                    avctx->sw_pix_fmt : avctx->pix_fmt;
     const AVPixFmtDescriptor *desc;
     int ret;
@@ -719,8 +721,8 @@ static int init_video_param_jpeg(AVCodecContext *avctx, QSVEncContext *q)
     if (avctx->hw_frames_ctx) {
         AVHWFramesContext *frames_ctx    = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
         AVQSVFramesContext *frames_hwctx = frames_ctx->hwctx;
-        q->param.mfx.FrameInfo.Width  = frames_hwctx->surfaces[0].Info.Width;
-        q->param.mfx.FrameInfo.Height = frames_hwctx->surfaces[0].Info.Height;
+        q->param.mfx.FrameInfo.Width  = frames_hwctx->reserve_surface.Info.Width;
+        q->param.mfx.FrameInfo.Height = frames_hwctx->reserve_surface.Info.Height;
     }
 
     if (avctx->framerate.den > 0 && avctx->framerate.num > 0) {
@@ -746,7 +748,9 @@ static int init_video_param_jpeg(AVCodecContext *avctx, QSVEncContext *q)
 
 static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
 {
-    enum AVPixelFormat sw_format = avctx->pix_fmt == AV_PIX_FMT_QSV ?
+    enum AVPixelFormat sw_format = avctx->pix_fmt == AV_PIX_FMT_QSV ||
+                                   avctx->pix_fmt == AV_PIX_FMT_VAAPI ||
+                                   avctx->pix_fmt == AV_PIX_FMT_D3D11 ?
                                    avctx->sw_pix_fmt : avctx->pix_fmt;
     const AVPixFmtDescriptor *desc;
     float quant;
@@ -834,15 +838,17 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
         // for progressive video, the height should be aligned to 16 for
         // H.264.  For HEVC, depending on the version of MFX, it should be
         // either 32 or 16.  The lower number is better if possible.
-        q->height_align = avctx->codec_id == AV_CODEC_ID_HEVC ? 32 : 16;
+        // For AV1, it is 32
+        q->height_align = (avctx->codec_id == AV_CODEC_ID_HEVC ||
+                           avctx->codec_id == AV_CODEC_ID_AV1) ? 32 : 16;
     }
     q->param.mfx.FrameInfo.Height = FFALIGN(avctx->height, q->height_align);
 
     if (avctx->hw_frames_ctx) {
         AVHWFramesContext *frames_ctx = (AVHWFramesContext*)avctx->hw_frames_ctx->data;
         AVQSVFramesContext *frames_hwctx = frames_ctx->hwctx;
-        q->param.mfx.FrameInfo.Width  = frames_hwctx->surfaces[0].Info.Width;
-        q->param.mfx.FrameInfo.Height = frames_hwctx->surfaces[0].Info.Height;
+        q->param.mfx.FrameInfo.Width  = frames_hwctx->reserve_surface.Info.Width;
+        q->param.mfx.FrameInfo.Height = frames_hwctx->reserve_surface.Info.Height;
     }
 
     if (avctx->framerate.den > 0 && avctx->framerate.num > 0) {
@@ -1118,6 +1124,10 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
                 q->extco3.MaxFrameSizeI = q->max_frame_size_i;
             if (q->max_frame_size_p >= 0)
                 q->extco3.MaxFrameSizeP = q->max_frame_size_p;
+            if (sw_format == AV_PIX_FMT_BGRA &&
+                (q->profile == MFX_PROFILE_HEVC_REXT ||
+                q->profile == MFX_PROFILE_UNKNOWN))
+                q->extco3.TargetChromaFormatPlus1 = MFX_CHROMAFORMAT_YUV444 + 1;
 
             q->extco3.ScenarioInfo = q->scenario;
         } else if (avctx->codec_id == AV_CODEC_ID_AV1) {
@@ -1618,7 +1628,31 @@ int ff_qsv_enc_init(AVCodecContext *avctx, QSVEncContext *q)
 
     if (avctx->hw_frames_ctx) {
         AVHWFramesContext    *frames_ctx = (AVHWFramesContext*)avctx->hw_frames_ctx->data;
-        AVQSVFramesContext *frames_hwctx = frames_ctx->hwctx;
+        AVQSVFramesContext *frames_hwctx = NULL;
+
+        if (frames_ctx->format == AV_PIX_FMT_VAAPI || frames_ctx->format == AV_PIX_FMT_D3D11) {
+            AVBufferRef *derive_device_ref = NULL;
+            AVBufferRef *derive_frames_ref = NULL;
+            ret = av_hwdevice_ctx_create_derived(&derive_device_ref,
+                                                 AV_HWDEVICE_TYPE_QSV, frames_ctx->device_ref, 0);
+            if (ret < 0) {
+                av_log(avctx, AV_LOG_ERROR, "Failed to derive QSV device context: %d.\n", ret);
+                return ret;
+            }
+            ret = av_hwframe_ctx_create_derived(&derive_frames_ref,
+                                                AV_PIX_FMT_QSV, derive_device_ref, avctx->hw_frames_ctx, 0);
+            if (ret < 0) {
+                av_log(avctx, AV_LOG_ERROR, "Failed to derive QSV frames context: %d.\n", ret);
+                av_buffer_unref(&derive_device_ref);
+                return ret;
+            }
+            av_buffer_unref(&avctx->hw_device_ctx);
+            avctx->hw_device_ctx = derive_device_ref;
+            av_buffer_unref(&avctx->hw_frames_ctx);
+            avctx->hw_frames_ctx = derive_frames_ref;
+            frames_ctx = (AVHWFramesContext*)avctx->hw_frames_ctx->data;
+        }
+        frames_hwctx = frames_ctx->hwctx;
 
         if (!iopattern) {
 #if QSV_HAVE_OPAQUE
@@ -1773,6 +1807,10 @@ static void clear_unused_frames(QSVEncContext *q)
             memset(&cur->enc_ctrl, 0, sizeof(cur->enc_ctrl));
             cur->enc_ctrl.Payload = cur->payloads;
             cur->enc_ctrl.ExtParam = cur->extparam;
+            if (cur->external_frame) {
+                av_freep(&cur->surface.Data.MemId);
+                cur->external_frame = 0;
+            }
             if (cur->frame->format == AV_PIX_FMT_QSV) {
                 av_frame_unref(cur->frame);
             }
@@ -1877,6 +1915,62 @@ static int qsvenc_fill_padding_area(AVFrame *frame, int new_w, int new_h)
     return 0;
 }
 
+/* frame width / height have been aligned with the alignment */
+static int qsvenc_get_continuous_buffer(AVFrame *frame)
+{
+    int total_size;
+
+    switch (frame->format) {
+    case AV_PIX_FMT_NV12:
+        frame->linesize[0] = frame->width;
+        frame->linesize[1] = frame->linesize[0];
+        total_size = frame->linesize[0] * frame->height + frame->linesize[1] * frame->height / 2;
+        break;
+
+    case AV_PIX_FMT_P010:
+    case AV_PIX_FMT_P012:
+        frame->linesize[0] = 2 * frame->width;
+        frame->linesize[1] = frame->linesize[0];
+        total_size = frame->linesize[0] * frame->height + frame->linesize[1] * frame->height / 2;
+        break;
+
+    case AV_PIX_FMT_YUYV422:
+        frame->linesize[0] = 2 * frame->width;
+        frame->linesize[1] = 0;
+        total_size = frame->linesize[0] * frame->height;
+        break;
+
+    case AV_PIX_FMT_Y210:
+    case AV_PIX_FMT_VUYX:
+    case AV_PIX_FMT_XV30:
+    case AV_PIX_FMT_BGRA:
+    case AV_PIX_FMT_X2RGB10:
+        frame->linesize[0] = 4 * frame->width;
+        frame->linesize[1] = 0;
+        total_size = frame->linesize[0] * frame->height;
+        break;
+
+    default:
+        // This should never be reached
+        av_assert0(0);
+        return AVERROR(EINVAL);
+    }
+
+    frame->buf[0] = av_buffer_alloc(total_size);
+    if (!frame->buf[0])
+        return AVERROR(ENOMEM);
+
+    frame->data[0] = frame->buf[0]->data;
+    frame->extended_data = frame->data;
+
+    if (frame->format == AV_PIX_FMT_NV12 ||
+        frame->format == AV_PIX_FMT_P010 ||
+        frame->format == AV_PIX_FMT_P012)
+        frame->data[1] = frame->data[0] + frame->linesize[0] * frame->height;
+
+    return 0;
+}
+
 static int submit_frame(QSVEncContext *q, const AVFrame *frame,
                         QSVFrame **new_frame)
 {
@@ -1887,25 +1981,49 @@ static int submit_frame(QSVEncContext *q, const AVFrame *frame,
     if (ret < 0)
         return ret;
 
-    if (frame->format == AV_PIX_FMT_QSV) {
-        ret = av_frame_ref(qf->frame, frame);
-        if (ret < 0)
-            return ret;
+    if (frame->format == AV_PIX_FMT_QSV || frame->format == AV_PIX_FMT_VAAPI || frame->format == AV_PIX_FMT_D3D11) {
+        if (frame->format == AV_PIX_FMT_QSV) {
+            ret = av_frame_ref(qf->frame, frame);
+            if (ret < 0)
+                return ret;
+        } else {
+            qf->frame->format = AV_PIX_FMT_QSV;
+            qf->frame->hw_frames_ctx = av_buffer_ref(q->avctx->hw_frames_ctx);
+            if (!qf->frame->hw_frames_ctx)
+                return AVERROR(ENOMEM);
+            ret = av_hwframe_map(qf->frame, frame, 0);
+            if (ret < 0) {
+                av_log(q->avctx, AV_LOG_ERROR, "Failed to map to QSV frames\n");
+                return ret;
+            }
+            ret = av_frame_copy_props(qf->frame, frame);
+            if (ret < 0)
+                return ret;
+        }
 
         qf->surface = *(mfxFrameSurface1*)qf->frame->data[3];
 
+
         if (q->frames_ctx.mids) {
             ret = ff_qsv_find_surface_idx(&q->frames_ctx, qf);
-            if (ret < 0)
-                return ret;
-
-            qf->surface.Data.MemId = &q->frames_ctx.mids[ret];
+            if (ret >= 0)
+                qf->surface.Data.MemId = &q->frames_ctx.mids[ret];
+        }
+        if (!q->frames_ctx.mids || ret < 0) {
+            QSVMid *mid = NULL;
+            mid = (QSVMid *)av_mallocz(sizeof(*mid));
+            if (!mid)
+                return AVERROR(ENOMEM);
+            mid->handle_pair = (mfxHDLPair *)qf->surface.Data.MemId;
+            qf->surface.Data.MemId = mid;
+            qf->external_frame = 1;
         }
     } else {
         /* make a copy if the input is not padded as libmfx requires */
         /* and to make allocation continious for data[0]/data[1] */
-         if ((frame->height & 31 || frame->linesize[0] & (q->width_align - 1)) ||
-            (frame->data[1] - frame->data[0] != frame->linesize[0] * FFALIGN(qf->frame->height, q->height_align))) {
+         if ((frame->height & (q->height_align - 1) || frame->linesize[0] & (q->width_align - 1)) ||
+            ((frame->format == AV_PIX_FMT_NV12 || frame->format == AV_PIX_FMT_P010 || frame->format == AV_PIX_FMT_P012) &&
+             (frame->data[1] - frame->data[0] != frame->linesize[0] * FFALIGN(qf->frame->height, q->height_align)))) {
             int tmp_w, tmp_h;
             qf->frame->height = tmp_h = FFALIGN(frame->height, q->height_align);
             qf->frame->width  = tmp_w = FFALIGN(frame->width, q->width_align);
@@ -1913,7 +2031,7 @@ static int submit_frame(QSVEncContext *q, const AVFrame *frame,
             qf->frame->format = frame->format;
 
             if (!qf->frame->data[0]) {
-                ret = av_frame_get_buffer(qf->frame, q->width_align);
+                ret = qsvenc_get_continuous_buffer(qf->frame);
                 if (ret < 0)
                     return ret;
             }
@@ -2597,6 +2715,8 @@ int ff_qsv_enc_close(AVCodecContext *avctx, QSVEncContext *q)
 
 const AVCodecHWConfigInternal *const ff_qsv_enc_hw_configs[] = {
     HW_CONFIG_ENCODER_FRAMES(QSV,  QSV),
+    HW_CONFIG_ENCODER_FRAMES(VAAPI,VAAPI),
+    HW_CONFIG_ENCODER_FRAMES(D3D11,D3D11VA),
     HW_CONFIG_ENCODER_DEVICE(NV12, QSV),
     HW_CONFIG_ENCODER_DEVICE(P010, QSV),
     NULL,

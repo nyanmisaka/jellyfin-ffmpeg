@@ -854,7 +854,7 @@ static int hls_mux_init(AVFormatContext *s, VariantStream *vs)
     AVFormatContext *vtt_oc = NULL;
     int byterange_mode = (hls->flags & HLS_SINGLE_FILE) || (hls->max_seg_size > 0);
     int remaining_options;
-    int i, ret;
+    int i, j, ret;
 
     ret = avformat_alloc_output_context2(&vs->avf, vs->oformat, NULL, NULL);
     if (ret < 0)
@@ -903,6 +903,15 @@ FF_ENABLE_DEPRECATION_WARNINGS
             st->codecpar->codec_tag = vs->streams[i]->codecpar->codec_tag;
         } else {
             st->codecpar->codec_tag = 0;
+        }
+
+        // copy side data
+        for (j = 0; j < vs->streams[i]->nb_side_data; j++) {
+            const AVPacketSideData *sd_src = &vs->streams[i]->side_data[j];
+            uint8_t *dst_data = av_stream_new_side_data(st, sd_src->type, sd_src->size);
+            if (!dst_data)
+                return AVERROR(ENOMEM);
+            memcpy(dst_data, sd_src->data, sd_src->size);
         }
 
         st->sample_aspect_ratio = vs->streams[i]->sample_aspect_ratio;

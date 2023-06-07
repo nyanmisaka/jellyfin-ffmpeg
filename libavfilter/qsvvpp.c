@@ -167,7 +167,7 @@ int ff_qsvvpp_print_warning(void *log_ctx, mfxStatus err,
     const char *desc;
     int ret;
     ret = qsv_map_error(err, &desc);
-    av_log(log_ctx, AV_LOG_WARNING, "%s: %s (%d)\n", warning_string, desc, err);
+    av_log(log_ctx, AV_LOG_VERBOSE, "%s: %s (%d)\n", warning_string, desc, err);
     return ret;
 }
 
@@ -307,7 +307,7 @@ static int fill_frameinfo_by_link(mfxFrameInfo *frameinfo, AVFilterLink *link)
 
         frames_ctx   = (AVHWFramesContext *)link->hw_frames_ctx->data;
         frames_hwctx = frames_ctx->hwctx;
-        *frameinfo   = frames_hwctx->surfaces[0].Info;
+        *frameinfo   = frames_hwctx->reserve_surface.Info;
     } else {
         pix_fmt = link->format;
         desc = av_pix_fmt_desc_get(pix_fmt);
@@ -899,6 +899,20 @@ int ff_qsvvpp_filter_frame(QSVVPPContext *s, AVFilterLink *inlink, AVFrame *picr
         }
         out_frame->frame->pts = av_rescale_q(out_frame->surface.Data.TimeStamp,
                                              default_tb, outlink->time_base);
+
+        /* Copy the color side data */
+        if (in_frame->frame->color_primaries != -1)
+            out_frame->frame->color_primaries = in_frame->frame->color_primaries;
+        if (in_frame->frame->color_trc != -1)
+            out_frame->frame->color_trc = in_frame->frame->color_trc;
+        if (in_frame->frame->colorspace != -1)
+            out_frame->frame->colorspace = in_frame->frame->colorspace;
+        if (in_frame->frame->color_range != -1)
+            out_frame->frame->color_range = in_frame->frame->color_range;
+
+        ret = av_frame_copy_side_data(out_frame->frame, in_frame->frame, 0);
+        if (ret < 0)
+            return ret;
 
         out_frame->queued++;
         aframe = (QSVAsyncFrame){ sync, out_frame };

@@ -65,7 +65,7 @@ OBJS = ac3_parser.o                                                     \
 OBJS-$(CONFIG_AANDCTTABLES)            += aandcttab.o
 OBJS-$(CONFIG_AC3DSP)                  += ac3dsp.o ac3.o ac3tab.o
 OBJS-$(CONFIG_ADTS_HEADER)             += adts_header.o mpeg4audio_sample_rates.o
-OBJS-$(CONFIG_AMF)                     += amfenc.o
+OBJS-$(CONFIG_AMF)                     += amfenc.o amf.o
 OBJS-$(CONFIG_AUDIO_FRAME_QUEUE)       += audio_frame_queue.o
 OBJS-$(CONFIG_ATSC_A53)                += atsc_a53.o
 OBJS-$(CONFIG_AUDIODSP)                += audiodsp.o
@@ -255,6 +255,7 @@ OBJS-$(CONFIG_AV1_CUVID_DECODER)       += cuviddec.o
 OBJS-$(CONFIG_AV1_MEDIACODEC_DECODER)  += mediacodecdec.o
 OBJS-$(CONFIG_AV1_NVENC_ENCODER)       += nvenc_av1.o nvenc.o
 OBJS-$(CONFIG_AV1_QSV_ENCODER)         += qsvenc_av1.o
+OBJS-$(CONFIG_AV1_VAAPI_ENCODER)       += vaapi_encode_av1.o av1_profile_level.o
 OBJS-$(CONFIG_AVRN_DECODER)            += avrndec.o
 OBJS-$(CONFIG_AVRP_DECODER)            += r210dec.o
 OBJS-$(CONFIG_AVRP_ENCODER)            += r210enc.o
@@ -1266,7 +1267,7 @@ SKIPHEADERS                            += %_tablegen.h                  \
                                           bitstream_template.h          \
                                           $(ARCH)/vpx_arith.h          \
 
-SKIPHEADERS-$(CONFIG_AMF)              += amfenc.h
+SKIPHEADERS-$(CONFIG_AMF)              += amfenc.h amf.h
 SKIPHEADERS-$(CONFIG_D3D11VA)          += d3d11va.h dxva2_internal.h
 SKIPHEADERS-$(CONFIG_DXVA2)            += dxva2.h dxva2_internal.h
 SKIPHEADERS-$(CONFIG_JNI)              += ffjni.h
