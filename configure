@@ -116,6 +116,7 @@ Program options:
   --disable-ffmpeg         disable ffmpeg build
   --disable-ffplay         disable ffplay build
   --disable-ffprobe        disable ffprobe build
+  --disable-ffhwinfo       disable ffhwinfo build
 
 Documentation options:
   --disable-doc            do not build documentation
@@ -1958,6 +1959,7 @@ PROGRAM_LIST="
     ffplay
     ffprobe
     ffmpeg
+    ffhwinfo
 "
 
 SUBSYSTEM_LIST="
@@ -3841,6 +3843,8 @@ ffplay_select="rdft crop_filter transpose_filter hflip_filter vflip_filter rotat
 ffplay_suggest="shell32"
 ffprobe_deps="avcodec avformat"
 ffprobe_suggest="shell32"
+ffhwinfo_deps="avcodec avutil"
+ffhwinfo_suggest="shell32"
 
 # documentation
 podpages_deps="perl"

@@ -1,11 +1,12 @@
 AVPROGS-$(CONFIG_FFMPEG)   += ffmpeg
 AVPROGS-$(CONFIG_FFPLAY)   += ffplay
 AVPROGS-$(CONFIG_FFPROBE)  += ffprobe
+AVPROGS-$(CONFIG_FFHWINFO) += ffhwinfo
 
 AVPROGS     := $(AVPROGS-yes:%=%$(PROGSSUF)$(EXESUF))
 PROGS       += $(AVPROGS)
 
-AVBASENAMES  = ffmpeg ffplay ffprobe
+AVBASENAMES  = ffmpeg ffplay ffprobe ffhwinfo
 ALLAVPROGS   = $(AVBASENAMES:%=%$(PROGSSUF)$(EXESUF))
 ALLAVPROGS_G = $(AVBASENAMES:%=%$(PROGSSUF)_g$(EXESUF))
 
@@ -19,6 +20,13 @@ OBJS-ffmpeg +=                  \
     fftools/objpool.o           \
     fftools/sync_queue.o        \
     fftools/thread_queue.o      \
+
+OBJS-ffhwinfo +=                \
+    fftools/ffhwinfo_gpu.o      \
+    fftools/ffhwinfo_gpu_drm.o  \
+    fftools/ffhwinfo_gpu_dxgi.o \
+    fftools/ffhwinfo_gpu_cuda.o \
+    fftools/ffhwinfo_utils.o
 
 define DOFFTOOL
 OBJS-$(1) += fftools/cmdutils.o fftools/opt_common.o fftools/$(1).o $(OBJS-$(1)-yes)
