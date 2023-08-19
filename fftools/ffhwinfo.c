@@ -38,7 +38,6 @@ const char program_name[] = "ffhwinfo";
 const int program_birth_year = 2023;
 const char *output_filename = NULL;
 
-//static AVBufferRef *hw_device_ctx = NULL;
 static char *accel_type = NULL;
 static int accel_flags = HWINFO_DEFAULT_PRINT_FLAGS;
 static char *print_format = NULL;
@@ -46,14 +45,13 @@ static char *print_format = NULL;
 static const char *const accel_type_names[] = {
     [HWINFO_ACCEL_TYPE_VAAPI] = "vaapi",
     [HWINFO_ACCEL_TYPE_QSV]   = "qsv",
-    [HWINFO_ACCEL_TYPE_NV]    = "nv",
+    [HWINFO_ACCEL_TYPE_CUDA]  = "cuda",
     [HWINFO_ACCEL_TYPE_AMF]   = "amf",
 };
 
 static enum HWInfoAccelType find_accel_type_by_name(const char *name)
 {
-    int type;
-    for (type = 0; type < FF_ARRAY_ELEMS(accel_type_names); type++) {
+    for (unsigned type = 0; type < FF_ARRAY_ELEMS(accel_type_names); type++) {
         if (accel_type_names[type] && !strcmp(accel_type_names[type], name))
             return type;
     }
@@ -64,9 +62,14 @@ static int opt_accel_flags(void* optctx, const char *opt, const char *arg)
 {
     static const AVOption opts[] = {
         { "accelflags", NULL, 0, AV_OPT_TYPE_FLAGS, { .i64 = 0 }, INT64_MIN, INT64_MAX,   .unit = "flags" },
-        { "dec",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_DECODER }, .unit = "flags" },
-        { "enc",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_ENCODER }, .unit = "flags" },
-        { "filter",     NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_FILTER  }, .unit = "flags" },
+        { "all",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_DEFAULT_PRINT_FLAGS }, .unit = "flags" },
+        { "dev",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_DEV }, .unit = "flags" },
+        { "dec",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_DEC }, .unit = "flags" },
+        { "enc",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_ENC }, .unit = "flags" },
+        { "vpp",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_VPP }, .unit = "flags" },
+        { "ocl",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_COMPUTE_OPENCL }, .unit = "flags" },
+        { "vk",         NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_COMPUTE_VULKAN }, .unit = "flags" },
+        { "osva",       NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_OS_VA }, .unit = "flags" },
     };
     static const AVClass class = {
         .class_name = "",
@@ -80,9 +83,10 @@ static int opt_accel_flags(void* optctx, const char *opt, const char *arg)
     if (ret < 0)
         return ret;
 
-    if (!(accel_flags & HWINFO_FLAG_PRINT_DECODER) &&
-        !(accel_flags & HWINFO_FLAG_PRINT_ENCODER) &&
-        !(accel_flags & HWINFO_FLAG_PRINT_FILTER)) {
+    if (!(accel_flags & HWINFO_FLAG_PRINT_DEV) &&
+        !(accel_flags & HWINFO_FLAG_PRINT_DEC) &&
+        !(accel_flags & HWINFO_FLAG_PRINT_ENC) &&
+        !(accel_flags & HWINFO_FLAG_PRINT_VPP)) {
         accel_flags = HWINFO_DEFAULT_PRINT_FLAGS;
     }
 
@@ -109,20 +113,21 @@ static int opt_output_file_o(void *optctx, const char *opt, const char *arg)
 }
 
 static const OptionDef options[] = {
-    { "h",            OPT_EXIT,             { .func_arg = show_help },    "show help", "topic" },
-    { "?",            OPT_EXIT,             { .func_arg = show_help },    "show help", "topic" },
-    { "help",         OPT_EXIT,             { .func_arg = show_help },    "show help", "topic" },
-    { "-help",        OPT_EXIT,             { .func_arg = show_help },    "show help", "topic" },
-    { "loglevel",     HAS_ARG,              { .func_arg = opt_loglevel }, "set logging level", "loglevel" },
-    { "v",            HAS_ARG,              { .func_arg = opt_loglevel }, "set logging level", "loglevel" },
-    { "acceltype",    OPT_STRING | HAS_ARG, { &accel_type },
-      "set the acceleration type (available types are: vaapi, qsv, nv, amf)", "type" },
-    { "accelflags",   HAS_ARG,              { .func_arg = opt_accel_flags },
-      "set the acceleration flag (available flags are: dec, enc, filter)", "flags" },
-    { "print_format", OPT_STRING | HAS_ARG, { &print_format },
+    { "h",            OPT_EXIT,              { .func_arg = show_help },    "show help", "topic" },
+    { "?",            OPT_EXIT,              { .func_arg = show_help },    "show help", "topic" },
+    { "help",         OPT_EXIT,              { .func_arg = show_help },    "show help", "topic" },
+    { "-help",        OPT_EXIT,              { .func_arg = show_help },    "show help", "topic" },
+    { "loglevel",     HAS_ARG,               { .func_arg = opt_loglevel }, "set logging level", "loglevel" },
+    { "v",            HAS_ARG,               { .func_arg = opt_loglevel }, "set logging level", "loglevel" },
+    { "hide_banner",  OPT_BOOL | OPT_EXPERT, { &hide_banner }, "do not show program banner", "hide_banner" },
+    { "acceltype",    OPT_STRING | HAS_ARG,  { &accel_type },
+      "set the acceleration type (available types are: vaapi, qsv, cuda, amf)", "type" },
+    { "accelflags",   HAS_ARG,               { .func_arg = opt_accel_flags },
+      "set the acceleration flag (available flags are: all, dev, dec, enc, vpp, ocl, vk, osva)", "flags" },
+    { "print_format", OPT_STRING | HAS_ARG,  { &print_format },
       "set the output printing format (available formats are: default, json)", "format" },
-    { "of",           OPT_STRING | HAS_ARG, { &print_format }, "alias for -print_format", "format" },
-    { "o",            HAS_ARG,              { .func_arg = opt_output_file_o }, "write to specified output", "output_file"},
+    { "of",           OPT_STRING | HAS_ARG,  { &print_format }, "alias for -print_format", "format" },
+    { "o",            HAS_ARG,               { .func_arg = opt_output_file_o }, "write to specified output", "output_file"},
     { NULL, },
 };
 
@@ -135,7 +140,7 @@ static void show_usage(void)
 {
     av_log(NULL, AV_LOG_INFO, "Simple hardware acceleration devices info analyzer\n");
     av_log(NULL, AV_LOG_INFO, "usage: %s [options]\n", program_name);
-    av_log(NULL, AV_LOG_INFO, "example: %s -acceltype qsv -accelflags dec+enc+filter\n", program_name);
+    av_log(NULL, AV_LOG_INFO, "example: %s -acceltype qsv -accelflags dev+dec+enc+vpp\n", program_name);
     av_log(NULL, AV_LOG_INFO, "\n");
 }
 
@@ -198,7 +203,7 @@ int main (int argc, char **argv)
     type = find_accel_type_by_name(accel_type);
     if (type == HWINFO_ACCEL_TYPE_NONE) {
         av_log(NULL, AV_LOG_ERROR, "Acceleration type '%s' is not supported!\n", accel_type);
-        av_log(NULL, AV_LOG_ERROR, "Available types are: vaapi, qsv, nv, amf\n");
+        av_log(NULL, AV_LOG_ERROR, "Available types are: vaapi, qsv, cuda, amf\n");
         ret = AVERROR(EINVAL);
         goto end;
     }

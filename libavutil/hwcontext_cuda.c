@@ -24,6 +24,10 @@
 #if CONFIG_VULKAN
 #include "hwcontext_vulkan.h"
 #endif
+#if CONFIG_D3D11VA
+#define COBJMACROS
+#include "hwcontext_d3d11va.h"
+#endif
 #include "cuda_check.h"
 #include "mem.h"
 #include "pixdesc.h"
@@ -437,11 +441,13 @@ static int cuda_device_derive(AVHWDeviceContext *device_ctx,
                               int flags) {
     AVCUDADeviceContext *hwctx = device_ctx->hwctx;
     CudaFunctions *cu;
+    CUdevice dst_dev;
     const char *src_uuid = NULL;
 #if CONFIG_VULKAN
     VkPhysicalDeviceIDProperties vk_idp;
 #endif
     int ret, i, device_count;
+    int direct_interop = 0;
 
     ret = cuda_flags_from_opts(device_ctx, opts, &flags);
     if (ret < 0)
@@ -452,34 +458,6 @@ static int cuda_device_derive(AVHWDeviceContext *device_ctx,
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES,
     };
 #endif
-
-    switch (src_ctx->type) {
-#if CONFIG_VULKAN
-#define TYPE PFN_vkGetPhysicalDeviceProperties2
-    case AV_HWDEVICE_TYPE_VULKAN: {
-        AVVulkanDeviceContext *vkctx = src_ctx->hwctx;
-        TYPE prop_fn = (TYPE)vkctx->get_proc_addr(vkctx->inst, "vkGetPhysicalDeviceProperties2");
-        VkPhysicalDeviceProperties2 vk_dev_props = {
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
-            .pNext = &vk_idp,
-        };
-        prop_fn(vkctx->phys_dev, &vk_dev_props);
-        src_uuid = vk_idp.deviceUUID;
-        break;
-    }
-#undef TYPE
-#endif
-    default:
-        ret = AVERROR(ENOSYS);
-        goto error;
-    }
-
-    if (!src_uuid) {
-        av_log(device_ctx, AV_LOG_ERROR,
-               "Failed to get UUID of source device.\n");
-        ret = AVERROR(EINVAL);
-        goto error;
-    }
 
     ret = cuda_device_init(device_ctx);
     if (ret < 0)
@@ -495,22 +473,82 @@ static int cuda_device_derive(AVHWDeviceContext *device_ctx,
     if (ret < 0)
         goto error;
 
+    switch (src_ctx->type) {
+#if CONFIG_VULKAN
+#define TYPE PFN_vkGetPhysicalDeviceProperties2
+    case AV_HWDEVICE_TYPE_VULKAN: {
+        AVVulkanDeviceContext *vkctx = src_ctx->hwctx;
+        TYPE prop_fn = (TYPE)vkctx->get_proc_addr(vkctx->inst, "vkGetPhysicalDeviceProperties2");
+        VkPhysicalDeviceProperties2 vk_dev_props = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+            .pNext = &vk_idp,
+        };
+        prop_fn(vkctx->phys_dev, &vk_dev_props);
+        src_uuid = vk_idp.deviceUUID;
+        direct_interop = 0;
+        break;
+    }
+#undef TYPE
+#endif
+#if CONFIG_D3D11VA
+    case AV_HWDEVICE_TYPE_D3D11VA: {
+        AVD3D11VADeviceContext *d3d11_ctx = src_ctx->hwctx;
+        ID3D11Device *device = d3d11_ctx->device;
+        IDXGIDevice *pDXGIDevice = NULL;
+        IDXGIAdapter *pDXGIAdapter = NULL;
+        HRESULT hr = ID3D11Device_QueryInterface(device, &IID_IDXGIDevice, (void**)&pDXGIDevice);
+        if (FAILED(hr)) {
+            ret = AVERROR(ENOSYS);
+            goto error;
+        }
+        hr = IDXGIDevice_GetAdapter(pDXGIDevice, &pDXGIAdapter);
+        if (FAILED(hr)) {
+            IDXGIDevice_Release(pDXGIDevice);
+            ret = AVERROR(ENOSYS);
+            goto error;
+        }
+        ret = CHECK_CU(cu->cuD3D11GetDevice(&dst_dev, pDXGIAdapter));
+        IDXGIAdapter_Release(pDXGIAdapter);
+        IDXGIDevice_Release(pDXGIDevice);
+        if (ret < 0)
+            goto error;
+        direct_interop = 1;
+        break;
+    }
+#endif
+    default:
+        ret = AVERROR(ENOSYS);
+        goto error;
+    }
+
+    if (!direct_interop && !src_uuid) {
+        av_log(device_ctx, AV_LOG_ERROR,
+               "Failed to get UUID of source device.\n");
+        ret = AVERROR(EINVAL);
+        goto error;
+    }
+
     hwctx->internal->cuda_device = -1;
-    for (i = 0; i < device_count; i++) {
-        CUdevice dev;
-        CUuuid uuid;
 
-        ret = CHECK_CU(cu->cuDeviceGet(&dev, i));
-        if (ret < 0)
-            goto error;
+    if (direct_interop)
+        hwctx->internal->cuda_device = dst_dev;
+    else {
+        for (i = 0; i < device_count; i++) {
+            CUdevice dev;
+            CUuuid uuid;
 
-        ret = CHECK_CU(cu->cuDeviceGetUuid(&uuid, dev));
-        if (ret < 0)
-            goto error;
+            ret = CHECK_CU(cu->cuDeviceGet(&dev, i));
+            if (ret < 0)
+                goto error;
 
-        if (memcmp(src_uuid, uuid.bytes, sizeof (uuid.bytes)) == 0) {
-            hwctx->internal->cuda_device = dev;
-            break;
+            ret = CHECK_CU(cu->cuDeviceGetUuid(&uuid, dev));
+            if (ret < 0)
+                goto error;
+
+            if (memcmp(src_uuid, uuid.bytes, sizeof (uuid.bytes)) == 0) {
+                hwctx->internal->cuda_device = dev;
+                break;
+            }
         }
     }
 

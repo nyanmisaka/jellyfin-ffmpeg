@@ -29,9 +29,35 @@ static int show_optional_fields = SHOW_OPTIONAL_FIELDS_AUTO;
 
 static struct section sections[] = {
 
-    [SECTION_ID_ROOT] =               { SECTION_ID_ROOT, "root", SECTION_FLAG_IS_WRAPPER,
-                                        { SECTION_ID_PROGRAM_VERSION, -1 } },
-    [SECTION_ID_PROGRAM_VERSION] =    { SECTION_ID_PROGRAM_VERSION, "program_version", 0, { -1 } },
+    [SECTION_ID_ROOT] =             { SECTION_ID_ROOT, "Root", SECTION_FLAG_IS_WRAPPER,
+                                      { SECTION_ID_DEVICES, SECTION_ID_PROGRAM_VERSION, -1 } },
+
+    [SECTION_ID_DEVICES] =          { SECTION_ID_DEVICES,      "Devices", SECTION_FLAG_IS_ARRAY, { SECTION_ID_DEVICE, -1 } },
+    [SECTION_ID_DEVICE] =           { SECTION_ID_DEVICE,       "Device", 0, { -1 } },
+
+    [SECTION_ID_DEVICE_PATH_DRM] =      { SECTION_ID_DEVICE_PATH_DRM,      "DevicePathDRM",      0, { -1 } },
+    [SECTION_ID_DEVICE_INDEX_D3D11VA] = { SECTION_ID_DEVICE_INDEX_D3D11VA, "DeviceIndexD3D11VA", 0, { -1 } },
+    [SECTION_ID_DEVICE_INDEX_CUDA] =    { SECTION_ID_DEVICE_INDEX_CUDA,    "DeviceIndexCUDA",    0, { -1 } },
+
+    [SECTION_ID_DEVICE_INFO_DRM] =      { SECTION_ID_DEVICE_INFO_DRM,      "DeviceInfoDRM",      0, { -1 } },
+    [SECTION_ID_DEVICE_INFO_VAAPI] =    { SECTION_ID_DEVICE_INFO_VAAPI,    "DeviceInfoVAAPI",    0, { -1 } },
+    [SECTION_ID_DEVICE_INFO_D3D11VA] =  { SECTION_ID_DEVICE_INFO_D3D11VA,  "DeviceInfoD3D11VA",  0, { -1 } },
+    [SECTION_ID_DEVICE_INFO_QSV] =      { SECTION_ID_DEVICE_INFO_QSV,      "DeviceInfoQSV",      0, { -1 } },
+    [SECTION_ID_DEVICE_INFO_OPENCL] =   { SECTION_ID_DEVICE_INFO_OPENCL,   "DeviceInfoOPENCL",   0, { -1 } },
+    [SECTION_ID_DEVICE_INFO_VULKAN] =   { SECTION_ID_DEVICE_INFO_VULKAN,   "DeviceInfoVULKAN",   0, { -1 } },
+    [SECTION_ID_DEVICE_INFO_CUDA] =     { SECTION_ID_DEVICE_INFO_CUDA,     "DeviceInfoCUDA",     0, { -1 } },
+
+    [SECTION_ID_DECODER_INFO_VAAPI] =   { SECTION_ID_DECODER_INFO_VAAPI,   "DecoderInfoVAAPI",   0, { -1 } },
+    [SECTION_ID_DECODER_INFO_D3D11VA] = { SECTION_ID_DECODER_INFO_D3D11VA, "DecoderInfoD3D11VA", 0, { -1 } },
+    [SECTION_ID_DECODER_INFO_QSV] =     { SECTION_ID_DECODER_INFO_QSV,     "DecoderInfoQSV",     0, { -1 } },
+    [SECTION_ID_DECODER_INFO_CUDA] =    { SECTION_ID_DECODER_INFO_CUDA,    "DecoderInfoCUDA",    0, { -1 } },
+
+    [SECTION_ID_ENCODER_INFO_VAAPI] =   { SECTION_ID_ENCODER_INFO_VAAPI,   "EncoderInfoVAAPI",   0, { -1 } },
+    [SECTION_ID_ENCODER_INFO_QSV] =     { SECTION_ID_ENCODER_INFO_QSV,     "EncoderInfoQSV",     0, { -1 } },
+    [SECTION_ID_ENCODER_INFO_CUDA] =    { SECTION_ID_ENCODER_INFO_CUDA,    "EncoderInfoCUDA",    0, { -1 } },
+    [SECTION_ID_ENCODER_INFO_AMF] =     { SECTION_ID_ENCODER_INFO_AMF,     "EncoderInfoAMF",     0, { -1 } },
+
+    [SECTION_ID_PROGRAM_VERSION] =  { SECTION_ID_PROGRAM_VERSION, "ProgramVersion", 0, { -1 } },
 };
 
 static const char *writer_get_name(void *p)

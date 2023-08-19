@@ -25,24 +25,129 @@
 
 #if CONFIG_CUDA
 #   define CHECK_CU(x) FF_CUDA_CHECK_DL(NULL, cu, x)
+#   define CHECK_ML(x) FF_NVML_CHECK_DL(NULL, nvml_ext, x)
 #   include "libavutil/cuda_check.h"
 #   include "libavutil/hwcontext_cuda_internal.h"
 #endif
+
+#if CONFIG_CUDA
+static CudaFunctions *cu = NULL;
+static CudaFunctionsExt *cu_ext = NULL;
+static NvmlFunctionsExt *nvml_ext = NULL;
+static char drv_ver[NVML_SYSTEM_DRIVER_VERSION_BUFFER_SIZE+1] = {0};
+static char nvml_ver[NVML_SYSTEM_NVML_VERSION_BUFFER_SIZE+1] = {0};
+static const struct {
+    int attr_val;
+    const char *attr_str;
+} cuda_device_attrs[] = {
+    { CU_DEVICE_ATTRIBUTE_CLOCK_RATE,               "ClockRate"              },
+    { CU_DEVICE_ATTRIBUTE_TEXTURE_ALIGNMENT,        "TextureAlignment"       },
+    { CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT,     "MultiprocessorCount"    },
+    { CU_DEVICE_ATTRIBUTE_INTEGRATED,               "Integrated"             },
+    { CU_DEVICE_ATTRIBUTE_CAN_MAP_HOST_MEMORY,      "CanMapHostMemory"       },
+    { CU_DEVICE_ATTRIBUTE_COMPUTE_MODE,             "ComputeMode"            },
+    { CU_DEVICE_ATTRIBUTE_CONCURRENT_KERNELS,       "ConcurrentKernels"      },
+    { CU_DEVICE_ATTRIBUTE_PCI_BUS_ID,               "PciBusId"               },
+    { CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID,            "PciDeviceId"            },
+    { CU_DEVICE_ATTRIBUTE_TCC_DRIVER,               "TccDriver"              },
+    { CU_DEVICE_ATTRIBUTE_MEMORY_CLOCK_RATE,        "MemoryClockRate"        },
+    { CU_DEVICE_ATTRIBUTE_GLOBAL_MEMORY_BUS_WIDTH,  "GlobalMemoryBusWidth"   },
+    { CU_DEVICE_ATTRIBUTE_ASYNC_ENGINE_COUNT,       "AsyncEngineCount"       },
+    { CU_DEVICE_ATTRIBUTE_UNIFIED_ADDRESSING,       "UnifiedAddressing"      },
+    { CU_DEVICE_ATTRIBUTE_PCI_DOMAIN_ID,            "PciDomainId"            },
+    { CU_DEVICE_ATTRIBUTE_TEXTURE_PITCH_ALIGNMENT,  "TexturePitchAlignment"  },
+    { CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, "ComputeCapabilityMajor" },
+    { CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, "ComputeCapabilityMinor" },
+    { CU_DEVICE_ATTRIBUTE_MANAGED_MEMORY,           "ManagedMemory"          },
+    { CU_DEVICE_ATTRIBUTE_MULTI_GPU_BOARD,          "MultiGpuBoard"          },
+    { CU_DEVICE_ATTRIBUTE_MULTI_GPU_BOARD_GROUP_ID, "MultiGpuBoardGroupId"   },
+};
+#endif
+
+int init_cuda_functions(void)
+{
+#if CONFIG_CUDA
+    int ret = 0;
+    if (!cu) {
+        ret = cuda_load_functions(&cu, NULL);
+        if (ret < 0)
+            goto exit;
+
+        ret = CHECK_CU(cu->cuInit(0));
+        if (ret < 0)
+            goto exit;
+    }
+    if (!cu_ext) {
+        ret = cuda_ext_load_functions(&cu_ext, NULL);
+        if (ret < 0)
+            goto exit;
+    }
+    return 0;
+exit:
+    if (cu)
+        cuda_free_functions(&cu);
+    if (cu_ext)
+        cuda_ext_free_functions(&cu_ext);
+    return ret;
+#else
+    return AVERROR(ENOSYS);
+#endif
+}
+
+void uninit_cuda_functions(void)
+{
+#if CONFIG_CUDA
+    if (cu)
+        cuda_free_functions(&cu);
+    if (cu_ext)
+        cuda_ext_free_functions(&cu_ext);
+#endif
+}
+
+int init_nvml_functions(void)
+{
+#if CONFIG_CUDA
+    int ret = 0;
+    if (!nvml_ext) {
+        ret = nvml_ext_load_functions(&nvml_ext, NULL);
+        if (ret < 0)
+            goto exit;
+
+        ret = CHECK_ML(nvml_ext->nvmlInit());
+        if (ret < 0)
+            goto exit;
+    }
+    return 0;
+exit:
+    if (nvml_ext) {
+        CHECK_ML(nvml_ext->nvmlShutdown());
+        nvml_ext_free_functions(&nvml_ext);
+    }
+    return ret;
+#else
+    return AVERROR(ENOSYS);
+#endif
+}
+
+void uninit_nvml_functions(void)
+{
+#if CONFIG_CUDA
+    if (nvml_ext) {
+        CHECK_ML(nvml_ext->nvmlShutdown());
+        nvml_ext_free_functions(&nvml_ext);
+    }
+#endif
+}
 
 /* CUDA */
 int create_cuda_devices(HwDeviceRefs *refs)
 {
 #if CONFIG_CUDA
-    int i, j, n = 0, ret = 0;
+    unsigned i, j;
+    int n = 0, ret = 0;
     char ibuf[4];
-    CudaFunctions *cu = NULL;
 
-    ret = cuda_load_functions(&cu, NULL);
-    if (ret < 0)
-        goto exit;
-
-    ret = CHECK_CU(cu->cuInit(0));
-    if (ret < 0)
+    if ((ret = init_cuda_functions()) < 0)
         goto exit;
 
     ret = CHECK_CU(cu->cuDeviceGetCount(&n));
@@ -62,15 +167,183 @@ int create_cuda_devices(HwDeviceRefs *refs)
         if (ret < 0)
             continue;
 
-        refs[j++].device_index = i;
+        refs[j].device_index_cuda = i;
+        refs[j].device_vendor_id  = HWINFO_VENDOR_ID_NVIDIA;
+        ++j;
     }
 
     ret = 0;
 
 exit:
-    cuda_free_functions(&cu);
     return ret;
 #else
     return AVERROR(ENOSYS);
 #endif
+}
+
+// win32 cudaDeviceProp::luid -> DXGI_ADAPTER_DESC::AdapterLuid
+// https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#matching-device-luids
+
+/* CUDA -> D3D11VA */
+void create_derive_d3d11va_devices_from_cuda(HwDeviceRefs *refs)
+{
+#if CONFIG_CUDA
+    int ret = 0;
+
+    if (!refs)
+        return;
+    if ((ret = init_cuda_functions()) < 0)
+        return;
+
+    for (unsigned i = 0; i < MAX_HW_DEVICE_NUM && refs[i].cuda_ref; i++) {
+        char cuda_luid[8];
+        unsigned int node_mask;
+        AVHWDeviceContext *dev_ctx = (AVHWDeviceContext*)refs[i].cuda_ref->data;
+        AVCUDADeviceContext *hwctx = dev_ctx->hwctx;
+
+        /* Values are undefined on TCC and non-Windows platforms */
+        ret = CHECK_CU(cu_ext->cuDeviceGetLuid(cuda_luid, &node_mask,
+                                               hwctx->internal->cuda_device));
+        if (ret < 0)
+            continue;
+
+        create_d3d11va_devices_with_filter(refs, -1, i, cuda_luid);
+    }
+#endif
+}
+
+static int init_nvml_driver_version(void)
+{
+#if CONFIG_CUDA
+    int ret = 0;
+
+    if ((ret = init_nvml_functions()) < 0)
+        return ret;
+
+    ret = CHECK_ML(nvml_ext->nvmlSystemGetDriverVersion(drv_ver,
+                                                        NVML_SYSTEM_DRIVER_VERSION_BUFFER_SIZE));
+    if (ret < 0)
+        return ret;
+
+    ret = CHECK_ML(nvml_ext->nvmlSystemGetNVMLVersion(nvml_ver,
+                                                      NVML_SYSTEM_NVML_VERSION_BUFFER_SIZE));
+    if (ret < 0)
+        return ret;
+
+    return 0;
+#else
+    return AVERROR(ENOSYS);
+#endif
+}
+
+static int print_cuda_device_info(WriterContext *wctx, AVBufferRef *cuda_ref, int nvml_ret)
+{
+#if CONFIG_CUDA
+    AVHWDeviceContext *dev_ctx = NULL;
+    AVCUDADeviceContext *hwctx = NULL;
+    CUdevice dev;
+    int val, cuda_ver = 0, ret = 0;
+    char device_name[256] = {0};
+
+    if (!wctx || !cuda_ref)
+        return AVERROR(EINVAL);
+
+    if ((ret = init_cuda_functions()) < 0)
+        return AVERROR(ENOSYS);
+
+    dev_ctx = (AVHWDeviceContext*)cuda_ref->data;
+    hwctx = dev_ctx->hwctx;
+    dev = hwctx->internal->cuda_device;
+
+    ret = CHECK_CU(cu->cuDeviceGetName(device_name, sizeof(device_name), dev));
+    if (ret < 0)
+        return ret;
+
+    ret = CHECK_CU(cu_ext->cuDriverGetVersion(&cuda_ver));
+    if (ret < 0)
+        return ret;
+
+    mark_section_show_entries(SECTION_ID_DEVICE_INFO_CUDA, 1, NULL);
+    writer_print_section_header(wctx, SECTION_ID_DEVICE_INFO_CUDA);
+
+    print_str("DeviceName", device_name);
+    if (nvml_ret == 0) {
+        print_str("DriverVersion", drv_ver);
+        print_str("NvmlVersion", nvml_ver);
+    }
+    print_int("CudaVersion", cuda_ver);
+
+    for (unsigned i = 0; i < FF_ARRAY_ELEMS(cuda_device_attrs); i++) {
+        val = 0;
+        ret = CHECK_CU(cu->cuDeviceGetAttribute(&val, cuda_device_attrs[i].attr_val, dev));
+        if (ret == 0)
+            print_int(cuda_device_attrs[i].attr_str, val);
+    }
+
+    writer_print_section_footer(wctx);
+
+    return ret;
+#else
+    return 0;
+#endif
+}
+
+int print_cuda_based_all(WriterContext *wctx, HwDeviceRefs *refs, int accel_flags)
+{
+    unsigned i, j;
+    int nvml_ret = AVERROR_EXTERNAL;
+
+    if (!refs || !wctx)
+        return AVERROR(EINVAL);
+
+    for (j = 0; j < MAX_HW_DEVICE_NUM && refs[j].cuda_ref; j++);
+    if (j == 0)
+        return 0;
+
+    /* Init NVML for the optional version info */
+    nvml_ret = init_nvml_driver_version();
+
+    mark_section_show_entries(SECTION_ID_ROOT, 1, NULL);
+    mark_section_show_entries(SECTION_ID_DEVICES, 1, NULL);
+    mark_section_show_entries(SECTION_ID_DEVICE, 1, NULL);
+    writer_print_section_header(wctx, SECTION_ID_ROOT);
+    writer_print_section_header(wctx, SECTION_ID_DEVICES);
+
+    for (i = 0; i < j; i++) {
+        writer_print_section_header(wctx, SECTION_ID_DEVICE);
+
+        /* CUDA based device index */
+        print_int("DeviceIndexCUDA", refs[i].device_index_cuda);
+
+        /* CUDA device info */
+        if (accel_flags & HWINFO_FLAG_PRINT_DEV)
+            print_cuda_device_info(wctx, refs[i].cuda_ref, nvml_ret);
+
+        /* CUDA decoder info */
+        // if (accel_flags & HWINFO_FLAG_PRINT_DEC)
+        //     print_cuda_decoder_info(wctx, refs[i].cuda_ref);
+
+        /* CUDA encoder info */
+        // if (accel_flags & HWINFO_FLAG_PRINT_ENC)
+        //     print_cuda_encoder_info(wctx, refs[i].cuda_ref);
+#if 0
+        /* VULKAN device info */
+        // if ((accel_flags & HWINFO_FLAG_PRINT_COMPUTE_VULKAN) &&
+        //     (accel_flags & HWINFO_FLAG_PRINT_DEV_INFO))
+        //     print_vulkan_device_info(wctx, refs[i].vulkan_ref);
+
+        /* DXGI/D3D11VA based device index */
+        // print_int("DeviceIndexD3D11VA", refs[i].device_index_dxgi);
+
+        /* D3D11VA device info */
+        // if (accel_flags & HWINFO_FLAG_PRINT_DEV)
+        //     print_d3d11va_device_info(wctx, refs[i].d3d11va_ref);
+#endif
+        writer_print_section_footer(wctx);
+    }
+
+    writer_print_section_footer(wctx);
+    writer_print_section_footer(wctx);
+
+    return 0;
 }
