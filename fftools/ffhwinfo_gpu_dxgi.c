@@ -91,7 +91,7 @@ int create_d3d11va_devices_with_filter(HwDeviceRefs *refs, int vendor_id, int id
     if (FAILED(hr))
         return AVERROR(ENOSYS);
 
-    for (i = 0, j = 0; i < MAX_HW_DEVICE_NUM && refs; i++) {
+    for (i = 0, j = 0; i < HWINFO_MAX_DEV_NUM && refs; i++) {
         hr = IDXGIFactory2_EnumAdapters(pDXGIFactory, i, &pDXGIAdapter);
         if (FAILED(hr))
             continue;
@@ -149,7 +149,7 @@ int create_d3d11va_devices_with_filter(HwDeviceRefs *refs, int vendor_id, int id
 /* D3D11VA -> QSV */
 void create_derive_qsv_devices_from_d3d11va(HwDeviceRefs *refs)
 {
-    for (unsigned i = 0; i < MAX_HW_DEVICE_NUM && refs && refs[i].d3d11va_ref; i++) {
+    for (unsigned i = 0; i < HWINFO_MAX_DEV_NUM && refs && refs[i].d3d11va_ref; i++) {
         if (refs[i].device_vendor_id != HWINFO_VENDOR_ID_INTEL)
             continue;
         av_hwdevice_ctx_create_derived(&refs[i].qsv_ref, AV_HWDEVICE_TYPE_QSV,
@@ -160,7 +160,7 @@ void create_derive_qsv_devices_from_d3d11va(HwDeviceRefs *refs)
 /* D3D11VA -> OPENCL */
 void create_derive_opencl_devices_from_d3d11va(HwDeviceRefs *refs)
 {
-    for (unsigned i = 0; i < MAX_HW_DEVICE_NUM && refs && refs[i].d3d11va_ref; i++) {
+    for (unsigned i = 0; i < HWINFO_MAX_DEV_NUM && refs && refs[i].d3d11va_ref; i++) {
         if (!(refs[i].device_vendor_id == HWINFO_VENDOR_ID_INTEL ||
               refs[i].device_vendor_id == HWINFO_VENDOR_ID_AMD))
             continue;
@@ -172,7 +172,7 @@ void create_derive_opencl_devices_from_d3d11va(HwDeviceRefs *refs)
 /* D3D11VA -> CUDA */
 void create_derive_cuda_devices_from_d3d11va(HwDeviceRefs *refs)
 {
-    for (unsigned i = 0; i < MAX_HW_DEVICE_NUM && refs && refs[i].d3d11va_ref; i++) {
+    for (unsigned i = 0; i < HWINFO_MAX_DEV_NUM && refs && refs[i].d3d11va_ref; i++) {
         if (refs[i].device_vendor_id != HWINFO_VENDOR_ID_NVIDIA)
             continue;
         av_hwdevice_ctx_create_derived(&refs[i].cuda_ref, AV_HWDEVICE_TYPE_CUDA,
@@ -336,7 +336,7 @@ exit:
 }
 #endif
 
-static int print_d3d11va_device_info(WriterContext *wctx, AVBufferRef *d3d11va_ref)
+int print_d3d11va_device_info(WriterContext *wctx, AVBufferRef *d3d11va_ref)
 #if CONFIG_D3D11VA
 {
     AVHWDeviceContext    *dev_ctx = NULL;
@@ -427,77 +427,11 @@ exit:
 #endif
 }
 
-static int print_d3d11va_decoder_info(WriterContext *wctx, AVBufferRef *d3d11va_ref)
+int print_d3d11va_decoder_info(WriterContext *wctx, AVBufferRef *d3d11va_ref)
 {
 #if CONFIG_D3D11VA
     return 0;
 #else
     return 0;
 #endif
-}
-
-int print_dxgi_based_all(WriterContext *wctx, HwDeviceRefs *refs, int accel_flags)
-{
-    unsigned i, j;
-
-    if (!wctx || !refs)
-        return AVERROR(EINVAL);
-
-    for (j = 0; j < MAX_HW_DEVICE_NUM && refs[j].d3d11va_ref; j++);
-    if (j == 0)
-        return 0;
-
-    mark_section_show_entries(SECTION_ID_ROOT, 1, NULL);
-    mark_section_show_entries(SECTION_ID_DEVICES, 1, NULL);
-    mark_section_show_entries(SECTION_ID_DEVICE, 1, NULL);
-    writer_print_section_header(wctx, SECTION_ID_ROOT);
-    writer_print_section_header(wctx, SECTION_ID_DEVICES);
-
-    for (i = 0; i < j; i++) {
-        writer_print_section_header(wctx, SECTION_ID_DEVICE);
-
-        /* DXGI/D3D11VA based device index */
-        print_int("DeviceIndexD3D11VA", refs[i].device_index_dxgi);
-
-        /* D3D11VA device info */
-        if ((accel_flags & HWINFO_FLAG_PRINT_DEV) &&
-            (accel_flags & HWINFO_FLAG_PRINT_OS_VA))
-            print_d3d11va_device_info(wctx, refs[i].d3d11va_ref);
-
-        /* D3D11VA decoder info */
-        if ((accel_flags & HWINFO_FLAG_PRINT_DEC) &&
-            (accel_flags & HWINFO_FLAG_PRINT_OS_VA))
-            print_d3d11va_decoder_info(wctx, refs[i].d3d11va_ref);
-
-        /* QSV device info */
-        // if (accel_flags & HWINFO_FLAG_PRINT_DEV)
-        //     print_qsv_device_info(wctx, refs[i].qsv_ref);
-
-        /* QSV decoder info */
-        // if (accel_flags & HWINFO_FLAG_PRINT_DEC)
-        //     print_qsv_decoder_info(wctx, refs[i].qsv_ref);
-
-        /* QSV encoder info */
-        // if (accel_flags & HWINFO_FLAG_PRINT_ENC)
-        //     print_qsv_encoder_info(wctx, refs[i].qsv_ref);
-
-        /* QSV filter info */
-        // if (accel_flags & HWINFO_FLAG_PRINT_VPP)
-        //     print_qsv_filter_info(wctx, refs[i].qsv_ref);
-
-        /* AMF encoder info */
-        // if (accel_flags & HWINFO_FLAG_PRINT_ENC)
-        //     print_amf_encoder_info(wctx, refs[i].d3d11va_ref);
-
-        /* OPENCL device info */
-        // if (accel_flags & HWINFO_FLAG_PRINT_COMPUTE_OPENCL)
-        //     print_opencl_device_info(wctx, refs[i].opencl_ref);
-
-        writer_print_section_footer(wctx);
-    }
-
-    writer_print_section_footer(wctx);
-    writer_print_section_footer(wctx);
-
-    return 0;
 }

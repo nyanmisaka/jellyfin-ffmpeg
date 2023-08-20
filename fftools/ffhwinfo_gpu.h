@@ -25,13 +25,14 @@
 
 #include "ffhwinfo_utils.h"
 
-enum HWInfoAccelType {
-    HWINFO_ACCEL_TYPE_NONE,
-    HWINFO_ACCEL_TYPE_VAAPI,
-    HWINFO_ACCEL_TYPE_QSV,
-    HWINFO_ACCEL_TYPE_CUDA,
-    HWINFO_ACCEL_TYPE_AMF,
-};
+#define print_int(k, v)  writer_print_integer(wctx, k, v)
+#define print_str(k, v)  writer_print_string(wctx, k, v, 0)
+
+#define HWINFO_MAX_DEV_NUM 16
+
+#define HWINFO_VENDOR_ID_AMD     0x1002
+#define HWINFO_VENDOR_ID_INTEL   0x8086
+#define HWINFO_VENDOR_ID_NVIDIA  0x10de
 
 /**
  * Print the hardware device info of the base or derived devices.
@@ -75,9 +76,13 @@ enum HWInfoAccelType {
                                     HWINFO_FLAG_PRINT_COMPUTE_OPENCL | \
                                     HWINFO_FLAG_PRINT_COMPUTE_VULKAN)
 
-int show_accel_device_info(WriterContext *wctx, enum HWInfoAccelType accel_type, int accel_flags);
-
-#define MAX_HW_DEVICE_NUM 16
+enum HWInfoAccelType {
+    HWINFO_ACCEL_TYPE_NONE,
+    HWINFO_ACCEL_TYPE_VAAPI,
+    HWINFO_ACCEL_TYPE_QSV,
+    HWINFO_ACCEL_TYPE_CUDA,
+    HWINFO_ACCEL_TYPE_AMF,
+};
 
 typedef struct HwDeviceRefs {
     AVBufferRef *drm_ref;
@@ -98,33 +103,40 @@ typedef struct HwDeviceRefs {
     int          device_vendor_id;
 } HwDeviceRefs;
 
+int show_accel_device_info(WriterContext *wctx, enum HWInfoAccelType accel_type, int accel_flags);
+
 int create_drm_devices(HwDeviceRefs *refs);
 void create_derive_vaapi_devices_from_drm(HwDeviceRefs *refs);
 void create_derive_vulkan_devices_from_drm(HwDeviceRefs *refs);
 void create_derive_qsv_devices_from_vaapi(HwDeviceRefs *refs);
 void create_derive_opencl_devices_from_vaapi(HwDeviceRefs *refs);
-int print_drm_based_all(WriterContext *wctx, HwDeviceRefs *refs, int accel_flags);
 
 int create_d3d11va_devices(HwDeviceRefs *refs);
 int create_d3d11va_devices_with_filter(HwDeviceRefs *refs, int vendor_id, int idx_refs, char *luid);
 void create_derive_qsv_devices_from_d3d11va(HwDeviceRefs *refs);
 void create_derive_opencl_devices_from_d3d11va(HwDeviceRefs *refs);
 void create_derive_cuda_devices_from_d3d11va(HwDeviceRefs *refs);
-int print_dxgi_based_all(WriterContext *wctx, HwDeviceRefs *refs, int accel_flags);
+int print_d3d11va_device_info(WriterContext *wctx, AVBufferRef *d3d11va_ref);
+int print_d3d11va_decoder_info(WriterContext *wctx, AVBufferRef *d3d11va_ref);
 
 int init_cuda_functions(void);
 void uninit_cuda_functions(void);
 int init_nvml_functions(void);
 void uninit_nvml_functions(void);
+int init_nvml_driver_version(void);
 int create_cuda_devices(HwDeviceRefs *refs);
 void create_derive_d3d11va_devices_from_cuda(HwDeviceRefs *refs);
-int print_cuda_based_all(WriterContext *wctx, HwDeviceRefs *refs, int accel_flags);
+int print_cuda_device_info(WriterContext *wctx, AVBufferRef *cuda_ref, int nvml_ret);
 
-#define print_int(k, v)  writer_print_integer(wctx, k, v)
-#define print_str(k, v)  writer_print_string(wctx, k, v, 0)
+int print_qsv_device_info(WriterContext *wctx, AVBufferRef *qsv_ref);
+int print_qsv_decoder_info(WriterContext *wctx, AVBufferRef *qsv_ref);
+int print_qsv_encoder_info(WriterContext *wctx, AVBufferRef *qsv_ref);
+int print_qsv_vpp_info(WriterContext *wctx, AVBufferRef *qsv_ref);
 
-#define HWINFO_VENDOR_ID_AMD     0x1002
-#define HWINFO_VENDOR_ID_INTEL   0x8086
-#define HWINFO_VENDOR_ID_NVIDIA  0x10de
+int init_amf_functions(void);
+void uninit_amf_functions(void);
+int create_derive_amf_device_from_d3d11va(AVBufferRef *d3d11va_ref);
+int print_amf_device_info_from_d3d11va(WriterContext *wctx);
+int print_amf_encoder_info_from_d3d11va(WriterContext *wctx);
 
 #endif /* FFTOOLS_FFHWINFO_GPU_H */

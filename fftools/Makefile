@@ -26,6 +26,8 @@ OBJS-ffhwinfo +=                \
     fftools/ffhwinfo_gpu_drm.o  \
     fftools/ffhwinfo_gpu_dxgi.o \
     fftools/ffhwinfo_gpu_cuda.o \
+    fftools/ffhwinfo_gpu_qsv.o  \
+    fftools/ffhwinfo_gpu_amf.o  \
     fftools/ffhwinfo_utils.o
 
 define DOFFTOOL

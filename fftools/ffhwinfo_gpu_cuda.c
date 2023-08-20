@@ -159,7 +159,7 @@ int create_cuda_devices(HwDeviceRefs *refs)
         goto exit;
     }
 
-    n = FFMIN(n, MAX_HW_DEVICE_NUM);
+    n = FFMIN(n, HWINFO_MAX_DEV_NUM);
     for (i = 0, j = 0; i < n && refs; i++) {
         snprintf(ibuf, sizeof(ibuf), "%d", i);
         ret = av_hwdevice_ctx_create(&refs[j].cuda_ref, AV_HWDEVICE_TYPE_CUDA,
@@ -195,7 +195,7 @@ void create_derive_d3d11va_devices_from_cuda(HwDeviceRefs *refs)
     if ((ret = init_cuda_functions()) < 0)
         return;
 
-    for (unsigned i = 0; i < MAX_HW_DEVICE_NUM && refs[i].cuda_ref; i++) {
+    for (unsigned i = 0; i < HWINFO_MAX_DEV_NUM && refs[i].cuda_ref; i++) {
         char cuda_luid[8];
         unsigned int node_mask;
         AVHWDeviceContext *dev_ctx = (AVHWDeviceContext*)refs[i].cuda_ref->data;
@@ -212,7 +212,7 @@ void create_derive_d3d11va_devices_from_cuda(HwDeviceRefs *refs)
 #endif
 }
 
-static int init_nvml_driver_version(void)
+int init_nvml_driver_version(void)
 {
 #if CONFIG_CUDA
     int ret = 0;
@@ -236,7 +236,7 @@ static int init_nvml_driver_version(void)
 #endif
 }
 
-static int print_cuda_device_info(WriterContext *wctx, AVBufferRef *cuda_ref, int nvml_ret)
+int print_cuda_device_info(WriterContext *wctx, AVBufferRef *cuda_ref, int nvml_ret)
 {
 #if CONFIG_CUDA
     AVHWDeviceContext *dev_ctx = NULL;
@@ -286,64 +286,4 @@ static int print_cuda_device_info(WriterContext *wctx, AVBufferRef *cuda_ref, in
 #else
     return 0;
 #endif
-}
-
-int print_cuda_based_all(WriterContext *wctx, HwDeviceRefs *refs, int accel_flags)
-{
-    unsigned i, j;
-    int nvml_ret = AVERROR_EXTERNAL;
-
-    if (!refs || !wctx)
-        return AVERROR(EINVAL);
-
-    for (j = 0; j < MAX_HW_DEVICE_NUM && refs[j].cuda_ref; j++);
-    if (j == 0)
-        return 0;
-
-    /* Init NVML for the optional version info */
-    nvml_ret = init_nvml_driver_version();
-
-    mark_section_show_entries(SECTION_ID_ROOT, 1, NULL);
-    mark_section_show_entries(SECTION_ID_DEVICES, 1, NULL);
-    mark_section_show_entries(SECTION_ID_DEVICE, 1, NULL);
-    writer_print_section_header(wctx, SECTION_ID_ROOT);
-    writer_print_section_header(wctx, SECTION_ID_DEVICES);
-
-    for (i = 0; i < j; i++) {
-        writer_print_section_header(wctx, SECTION_ID_DEVICE);
-
-        /* CUDA based device index */
-        print_int("DeviceIndexCUDA", refs[i].device_index_cuda);
-
-        /* CUDA device info */
-        if (accel_flags & HWINFO_FLAG_PRINT_DEV)
-            print_cuda_device_info(wctx, refs[i].cuda_ref, nvml_ret);
-
-        /* CUDA decoder info */
-        // if (accel_flags & HWINFO_FLAG_PRINT_DEC)
-        //     print_cuda_decoder_info(wctx, refs[i].cuda_ref);
-
-        /* CUDA encoder info */
-        // if (accel_flags & HWINFO_FLAG_PRINT_ENC)
-        //     print_cuda_encoder_info(wctx, refs[i].cuda_ref);
-#if 0
-        /* VULKAN device info */
-        // if ((accel_flags & HWINFO_FLAG_PRINT_COMPUTE_VULKAN) &&
-        //     (accel_flags & HWINFO_FLAG_PRINT_DEV_INFO))
-        //     print_vulkan_device_info(wctx, refs[i].vulkan_ref);
-
-        /* DXGI/D3D11VA based device index */
-        // print_int("DeviceIndexD3D11VA", refs[i].device_index_dxgi);
-
-        /* D3D11VA device info */
-        // if (accel_flags & HWINFO_FLAG_PRINT_DEV)
-        //     print_d3d11va_device_info(wctx, refs[i].d3d11va_ref);
-#endif
-        writer_print_section_footer(wctx);
-    }
-
-    writer_print_section_footer(wctx);
-    writer_print_section_footer(wctx);
-
-    return 0;
 }

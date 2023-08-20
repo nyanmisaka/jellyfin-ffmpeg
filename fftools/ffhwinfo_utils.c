@@ -46,6 +46,7 @@ static struct section sections[] = {
     [SECTION_ID_DEVICE_INFO_OPENCL] =   { SECTION_ID_DEVICE_INFO_OPENCL,   "DeviceInfoOPENCL",   0, { -1 } },
     [SECTION_ID_DEVICE_INFO_VULKAN] =   { SECTION_ID_DEVICE_INFO_VULKAN,   "DeviceInfoVULKAN",   0, { -1 } },
     [SECTION_ID_DEVICE_INFO_CUDA] =     { SECTION_ID_DEVICE_INFO_CUDA,     "DeviceInfoCUDA",     0, { -1 } },
+    [SECTION_ID_DEVICE_INFO_AMF] =      { SECTION_ID_DEVICE_INFO_AMF,      "DeviceInfoAMF",      0, { -1 } },
 
     [SECTION_ID_DECODER_INFO_VAAPI] =   { SECTION_ID_DECODER_INFO_VAAPI,   "DecoderInfoVAAPI",   0, { -1 } },
     [SECTION_ID_DECODER_INFO_D3D11VA] = { SECTION_ID_DECODER_INFO_D3D11VA, "DecoderInfoD3D11VA", 0, { -1 } },
