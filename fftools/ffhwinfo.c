@@ -67,8 +67,9 @@ static int opt_accel_flags(void* optctx, const char *opt, const char *arg)
         { "dec",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_DEC }, .unit = "flags" },
         { "enc",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_ENC }, .unit = "flags" },
         { "vpp",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_VPP }, .unit = "flags" },
-        { "ocl",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_COMPUTE_OPENCL }, .unit = "flags" },
-        { "vk",         NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_COMPUTE_VULKAN }, .unit = "flags" },
+        { "ocl",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_OPT_OPENCL }, .unit = "flags" },
+        { "vk",         NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_OPT_VULKAN }, .unit = "flags" },
+        { "dx11",       NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_OPT_D3D11VA }, .unit = "flags" },
         { "osva",       NULL, 0, AV_OPT_TYPE_CONST, { .i64 = HWINFO_FLAG_PRINT_OS_VA }, .unit = "flags" },
     };
     static const AVClass class = {
@@ -123,7 +124,7 @@ static const OptionDef options[] = {
     { "acceltype",    OPT_STRING | HAS_ARG,  { &accel_type },
       "set the acceleration type (available types are: vaapi, qsv, cuda, amf)", "type" },
     { "accelflags",   HAS_ARG,               { .func_arg = opt_accel_flags },
-      "set the acceleration flag (available flags are: all, dev, dec, enc, vpp, ocl, vk, osva)", "flags" },
+      "set the acceleration flag (available flags are: all, dev, dec, enc, vpp, ocl, vk, dx11, osva)", "flags" },
     { "print_format", OPT_STRING | HAS_ARG,  { &print_format },
       "set the output printing format (available formats are: default, json)", "format" },
     { "of",           OPT_STRING | HAS_ARG,  { &print_format }, "alias for -print_format", "format" },

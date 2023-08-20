@@ -35,46 +35,54 @@
 #define HWINFO_VENDOR_ID_NVIDIA  0x10de
 
 /**
- * Print the hardware device info of the base or derived devices.
+ * Print the hardware info of the devices.
  */
 #define HWINFO_FLAG_PRINT_DEV                  (1 << 0)
 
 /**
- * Print the hardware decoder info of the base or derived devices.
+ * Print the hardware decoder info of the devices.
  */
 #define HWINFO_FLAG_PRINT_DEC                  (1 << 1)
 
 /**
- * Print the hardware encoder info of the base or derived devices.
+ * Print the hardware encoder info of the devices.
  */
 #define HWINFO_FLAG_PRINT_ENC                  (1 << 2)
 
 /**
- * Print the hardware vpp info of the base or derived devices.
+ * Print the hardware vpp info of the devices.
  */
 #define HWINFO_FLAG_PRINT_VPP                  (1 << 3)
 
 /**
- * Print the OPENCL compute device info of the base or derived devices.
+ * Print the optional OPENCL info of the devices.
  */
-#define HWINFO_FLAG_PRINT_COMPUTE_OPENCL       (1 << 4)
+#define HWINFO_FLAG_PRINT_OPT_OPENCL           (1 << 4)
 
 /**
- * Print the VULKAN compute device info of the base or derived devices.
+ * Print the optional VULKAN info of the devices.
  */
-#define HWINFO_FLAG_PRINT_COMPUTE_VULKAN       (1 << 5)
+#define HWINFO_FLAG_PRINT_OPT_VULKAN           (1 << 5)
 
 /**
- * Print the OS native hardware dev/enc/vpp info of the base or derived devices.
+ * Print the optional D3D11VA info of the devices.
+ * This works only in CUDA to print the corresponding D3D11VA devices.
  */
-#define HWINFO_FLAG_PRINT_OS_VA                (1 << 6)
+#define HWINFO_FLAG_PRINT_OPT_D3D11VA          (1 << 6)
+
+/**
+ * Print the OS native hardware dev/enc/vpp info of the devices.
+ * This works only in QSV to print its VAAPI and D3D11VA sub-devices,
+ * and this is force enabled internally for both VAAPI and D3D11VA/AMF.
+ */
+#define HWINFO_FLAG_PRINT_OS_VA                (1 << 7)
 
 #define HWINFO_DEFAULT_PRINT_FLAGS (HWINFO_FLAG_PRINT_DEV | \
                                     HWINFO_FLAG_PRINT_DEC | \
                                     HWINFO_FLAG_PRINT_ENC | \
                                     HWINFO_FLAG_PRINT_VPP | \
-                                    HWINFO_FLAG_PRINT_COMPUTE_OPENCL | \
-                                    HWINFO_FLAG_PRINT_COMPUTE_VULKAN)
+                                    HWINFO_FLAG_PRINT_OPT_OPENCL | \
+                                    HWINFO_FLAG_PRINT_OPT_VULKAN)
 
 enum HWInfoAccelType {
     HWINFO_ACCEL_TYPE_NONE,
@@ -127,6 +135,8 @@ int init_nvml_driver_version(void);
 int create_cuda_devices(HwDeviceRefs *refs);
 void create_derive_d3d11va_devices_from_cuda(HwDeviceRefs *refs);
 int print_cuda_device_info(WriterContext *wctx, AVBufferRef *cuda_ref, int nvml_ret);
+int print_cuda_decoder_info(WriterContext *wctx, AVBufferRef *cuda_ref);
+int print_cuda_encoder_info(WriterContext *wctx, AVBufferRef *cuda_ref);
 
 int print_qsv_device_info(WriterContext *wctx, AVBufferRef *qsv_ref);
 int print_qsv_decoder_info(WriterContext *wctx, AVBufferRef *qsv_ref);

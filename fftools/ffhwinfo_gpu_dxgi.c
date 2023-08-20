@@ -47,6 +47,160 @@
 #   include <wbemidl.h>
 #endif
 
+#if CONFIG_D3D11VA
+typedef struct DxvaRes {
+    const char    *name;
+    const unsigned width;
+    const unsigned height;
+} DxvaRes;
+
+typedef struct DxvaMode {
+    const char    *name;
+    const char    *guid_name;
+    const GUID    *guid;
+    enum AVCodecID codec;
+    const int      legacy;
+    const int     *profiles;
+    const int     *formats;
+} DxvaMode;
+
+static const DxvaRes dxva_res_ascend[] = {
+    { "64x64",     64,   64   },
+    { "128x128",   128,  128  },
+    { "144x144",   144,  144  },
+    { "256x256",   256,  256  },
+    { "720x480",   720,  480  },
+    { "1280x720",  1280, 720  },
+    { "2048x1024", 2048, 1024 },
+    { "1920x1080", 1920, 1080 },
+    { "1920x1088", 1920, 1088 },
+    { "2560x1440", 2560, 1440 },
+    { "2048x2048", 2048, 2048 },
+    { "3840x2160", 3840, 2160 },
+    { "4096x2160", 4096, 2160 },
+    { "4096x2304", 4096, 2304 },
+    { "4096x2318", 4096, 2318 },
+    { "3840x3840", 3840, 3840 },
+    { "4080x4080", 4080, 4080 },
+    { "4096x4096", 4096, 4096 },
+    { "7680x4320", 7680, 4320 },
+    { "8192x4320", 8192, 4320 },
+    { "8192x4352", 8192, 4352 },
+    { "8192x8192", 8192, 8192 },
+    { NULL,        0,    0    },
+};
+
+static const int prof_mpeg2_main[] =   { FF_PROFILE_MPEG2_SIMPLE,
+                                         FF_PROFILE_MPEG2_MAIN,
+                                         FF_PROFILE_UNKNOWN };
+static const int prof_h264_high[] =    { FF_PROFILE_H264_CONSTRAINED_BASELINE,
+                                         FF_PROFILE_H264_MAIN,
+                                         FF_PROFILE_H264_HIGH,
+                                         FF_PROFILE_UNKNOWN };
+static const int prof_hevc_main[] =    { FF_PROFILE_HEVC_MAIN,
+                                         FF_PROFILE_UNKNOWN };
+static const int prof_hevc_main10[] =  { FF_PROFILE_HEVC_MAIN_10,
+                                         FF_PROFILE_UNKNOWN };
+static const int prof_hevc_rext[] =    { FF_PROFILE_HEVC_REXT,
+                                         FF_PROFILE_UNKNOWN };
+static const int prof_vp9_profile0[] = { FF_PROFILE_VP9_0,
+                                         FF_PROFILE_UNKNOWN };
+static const int prof_vp9_profile2[] = { FF_PROFILE_VP9_2,
+                                         FF_PROFILE_UNKNOWN };
+static const int prof_av1_profile0[] = { FF_PROFILE_AV1_MAIN,
+                                         FF_PROFILE_UNKNOWN };
+
+static const int format_nv12[] =         { AV_PIX_FMT_NV12, AV_PIX_FMT_NONE };
+static const int format_p010[] =         { AV_PIX_FMT_P010, AV_PIX_FMT_NONE };
+static const int format_p010_nv12[] =    { AV_PIX_FMT_P010, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE };
+static const int format_p012[] =         { AV_PIX_FMT_P012, AV_PIX_FMT_NONE };
+static const int format_y210_yuyv422[] = { AV_PIX_FMT_Y210, AV_PIX_FMT_YUYV422, AV_PIX_FMT_NONE };
+static const int format_y212[] =         { AV_PIX_FMT_Y212, AV_PIX_FMT_NONE };
+static const int format_vuyx[] =         { AV_PIX_FMT_VUYX, AV_PIX_FMT_NONE };
+static const int format_xv30[] =         { AV_PIX_FMT_XV30, AV_PIX_FMT_NONE };
+static const int format_xv36[] =         { AV_PIX_FMT_XV36, AV_PIX_FMT_NONE };
+
+DEFINE_GUID(_DXVA_ModeMPEG2_VLD,                 0xee27417f,0x5e28,0x4e65,0xbe,0xea,0x1d,0x26,0xb5,0x08,0xad,0xc9);
+DEFINE_GUID(_DXVA_ModeMPEG2and1_VLD,             0x86695f12,0x340e,0x4f04,0x9f,0xd3,0x92,0x53,0xdd,0x32,0x74,0x60);
+DEFINE_GUID(_DXVA_ModeH264_E,                    0x1b81be68,0xa0c7,0x11d3,0xb9,0x84,0x00,0xc0,0x4f,0x2e,0x73,0xc5);
+DEFINE_GUID(_DXVA_ModeH264_F,                    0x1b81be69,0xa0c7,0x11d3,0xb9,0x84,0x00,0xc0,0x4f,0x2e,0x73,0xc5);
+DEFINE_GUID(_DXVA_ModeH264_E_Intel,              0x604F8E68,0x4951,0x4C54,0x88,0xFE,0xAB,0xD2,0x5C,0x15,0xB3,0xD6);
+DEFINE_GUID(_DXVA_ModeVC1_D,                     0x1b81beA3,0xa0c7,0x11d3,0xb9,0x84,0x00,0xc0,0x4f,0x2e,0x73,0xc5);
+DEFINE_GUID(_DXVA_ModeVC1_D2010,                 0x1b81beA4,0xa0c7,0x11d3,0xb9,0x84,0x00,0xc0,0x4f,0x2e,0x73,0xc5);
+DEFINE_GUID(_DXVA_ModeHEVC_VLD_Main,             0x5b11d51b,0x2f4c,0x4452,0xbc,0xc3,0x09,0xf2,0xa1,0x16,0x0c,0xc0);
+DEFINE_GUID(_DXVA_ModeHEVC_VLD_Main10,           0x107af0e0,0xef1a,0x4d19,0xab,0xa8,0x67,0xa1,0x63,0x07,0x3d,0x13);
+DEFINE_GUID(_DXVA_ModeHEVC_VLD_Main12_Intel,     0x8ff8a3aa,0xc456,0x4132,0xb6,0xef,0x69,0xd9,0xdd,0x72,0x57,0x1d);
+DEFINE_GUID(_DXVA_ModeHEVC_VLD_Main422_10_Intel, 0xe484dcb8,0xcac9,0x4859,0x99,0xf5,0x5c,0x0d,0x45,0x06,0x90,0x89);
+DEFINE_GUID(_DXVA_ModeHEVC_VLD_Main422_12_Intel, 0xc23dd857,0x874b,0x423c,0xb6,0xe0,0x82,0xce,0xaa,0x9b,0x11,0x8a);
+DEFINE_GUID(_DXVA_ModeHEVC_VLD_Main444_Intel,    0x41a5af96,0xe415,0x4b0c,0x9d,0x03,0x90,0x78,0x58,0xe2,0x3e,0x78);
+DEFINE_GUID(_DXVA_ModeHEVC_VLD_Main444_10_Intel, 0x6a6a81ba,0x912a,0x485d,0xb5,0x7f,0xcc,0xd2,0xd3,0x7b,0x8d,0x94);
+DEFINE_GUID(_DXVA_ModeHEVC_VLD_Main444_12_Intel, 0x5b08e35d,0x0c66,0x4c51,0xa6,0xf1,0x89,0xd0,0x0c,0xb2,0xc1,0x97);
+DEFINE_GUID(_DXVA_ModeVP9_VLD_Profile0,          0x463707f8,0xa1d0,0x4585,0x87,0x6d,0x83,0xaa,0x6d,0x60,0xb8,0x9e);
+DEFINE_GUID(_DXVA_ModeVP9_VLD_10bit_Profile2,    0xa4c749ef,0x6ecf,0x48aa,0x84,0x48,0x50,0xa7,0xa1,0x16,0x5f,0xf7);
+DEFINE_GUID(_DXVA_ModeAV1_VLD_Profile0,          0xb8be4ccb,0xcf53,0x46ba,0x8d,0x59,0xd6,0xb8,0xa6,0xda,0x5d,0x2a);
+
+static const DxvaMode dxva_modes[] = {
+    { "MPEG-2 variable-length decoder", "DXVA_ModeMPEG2_VLD", &_DXVA_ModeMPEG2_VLD,
+        AV_CODEC_ID_MPEG2VIDEO, 1, prof_mpeg2_main, format_nv12 },
+    { "MPEG-2 & MPEG-1 variable-length decoder", "DXVA_ModeMPEG2and1_VLD", &_DXVA_ModeMPEG2and1_VLD,
+        AV_CODEC_ID_MPEG2VIDEO, 1, prof_mpeg2_main, format_nv12 },
+    { "H.264 variable-length decoder, no film grain technology", "DXVA_ModeH264_E", &_DXVA_ModeH264_E,
+        AV_CODEC_ID_H264, 1, prof_h264_high, format_nv12 },
+    { "H.264 variable-length decoder, film grain technology", "DXVA_ModeH264_F", &_DXVA_ModeH264_F,
+        AV_CODEC_ID_H264, 1, prof_h264_high, format_nv12 },
+    { "H.264 variable-length decoder, no film grain technology (Intel)", "DXVA_ModeH264_E_Intel", &_DXVA_ModeH264_E_Intel,
+        AV_CODEC_ID_H264, 1, prof_h264_high, format_nv12 },
+    { "VC-1 variable-length decoder", "DXVA_ModeVC1_D", &_DXVA_ModeVC1_D,
+        AV_CODEC_ID_VC1, 1, NULL, format_nv12 },
+    { "VC-1 variable-length decoder (2010)", "DXVA_ModeVC1_D2010", &_DXVA_ModeVC1_D2010,
+        AV_CODEC_ID_VC1, 1, NULL, format_nv12 },
+    { "VC-1 variable-length decoder", "DXVA_ModeVC1_D", &_DXVA_ModeVC1_D,
+        AV_CODEC_ID_WMV3, 1, NULL, format_nv12 },
+    { "VC-1 variable-length decoder (2010)", "DXVA_ModeVC1_D2010", &_DXVA_ModeVC1_D2010,
+        AV_CODEC_ID_WMV3, 1, NULL, format_nv12 },
+    { "HEVC / H.265 variable-length decoder, main", "DXVA_ModeHEVC_VLD_Main", &_DXVA_ModeHEVC_VLD_Main,
+        AV_CODEC_ID_HEVC, 0, prof_hevc_main, format_nv12 },
+    { "HEVC / H.265 variable-length decoder, main10", "DXVA_ModeHEVC_VLD_Main10", &_DXVA_ModeHEVC_VLD_Main10,
+        AV_CODEC_ID_HEVC, 0, prof_hevc_main10, format_p010 },
+    { "HEVC / H.265 variable-length decoder, main12 (Intel)", "DXVA_ModeHEVC_VLD_Main12_Intel", &_DXVA_ModeHEVC_VLD_Main12_Intel,
+        AV_CODEC_ID_HEVC, 0, prof_hevc_rext, format_p012 },
+    { "HEVC / H.265 variable-length decoder, main422_10 (Intel)", "DXVA_ModeHEVC_VLD_Main422_10_Intel", &_DXVA_ModeHEVC_VLD_Main422_10_Intel,
+        AV_CODEC_ID_HEVC, 0, prof_hevc_rext, format_y210_yuyv422 },
+    { "HEVC / H.265 variable-length decoder, main422_12 (Intel)", "DXVA_ModeHEVC_VLD_Main422_12_Intel", &_DXVA_ModeHEVC_VLD_Main422_12_Intel,
+        AV_CODEC_ID_HEVC, 0, prof_hevc_rext, format_y212 },
+    { "HEVC / H.265 variable-length decoder, main444 (Intel)", "DXVA_ModeHEVC_VLD_Main444_Intel", &_DXVA_ModeHEVC_VLD_Main444_Intel,
+        AV_CODEC_ID_HEVC, 0, prof_hevc_rext, format_vuyx },
+    { "HEVC / H.265 variable-length decoder, main444_10 (Intel)", "DXVA_ModeHEVC_VLD_Main444_10_Intel", &_DXVA_ModeHEVC_VLD_Main444_10_Intel,
+        AV_CODEC_ID_HEVC, 0, prof_hevc_rext, format_xv30 },
+    { "HEVC / H.265 variable-length decoder, main444_12 (Intel)", "DXVA_ModeHEVC_VLD_Main444_12_Intel", &_DXVA_ModeHEVC_VLD_Main444_12_Intel,
+        AV_CODEC_ID_HEVC, 0, prof_hevc_rext, format_xv36 },
+    { "VP9 variable-length decoder, profile 0", "DXVA_ModeVP9_VLD_Profile0", &_DXVA_ModeVP9_VLD_Profile0,
+        AV_CODEC_ID_VP9, 0, prof_vp9_profile0, format_nv12 },
+    { "VP9 variable-length decoder, profile 0", "DXVA_ModeVP9_VLD_10bit_Profile2", &_DXVA_ModeVP9_VLD_10bit_Profile2,
+        AV_CODEC_ID_VP9, 0, prof_vp9_profile2, format_p010 },
+    { "AV1 variable-length decoder, profile 0", "DXVA_ModeAV1_VLD_Profile0", &_DXVA_ModeAV1_VLD_Profile0,
+        AV_CODEC_ID_AV1, 0, prof_av1_profile0, format_p010_nv12 },
+    { NULL, NULL, NULL,
+        0, 0, NULL, NULL },
+};
+
+static DXGI_FORMAT d3d11va_map_av_to_dxgi_format(enum AVPixelFormat pix_fmt)
+{
+    switch (pix_fmt) {
+    case AV_PIX_FMT_NV12:    return DXGI_FORMAT_NV12;
+    case AV_PIX_FMT_P010:    return DXGI_FORMAT_P010;
+    case AV_PIX_FMT_P012:    return DXGI_FORMAT_P016;
+    case AV_PIX_FMT_YUYV422: return DXGI_FORMAT_YUY2;
+    case AV_PIX_FMT_Y210:    return DXGI_FORMAT_Y210;
+    case AV_PIX_FMT_Y212:    return DXGI_FORMAT_Y216;
+    case AV_PIX_FMT_VUYX:    return DXGI_FORMAT_AYUV;
+    case AV_PIX_FMT_XV30:    return DXGI_FORMAT_Y410;
+    case AV_PIX_FMT_XV36:    return DXGI_FORMAT_Y416;
+    case AV_PIX_FMT_YUV420P: return DXGI_FORMAT_420_OPAQUE;
+    default:                 return DXGI_FORMAT_UNKNOWN;
+    }
+}
+#endif
 
 /* D3D11VA */
 #if CONFIG_D3D11VA
@@ -427,9 +581,192 @@ exit:
 #endif
 }
 
+#if CONFIG_D3D11VA
+static int check_d3d11va_decoder_config(ID3D11VideoDevice *video_device,
+                                        D3D11_VIDEO_DECODER_DESC desc,
+                                        enum AVCodecID codec)
+{
+    unsigned i, cfg_cnt = 0;
+    D3D11_VIDEO_DECODER_CONFIG *cfg_list = NULL;
+    HRESULT hr;
+
+    hr = ID3D11VideoDevice_GetVideoDecoderConfigCount(video_device, &desc, &cfg_cnt);
+    if (FAILED(hr)) {
+        av_log(NULL, AV_LOG_ERROR, "Unable to retrieve decoder configurations count\n");
+        return AVERROR(EINVAL);
+    }
+
+    cfg_list = av_malloc_array(cfg_cnt, sizeof(D3D11_VIDEO_DECODER_CONFIG));
+    if (!cfg_list)
+        return AVERROR(ENOMEM);
+
+    for (i = 0; i < cfg_cnt; i++) {
+        D3D11_VIDEO_DECODER_CONFIG *cfg = &cfg_list[i];
+
+        hr = ID3D11VideoDevice_GetVideoDecoderConfig(video_device, &desc, i, cfg);
+        if (FAILED(hr)) {
+            av_log(NULL, AV_LOG_ERROR, "Unable to retrieve decoder configurations. (hr=0x%lX)\n", hr);
+            av_free(cfg_list);
+            return AVERROR(EINVAL);
+        }
+
+        if (cfg->ConfigBitstreamRaw == 1 ||
+            (codec == AV_CODEC_ID_H264 && cfg->ConfigBitstreamRaw == 2)) {
+            av_free(cfg_list);
+            return 1;
+        }
+    }
+
+    av_free(cfg_list);
+    return 0;
+}
+#endif
+
 int print_d3d11va_decoder_info(WriterContext *wctx, AVBufferRef *d3d11va_ref)
 {
 #if CONFIG_D3D11VA
+    AVHWDeviceContext    *dev_ctx = NULL;
+    AVD3D11VADeviceContext *hwctx = NULL;
+    HRESULT hr;
+    int header_printed = 0;
+    unsigned i, j, p_cnt = 0;
+    GUID *p_list = NULL;
+
+    if (!wctx || !d3d11va_ref)
+        return AVERROR(EINVAL);
+
+    dev_ctx = (AVHWDeviceContext*)d3d11va_ref->data;
+    hwctx = dev_ctx->hwctx;
+
+    p_cnt = ID3D11VideoDevice_GetVideoDecoderProfileCount(hwctx->video_device);
+    p_list = av_malloc_array(p_cnt, sizeof(*p_list));
+    if (!p_list || p_cnt == 0) {
+        av_log(NULL, AV_LOG_ERROR, "Failed to get the decoder GUIDs\n");
+        av_free(p_list);
+        return AVERROR(EINVAL);
+    }
+
+    for (i = 0; i < p_cnt; i++) {
+        hr = ID3D11VideoDevice_GetVideoDecoderProfile(hwctx->video_device, i, &p_list[i]);
+        if (FAILED(hr)) {
+            av_log(NULL, AV_LOG_ERROR, "Failed to retrieve decoder GUID %d\n", i);
+            av_free(p_list);
+            return AVERROR(EINVAL);
+        }
+    }
+
+    for (i = 0; dxva_modes[i].name; i++) {
+        int supported = 0;
+        unsigned min_width = 0, min_height = 0;
+        unsigned max_width = 0, max_height = 0;
+        const DxvaMode *mode = &dxva_modes[i];
+        D3D11_VIDEO_DECODER_DESC desc = {0};
+        DXGI_FORMAT dxgi_fmt = DXGI_FORMAT_UNKNOWN;
+
+        for (const GUID *g = &p_list[0]; !supported && g < &p_list[p_cnt]; g++) {
+            supported = IsEqualGUID(mode->guid, g);
+        }
+        if (!supported)
+            continue;
+
+        /* Use the most significant format for this profile */
+        dxgi_fmt = d3d11va_map_av_to_dxgi_format(mode->formats[0]);
+        if (dxgi_fmt == DXGI_FORMAT_UNKNOWN)
+            continue;
+
+        /* Check min res first, bail out directly if it fails */
+	    for (const DxvaRes *r = &dxva_res_ascend[0]; r->name; r++) {
+            if (mode->legacy && (r->width > 4096 || r->height > 4096))
+                break;
+
+            desc.Guid = *mode->guid;
+            desc.SampleWidth = r->width;
+            desc.SampleHeight = r->height;
+            desc.OutputFormat = dxgi_fmt;
+
+            if (check_d3d11va_decoder_config(hwctx->video_device, desc, mode->codec) == 1) {
+                min_width = r->width;
+                min_height = r->height;
+                break;
+            }
+        }
+        if (min_width == 0 || min_height == 0)
+            continue;
+
+        /* Check max res */
+        for (const DxvaRes *r = &dxva_res_ascend[FF_ARRAY_ELEMS(dxva_res_ascend)]; r >= &dxva_res_ascend[0]; r--) {
+            if (!r->name)
+                continue;
+            if (r->width <= min_width && r->height <= min_width)
+                break;
+            if (mode->legacy && (r->width > 4096 || r->height > 4096))
+                continue;
+
+            desc.Guid = *mode->guid;
+            desc.SampleWidth = r->width;
+            desc.SampleHeight = r->height;
+            desc.OutputFormat = dxgi_fmt;
+
+            if (check_d3d11va_decoder_config(hwctx->video_device, desc, mode->codec) == 1) {
+                max_width = r->width;
+                max_height = r->height;
+                break;
+            }
+        }
+        if (max_width == 0 || max_height == 0)
+            continue;
+
+        if (!header_printed) {
+            mark_section_show_entries(SECTION_ID_DECODERS_D3D11VA, 1, NULL);
+            writer_print_section_header(wctx, SECTION_ID_DECODERS_D3D11VA);
+            header_printed = 1;
+        }
+
+        mark_section_show_entries(SECTION_ID_DECODER, 1, NULL);
+        writer_print_section_header(wctx, SECTION_ID_DECODER);
+        print_str("CodecName", avcodec_get_name(mode->codec));
+        print_int("CodecId", mode->codec);
+        print_str("GuidDesc", mode->name);
+        print_str("GuidName", mode->guid_name);
+        print_int("MinWidth", min_width);
+        print_int("MinHeight", min_height);
+        print_int("MaxWidth", max_width);
+        print_int("MaxHeight", max_height);
+
+        /* PixelFormats */
+        if (mode->formats) {
+            mark_section_show_entries(SECTION_ID_PIXEL_FORMATS, 1, NULL);
+            writer_print_section_header(wctx, SECTION_ID_PIXEL_FORMATS);
+            for (j = 0; mode->formats[j] != AV_PIX_FMT_NONE; j++) {
+                mark_section_show_entries(SECTION_ID_PIXEL_FORMAT, 1, NULL);
+                writer_print_section_header(wctx, SECTION_ID_PIXEL_FORMAT);
+                print_str("FormatName", av_get_pix_fmt_name(mode->formats[j]));
+                print_int("FormatId", mode->formats[j]);
+                writer_print_section_footer(wctx);
+            }
+            writer_print_section_footer(wctx);
+        }
+
+        /* Profiles */
+        if (mode->profiles) {
+            mark_section_show_entries(SECTION_ID_PROFILES, 1, NULL);
+            writer_print_section_header(wctx, SECTION_ID_PROFILES);
+            for (j = 0; mode->profiles[j] != FF_PROFILE_UNKNOWN; j++) {
+                mark_section_show_entries(SECTION_ID_PROFILE, 1, NULL);
+                writer_print_section_header(wctx, SECTION_ID_PROFILE);
+                print_str("ProfileName", avcodec_profile_name(mode->codec, mode->profiles[j]));
+                print_int("ProfileId", mode->profiles[j]);
+                writer_print_section_footer(wctx);
+            }
+            writer_print_section_footer(wctx);
+        }
+
+        writer_print_section_footer(wctx);
+    }
+
+    if (header_printed)
+        writer_print_section_footer(wctx);
+
     return 0;
 #else
     return 0;

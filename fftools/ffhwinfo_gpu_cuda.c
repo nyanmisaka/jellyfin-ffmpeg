@@ -287,3 +287,13 @@ int print_cuda_device_info(WriterContext *wctx, AVBufferRef *cuda_ref, int nvml_
     return 0;
 #endif
 }
+
+int print_cuda_decoder_info(WriterContext *wctx, AVBufferRef *cuda_ref)
+{
+    return 0;
+}
+
+int print_cuda_encoder_info(WriterContext *wctx, AVBufferRef *cuda_ref)
+{
+    return 0;
+}

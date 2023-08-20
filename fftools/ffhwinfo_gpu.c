@@ -87,12 +87,12 @@ static int print_drm_based_all(WriterContext *wctx, HwDeviceRefs *refs, int acce
 
         /* OPENCL device info */
         // if ((accel_flags & HWINFO_FLAG_PRINT_DEV) &&
-        //     (accel_flags & HWINFO_FLAG_PRINT_COMPUTE_OPENCL))
+        //     (accel_flags & HWINFO_FLAG_PRINT_OPT_OPENCL))
         //     print_opencl_device_info(wctx, refs[i].opencl_ref);
 
         /* VULKAN device info */
         // if ((accel_flags & HWINFO_FLAG_PRINT_DEV) &&
-        //     (accel_flags & HWINFO_FLAG_PRINT_COMPUTE_VULKAN))
+        //     (accel_flags & HWINFO_FLAG_PRINT_OPT_VULKAN))
         //     print_vulkan_device_info(wctx, refs[i].vulkan_ref);
 #if 0
         /* CUDA based device path */
@@ -179,7 +179,7 @@ static int print_dxgi_based_all(WriterContext *wctx, HwDeviceRefs *refs, int acc
 
         /* OPENCL device info */
         // if ((accel_flags & HWINFO_FLAG_PRINT_DEV) &&
-        //     (accel_flags & HWINFO_FLAG_PRINT_COMPUTE_OPENCL))
+        //     (accel_flags & HWINFO_FLAG_PRINT_OPT_OPENCL))
         //     print_opencl_device_info(wctx, refs[i].opencl_ref);
 
         writer_print_section_footer(wctx);
@@ -224,24 +224,30 @@ static int print_cuda_based_all(WriterContext *wctx, HwDeviceRefs *refs, int acc
             print_cuda_device_info(wctx, refs[i].cuda_ref, nvml_ret);
 
         /* CUDA decoder info */
-        // if (accel_flags & HWINFO_FLAG_PRINT_DEC)
-        //     print_cuda_decoder_info(wctx, refs[i].cuda_ref);
+        if (accel_flags & HWINFO_FLAG_PRINT_DEC)
+            print_cuda_decoder_info(wctx, refs[i].cuda_ref);
 
         /* CUDA encoder info */
-        // if (accel_flags & HWINFO_FLAG_PRINT_ENC)
-        //     print_cuda_encoder_info(wctx, refs[i].cuda_ref);
-#if 0
+        if (accel_flags & HWINFO_FLAG_PRINT_ENC)
+            print_cuda_encoder_info(wctx, refs[i].cuda_ref);
+#if 1
         /* VULKAN device info */
         // if ((accel_flags & HWINFO_FLAG_PRINT_DEV) &&
-        //     (accel_flags & HWINFO_FLAG_PRINT_COMPUTE_VULKAN))
+        //     (accel_flags & HWINFO_FLAG_PRINT_OPT_VULKAN))
         //     print_vulkan_device_info(wctx, refs[i].vulkan_ref);
 
         /* DXGI/D3D11VA based device index */
-        // print_int("DeviceIndexD3D11VA", refs[i].device_index_dxgi);
+        if ((accel_flags & HWINFO_FLAG_PRINT_OPT_D3D11VA) && refs[i].d3d11va_ref)
+            print_int("DeviceIndexD3D11VA", refs[i].device_index_dxgi);
 
         /* D3D11VA device info */
-        // if (accel_flags & HWINFO_FLAG_PRINT_DEV)
-        //     print_d3d11va_device_info(wctx, refs[i].d3d11va_ref);
+        if ((accel_flags & HWINFO_FLAG_PRINT_DEV) &&
+            (accel_flags & HWINFO_FLAG_PRINT_OPT_D3D11VA))
+            print_d3d11va_device_info(wctx, refs[i].d3d11va_ref);
+
+        if ((accel_flags & HWINFO_FLAG_PRINT_DEC) &&
+            (accel_flags & HWINFO_FLAG_PRINT_OPT_D3D11VA))
+            print_d3d11va_decoder_info(wctx, refs[i].d3d11va_ref);
 #endif
         writer_print_section_footer(wctx);
     }
@@ -264,9 +270,9 @@ static int show_vaapi_info(WriterContext *wctx, HwDeviceRefs *refs, int accel_fl
 
     create_derive_vaapi_devices_from_drm(refs);
 
-    if (accel_flags & HWINFO_FLAG_PRINT_COMPUTE_OPENCL)
+    if (accel_flags & HWINFO_FLAG_PRINT_OPT_OPENCL)
         create_derive_opencl_devices_from_vaapi(refs);
-    if (accel_flags & HWINFO_FLAG_PRINT_COMPUTE_VULKAN)
+    if (accel_flags & HWINFO_FLAG_PRINT_OPT_VULKAN)
         create_derive_vulkan_devices_from_drm(refs);
 
     print_drm_based_all(wctx, refs, (accel_flags | HWINFO_FLAG_PRINT_OS_VA));
@@ -286,7 +292,7 @@ static int show_qsv_info(WriterContext *wctx, HwDeviceRefs *refs, int accel_flag
 
     create_derive_qsv_devices_from_d3d11va(refs);
 
-    if (accel_flags & HWINFO_FLAG_PRINT_COMPUTE_OPENCL)
+    if (accel_flags & HWINFO_FLAG_PRINT_OPT_OPENCL)
         create_derive_opencl_devices_from_d3d11va(refs);
 
     print_dxgi_based_all(wctx, refs, accel_flags);
@@ -298,9 +304,9 @@ static int show_qsv_info(WriterContext *wctx, HwDeviceRefs *refs, int accel_flag
     create_derive_vaapi_devices_from_drm(refs);
     create_derive_qsv_devices_from_vaapi(refs);
 
-    if (accel_flags & HWINFO_FLAG_PRINT_COMPUTE_OPENCL)
+    if (accel_flags & HWINFO_FLAG_PRINT_OPT_OPENCL)
         create_derive_opencl_devices_from_vaapi(refs);
-    if (accel_flags & HWINFO_FLAG_PRINT_COMPUTE_VULKAN)
+    if (accel_flags & HWINFO_FLAG_PRINT_OPT_VULKAN)
         create_derive_vulkan_devices_from_drm(refs);
 
     print_drm_based_all(wctx, refs, accel_flags);
@@ -317,6 +323,11 @@ static int show_cuda_info(WriterContext *wctx, HwDeviceRefs *refs, int accel_fla
     ret = create_cuda_devices(refs);
     if (ret < 0)
         goto exit;
+
+#if CONFIG_D3D11VA
+    if (accel_flags & HWINFO_FLAG_PRINT_OPT_D3D11VA)
+        create_derive_d3d11va_devices_from_cuda(refs);
+#endif
 
     print_cuda_based_all(wctx, refs, accel_flags);
 exit:
@@ -336,7 +347,7 @@ static int show_amf_info(WriterContext *wctx, HwDeviceRefs *refs, int accel_flag
     if (ret < 0)
         return ret;
 
-    if (accel_flags & HWINFO_FLAG_PRINT_COMPUTE_OPENCL)
+    if (accel_flags & HWINFO_FLAG_PRINT_OPT_OPENCL)
         create_derive_opencl_devices_from_d3d11va(refs);
 
     print_dxgi_based_all(wctx, refs, (accel_flags | HWINFO_FLAG_PRINT_OS_VA));
