@@ -30,6 +30,35 @@
 #   include "libavutil/hwcontext_cuda_internal.h"
 #endif
 
+#if (CONFIG_CUDA && (CONFIG_CUVID || CONFIG_NVDEC))
+static CuvidFunctions *cuvid = NULL;
+typedef struct CuvidMode {
+    const char    *name;
+    enum AVCodecID codec;
+    const int     *formats;
+} CuvidMode;
+
+static const int formats_8_420[]        = { AV_PIX_FMT_NV12, AV_PIX_FMT_NONE };
+static const int formats_8_10_420[]     = { AV_PIX_FMT_NV12, AV_PIX_FMT_P010, AV_PIX_FMT_NONE };
+static const int formats_8_12_420[]     = { AV_PIX_FMT_NV12, AV_PIX_FMT_P010, AV_PIX_FMT_P016, AV_PIX_FMT_NONE };
+static const int formats_8_12_420_444[] = { AV_PIX_FMT_NV12, AV_PIX_FMT_P010, AV_PIX_FMT_P016,
+                                            AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUV444P16, AV_PIX_FMT_NONE };
+static const CuvidMode cuvid_modes[] = {
+    { "NVDEC / CUVID MPEG1 decoder", AV_CODEC_ID_MPEG1VIDEO, formats_8_420 },
+    { "NVDEC / CUVID MPEG2 decoder", AV_CODEC_ID_MPEG2VIDEO, formats_8_420 },
+    { "NVDEC / CUVID MPEG4 decoder", AV_CODEC_ID_MPEG4,      formats_8_420 },
+    { "NVDEC / CUVID VC1 decoder",   AV_CODEC_ID_VC1,        formats_8_420 },
+    { "NVDEC / CUVID VC1 decoder",   AV_CODEC_ID_WMV3,       formats_8_420 },
+    { "NVDEC / CUVID H.264 decoder", AV_CODEC_ID_H264,       formats_8_420 },
+    { "NVDEC / CUVID JPEG decoder",  AV_CODEC_ID_MJPEG,      formats_8_420 },
+    { "NVDEC / CUVID HEVC decoder",  AV_CODEC_ID_HEVC,       formats_8_12_420_444 },
+    { "NVDEC / CUVID VP8 decoder",   AV_CODEC_ID_VP8,        formats_8_420 },
+    { "NVDEC / CUVID VP9 decoder",   AV_CODEC_ID_VP9,        formats_8_12_420 },
+    { "NVDEC / CUVID AV1 decoder",   AV_CODEC_ID_AV1,        formats_8_10_420 },
+    { NULL, 0, NULL },
+};
+#endif
+
 #if CONFIG_CUDA
 static CudaFunctions *cu = NULL;
 static CudaFunctionsExt *cu_ext = NULL;
@@ -139,6 +168,33 @@ void uninit_nvml_functions(void)
 #endif
 }
 
+int init_cuvid_functions(void)
+{
+#if (CONFIG_CUDA && (CONFIG_CUVID || CONFIG_NVDEC))
+    int ret = 0;
+    if (!cuvid) {
+        ret = cuvid_load_functions(&cuvid, NULL);
+        if (ret < 0)
+            goto exit;
+    }
+    return 0;
+exit:
+    if (cuvid)
+        cuvid_free_functions(&cuvid);
+    return ret;
+#else
+    return AVERROR(ENOSYS);
+#endif
+}
+
+void uninit_cuvid_functions(void)
+{
+#if (CONFIG_CUDA && (CONFIG_CUVID || CONFIG_NVDEC))
+    if (cuvid)
+        cuvid_free_functions(&cuvid);
+#endif
+}
+
 /* CUDA */
 int create_cuda_devices(HwDeviceRefs *refs)
 {
@@ -193,6 +249,8 @@ void create_derive_d3d11va_devices_from_cuda(HwDeviceRefs *refs)
     if (!refs)
         return;
     if ((ret = init_cuda_functions()) < 0)
+        return;
+    if (!cu_ext->cuDeviceGetLuid)
         return;
 
     for (unsigned i = 0; i < HWINFO_MAX_DEV_NUM && refs[i].cuda_ref; i++) {
@@ -288,9 +346,154 @@ int print_cuda_device_info(WriterContext *wctx, AVBufferRef *cuda_ref, int nvml_
 #endif
 }
 
+#if (CONFIG_CUDA && (CONFIG_CUVID || CONFIG_NVDEC))
+static int cuda_map_av_to_cuvid_codec(enum AVCodecID codec)
+{
+    switch (codec) {
+    case AV_CODEC_ID_MPEG1VIDEO: return cudaVideoCodec_MPEG1;
+    case AV_CODEC_ID_MPEG2VIDEO: return cudaVideoCodec_MPEG2;
+    case AV_CODEC_ID_MPEG4:      return cudaVideoCodec_MPEG4;
+    case AV_CODEC_ID_WMV3:       /* fallthrough */
+    case AV_CODEC_ID_VC1:        return cudaVideoCodec_VC1;
+    case AV_CODEC_ID_H264:       return cudaVideoCodec_H264;
+    case AV_CODEC_ID_MJPEG:      return cudaVideoCodec_JPEG;
+    case AV_CODEC_ID_HEVC:       return cudaVideoCodec_HEVC;
+    case AV_CODEC_ID_VP8:        return cudaVideoCodec_VP8;
+    case AV_CODEC_ID_VP9:        return cudaVideoCodec_VP9;
+    case AV_CODEC_ID_AV1:        return cudaVideoCodec_AV1;
+    default:                     return -1;
+    }
+}
+
+static int cuda_map_av_to_cuvid_chroma(enum AVPixelFormat pix_fmt)
+{
+    switch (pix_fmt) {
+    case AV_PIX_FMT_NV12:      /* fallthrough */
+    case AV_PIX_FMT_P010:      /* fallthrough */
+    case AV_PIX_FMT_P016:      return cudaVideoChromaFormat_420;
+    case AV_PIX_FMT_YUV444P:   /* fallthrough */
+    case AV_PIX_FMT_YUV444P16: return cudaVideoChromaFormat_444;
+    default:                   return -1;
+    }
+}
+
+static int cuda_map_av_to_cuvid_surface(enum AVPixelFormat pix_fmt)
+{
+    switch (pix_fmt) {
+    case AV_PIX_FMT_NV12:      return cudaVideoSurfaceFormat_NV12;
+    case AV_PIX_FMT_P010:      /* fallthrough */
+    case AV_PIX_FMT_P016:      return cudaVideoSurfaceFormat_P016;
+    case AV_PIX_FMT_YUV444P:   return cudaVideoSurfaceFormat_YUV444;
+    case AV_PIX_FMT_YUV444P16: return cudaVideoSurfaceFormat_YUV444_16Bit;
+    default:                   return -1;
+    }
+}
+#endif
+
 int print_cuda_decoder_info(WriterContext *wctx, AVBufferRef *cuda_ref)
 {
+#if (CONFIG_CUDA && (CONFIG_CUVID || CONFIG_NVDEC))
+    AVHWDeviceContext *dev_ctx = NULL;
+    AVCUDADeviceContext *hwctx = NULL;
+    CUVIDDECODECAPS caps = {0};
+    CUcontext dummy;
+    int header_printed = 0;
+    int ret = 0;
+    unsigned i, j;
+
+    if (!wctx || !cuda_ref)
+        return AVERROR(EINVAL);
+
+    if ((ret = init_cuda_functions()) < 0)
+        return AVERROR(ENOSYS);
+
+    if ((ret = init_cuvid_functions()) < 0)
+        return AVERROR(ENOSYS);
+
+    if (!cuvid->cuvidGetDecoderCaps)
+        return AVERROR(ENOSYS);
+
+    dev_ctx = (AVHWDeviceContext*)cuda_ref->data;
+    hwctx = dev_ctx->hwctx;
+
+    ret = CHECK_CU(cu->cuCtxPushCurrent(hwctx->cuda_ctx));
+    if (ret < 0)
+        return ret;
+
+    for (i = 0; cuvid_modes[i].name; i++) {
+        int header2_printed = 0;
+        const CuvidMode *mode = &cuvid_modes[i];
+        if (!mode->formats)
+            continue;
+
+        caps.eCodecType = cuda_map_av_to_cuvid_codec(mode->codec);
+        if (caps.eCodecType < 0)
+            continue;
+
+        for (j = 0; mode->formats[j] != AV_PIX_FMT_NONE; j++) {
+            int surface = -1;
+            const int format = mode->formats[j];
+            const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(format);
+
+            caps.nBitDepthMinus8 = FFMIN(desc->comp[0].depth, 12) - 8;
+            caps.eChromaFormat = cuda_map_av_to_cuvid_chroma(format);
+            if (caps.nBitDepthMinus8 < 0 || caps.eChromaFormat < 0)
+                continue;
+
+            ret = CHECK_CU(cuvid->cuvidGetDecoderCaps(&caps));
+            if (ret < 0)
+                continue;
+
+            if (!caps.bIsSupported)
+                continue;
+
+            surface = cuda_map_av_to_cuvid_surface(format);
+            if (surface < 0 || !(caps.nOutputFormatMask & (1 << surface)))
+                continue;
+
+            if (!header_printed) {
+                mark_section_show_entries(SECTION_ID_DECODERS_CUDA, 1, NULL);
+                writer_print_section_header(wctx, SECTION_ID_DECODERS_CUDA);
+                header_printed = 1;
+            }
+
+            if (!header2_printed) {
+                mark_section_show_entries(SECTION_ID_DECODER, 1, NULL);
+                writer_print_section_header(wctx, SECTION_ID_DECODER);
+                print_str("CodecName", avcodec_get_name(mode->codec));
+                print_int("CodecId", mode->codec);
+                print_str("CodecDesc", mode->name);
+                print_int("MinWidth", caps.nMinWidth);
+                print_int("MinHeight", caps.nMinHeight);
+                print_int("MaxWidth", caps.nMaxWidth);
+                print_int("MaxHeight", caps.nMaxHeight);
+                print_int("MaxMBCount", caps.nMaxMBCount);
+                mark_section_show_entries(SECTION_ID_PIXEL_FORMATS, 1, NULL);
+                writer_print_section_header(wctx, SECTION_ID_PIXEL_FORMATS);
+                header2_printed = 1;
+            }
+
+            mark_section_show_entries(SECTION_ID_PIXEL_FORMAT, 1, NULL);
+            writer_print_section_header(wctx, SECTION_ID_PIXEL_FORMAT);
+            print_str("FormatName", av_get_pix_fmt_name(format));
+            print_int("FormatId", format);
+            writer_print_section_footer(wctx);
+        }
+
+        if (header2_printed) {
+            writer_print_section_footer(wctx);
+            writer_print_section_footer(wctx);
+        }
+    }
+
+    if (header_printed)
+        writer_print_section_footer(wctx);
+
+    CHECK_CU(cu->cuCtxPopCurrent(&dummy));
     return 0;
+#else
+    return 0;
+#endif
 }
 
 int print_cuda_encoder_info(WriterContext *wctx, AVBufferRef *cuda_ref)

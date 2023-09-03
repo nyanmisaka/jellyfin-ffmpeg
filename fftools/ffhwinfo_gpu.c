@@ -205,7 +205,8 @@ static int print_cuda_based_all(WriterContext *wctx, HwDeviceRefs *refs, int acc
         return 0;
 
     /* Init NVML for the optional version info */
-    nvml_ret = init_nvml_driver_version();
+    if (accel_flags & HWINFO_FLAG_PRINT_DEV)
+        nvml_ret = init_nvml_driver_version();
 
     mark_section_show_entries(SECTION_ID_ROOT, 1, NULL);
     mark_section_show_entries(SECTION_ID_DEVICES, 1, NULL);
@@ -331,6 +332,7 @@ static int show_cuda_info(WriterContext *wctx, HwDeviceRefs *refs, int accel_fla
 
     print_cuda_based_all(wctx, refs, accel_flags);
 exit:
+    uninit_cuvid_functions();
     uninit_cuda_functions();
     uninit_nvml_functions();
 #endif

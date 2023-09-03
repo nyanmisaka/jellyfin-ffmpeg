@@ -491,8 +491,8 @@ exit:
 #endif
 
 int print_d3d11va_device_info(WriterContext *wctx, AVBufferRef *d3d11va_ref)
-#if CONFIG_D3D11VA
 {
+#if CONFIG_D3D11VA
     AVHWDeviceContext    *dev_ctx = NULL;
     AVD3D11VADeviceContext *hwctx = NULL;
     IDXGIDevice     *pDXGIDevice = NULL;
@@ -669,24 +669,42 @@ int print_d3d11va_decoder_info(WriterContext *wctx, AVBufferRef *d3d11va_ref)
         if (!supported)
             continue;
 
+        if (!mode->formats)
+            continue;
+
         /* Use the most significant format for this profile */
         dxgi_fmt = d3d11va_map_av_to_dxgi_format(mode->formats[0]);
         if (dxgi_fmt == DXGI_FORMAT_UNKNOWN)
             continue;
 
-        /* Check min res first, bail out directly if it fails */
-	    for (const DxvaRes *r = &dxva_res_ascend[0]; r->name; r++) {
+        desc.Guid = *mode->guid;
+
+        /* Check min res first */
+        for (const DxvaRes *r = &dxva_res_ascend[0]; r->name; r++) {
             if (mode->legacy && (r->width > 4096 || r->height > 4096))
                 break;
 
-            desc.Guid = *mode->guid;
             desc.SampleWidth = r->width;
             desc.SampleHeight = r->height;
             desc.OutputFormat = dxgi_fmt;
 
-            if (check_d3d11va_decoder_config(hwctx->video_device, desc, mode->codec) == 1) {
+            if (1 == check_d3d11va_decoder_config(hwctx->video_device, desc, mode->codec)) {
                 min_width = r->width;
                 min_height = r->height;
+                break;
+            }
+        }
+        if (min_width == 0 || min_height == 0)
+            continue;
+
+        /* Test rest formats for this profile, bail out directly if any fails */
+        for (j = 0; mode->formats[j] != AV_PIX_FMT_NONE; j++) {
+            desc.SampleWidth = min_width;
+            desc.SampleHeight = min_height;
+            desc.OutputFormat = d3d11va_map_av_to_dxgi_format(mode->formats[0]);
+
+            if (1 != check_d3d11va_decoder_config(hwctx->video_device, desc, mode->codec)) {
+                min_width = min_height = 0;
                 break;
             }
         }
@@ -702,7 +720,6 @@ int print_d3d11va_decoder_info(WriterContext *wctx, AVBufferRef *d3d11va_ref)
             if (mode->legacy && (r->width > 4096 || r->height > 4096))
                 continue;
 
-            desc.Guid = *mode->guid;
             desc.SampleWidth = r->width;
             desc.SampleHeight = r->height;
             desc.OutputFormat = dxgi_fmt;
