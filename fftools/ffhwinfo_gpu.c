@@ -333,6 +333,7 @@ static int show_cuda_info(WriterContext *wctx, HwDeviceRefs *refs, int accel_fla
     print_cuda_based_all(wctx, refs, accel_flags);
 exit:
     uninit_cuvid_functions();
+    uninit_nvenc_functions();
     uninit_cuda_functions();
     uninit_nvml_functions();
 #endif

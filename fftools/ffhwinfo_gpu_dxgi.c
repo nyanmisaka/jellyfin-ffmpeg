@@ -640,7 +640,7 @@ int print_d3d11va_decoder_info(WriterContext *wctx, AVBufferRef *d3d11va_ref)
 
     p_cnt = ID3D11VideoDevice_GetVideoDecoderProfileCount(hwctx->video_device);
     p_list = av_malloc_array(p_cnt, sizeof(*p_list));
-    if (!p_list || p_cnt == 0) {
+    if (!p_list || !p_cnt) {
         av_log(NULL, AV_LOG_ERROR, "Failed to get the decoder GUIDs\n");
         av_free(p_list);
         return AVERROR(EINVAL);

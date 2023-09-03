@@ -133,6 +133,8 @@ int init_nvml_functions(void);
 void uninit_nvml_functions(void);
 int init_cuvid_functions(void);
 void uninit_cuvid_functions(void);
+int init_nvenc_functions(void);
+void uninit_nvenc_functions(void);
 int init_nvml_driver_version(void);
 int create_cuda_devices(HwDeviceRefs *refs);
 void create_derive_d3d11va_devices_from_cuda(HwDeviceRefs *refs);

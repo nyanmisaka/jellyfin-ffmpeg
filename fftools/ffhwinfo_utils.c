@@ -64,6 +64,8 @@ static struct section sections[] = {
     [SECTION_ID_PROFILE] =        { SECTION_ID_PROFILE,       "Profile", 0, { -1 } },
     [SECTION_ID_PIXEL_FORMATS] =  { SECTION_ID_PIXEL_FORMATS, "PixelFormats", SECTION_FLAG_IS_ARRAY, { SECTION_ID_PIXEL_FORMAT, -1 } },
     [SECTION_ID_PIXEL_FORMAT] =   { SECTION_ID_PIXEL_FORMAT,  "PixelFormat", 0, { -1 } },
+    [SECTION_ID_PRESETS] =        { SECTION_ID_PRESETS,       "Presets", SECTION_FLAG_IS_ARRAY, { SECTION_ID_PRESET, -1 } },
+    [SECTION_ID_PRESET] =         { SECTION_ID_PRESET,        "Preset", 0, { -1 } },
 
     [SECTION_ID_PROGRAM_VERSION] =  { SECTION_ID_PROGRAM_VERSION, "ProgramVersion", 0, { -1 } },
 };
