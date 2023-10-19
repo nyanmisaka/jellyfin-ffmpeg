@@ -130,8 +130,8 @@ static const AVClass class = {
 
 static const FFCodecDefault qsv_enc_defaults[] = {
     { "b",         "1M"   },
-    { "g",         "-1"   },
-    { "bf",        "-1"   },
+    { "g",         "250"  },
+    { "bf",        "3"    },
     { "refs",      "0"    },
     { NULL },
 };
@@ -149,10 +149,13 @@ FFCodec ff_av1_qsv_encoder = {
     .p.pix_fmts       = (const enum AVPixelFormat[]){ AV_PIX_FMT_NV12,
                                                     AV_PIX_FMT_P010,
                                                     AV_PIX_FMT_QSV,
+                                                    AV_PIX_FMT_VAAPI,
+                                                    AV_PIX_FMT_D3D11,
                                                     AV_PIX_FMT_NONE },
     .p.priv_class     = &class,
     .defaults       = qsv_enc_defaults,
-    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
+    .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE |
+                      FF_CODEC_CAP_INIT_CLEANUP,
     .p.wrapper_name   = "qsv",
     .hw_configs     = ff_qsv_enc_hw_configs,
 };

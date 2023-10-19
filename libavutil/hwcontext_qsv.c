@@ -115,7 +115,6 @@ static const struct {
     { AV_PIX_FMT_BGRA, MFX_FOURCC_RGB4, 0 },
     { AV_PIX_FMT_P010, MFX_FOURCC_P010, 1 },
     { AV_PIX_FMT_PAL8, MFX_FOURCC_P8,   0 },
-#if CONFIG_VAAPI
     { AV_PIX_FMT_YUYV422,
                        MFX_FOURCC_YUY2, 0 },
     { AV_PIX_FMT_UYVY422,
@@ -143,7 +142,6 @@ static const struct {
     // the SDK only delares support for Y416
     { AV_PIX_FMT_XV36,
                        MFX_FOURCC_Y416, 1 },
-#endif
 #endif
 };
 
@@ -613,7 +611,7 @@ static mfxStatus frame_alloc(mfxHDL pthis, mfxFrameAllocRequest *req,
     QSVFramesContext       *s = ctx->internal->priv;
     AVQSVFramesContext *hwctx = ctx->hwctx;
     mfxFrameInfo *i  = &req->Info;
-    mfxFrameInfo *i1 = &hwctx->surfaces[0].Info;
+    mfxFrameInfo *i1 = &hwctx->reserve_surface.Info;
 
     if (!(req->Type & MFX_MEMTYPE_VIDEO_MEMORY_PROCESSOR_TARGET) ||
         !(req->Type & (MFX_MEMTYPE_FROM_VPPIN | MFX_MEMTYPE_FROM_VPPOUT)) ||
@@ -665,6 +663,7 @@ static mfxStatus frame_get_hdl(mfxHDL pthis, mfxMemId mid, mfxHDL *hdl)
 
 static int qsv_d3d11_update_config(void *ctx, mfxHDL handle, mfxConfig cfg)
 {
+    int ret = AVERROR_UNKNOWN;
 #if CONFIG_D3D11VA
     mfxStatus sts;
     IDXGIAdapter *pDXGIAdapter;
@@ -679,7 +678,8 @@ static int qsv_d3d11_update_config(void *ctx, mfxHDL handle, mfxConfig cfg)
         hr = IDXGIDevice_GetAdapter(pDXGIDevice, &pDXGIAdapter);
         if (FAILED(hr)) {
             av_log(ctx, AV_LOG_ERROR, "Error IDXGIDevice_GetAdapter %d\n", hr);
-            goto fail;
+            IDXGIDevice_Release(pDXGIDevice);
+            return ret;
         }
 
         hr = IDXGIAdapter_GetDesc(pDXGIAdapter, &adapterDesc);
@@ -689,7 +689,7 @@ static int qsv_d3d11_update_config(void *ctx, mfxHDL handle, mfxConfig cfg)
         }
     } else {
         av_log(ctx, AV_LOG_ERROR, "Error ID3D11Device_QueryInterface %d\n", hr);
-        goto fail;
+        return ret;
     }
 
     impl_value.Type = MFX_VARIANT_TYPE_U16;
@@ -722,11 +722,13 @@ static int qsv_d3d11_update_config(void *ctx, mfxHDL handle, mfxConfig cfg)
         goto fail;
     }
 
-    return 0;
+    ret = 0;
 
 fail:
+    IDXGIAdapter_Release(pDXGIAdapter);
+    IDXGIDevice_Release(pDXGIDevice);
 #endif
-    return AVERROR_UNKNOWN;
+    return ret;
 }
 
 static int qsv_d3d9_update_config(void *ctx, mfxHDL handle, mfxConfig cfg)
@@ -752,25 +754,28 @@ static int qsv_d3d9_update_config(void *ctx, mfxHDL handle, mfxConfig cfg)
     hr = IDirect3DDeviceManager9_LockDevice(devmgr, device_handle, &device, TRUE);
     if (FAILED(hr)) {
         av_log(ctx, AV_LOG_ERROR, "Error LockDevice %d\n", hr);
+        IDirect3DDeviceManager9_CloseDeviceHandle(devmgr, device_handle);
         goto fail;
     }
 
     hr = IDirect3DDevice9Ex_GetCreationParameters(device, &params);
     if (FAILED(hr)) {
         av_log(ctx, AV_LOG_ERROR, "Error IDirect3DDevice9_GetCreationParameters %d\n", hr);
+        IDirect3DDevice9Ex_Release(device);
         goto unlock;
     }
 
     hr = IDirect3DDevice9Ex_GetDirect3D(device, &d3d9ex);
     if (FAILED(hr)) {
         av_log(ctx, AV_LOG_ERROR, "Error IDirect3DDevice9Ex_GetAdapterLUID %d\n", hr);
+        IDirect3DDevice9Ex_Release(device);
         goto unlock;
     }
 
     hr = IDirect3D9Ex_GetAdapterLUID(d3d9ex, params.AdapterOrdinal, &luid);
     if (FAILED(hr)) {
         av_log(ctx, AV_LOG_ERROR, "Error IDirect3DDevice9Ex_GetAdapterLUID %d\n", hr);
-        goto unlock;
+        goto release;
     }
 
     impl_value.Type = MFX_VARIANT_TYPE_PTR;
@@ -780,13 +785,18 @@ static int qsv_d3d9_update_config(void *ctx, mfxHDL handle, mfxConfig cfg)
     if (sts != MFX_ERR_NONE) {
         av_log(ctx, AV_LOG_ERROR, "Error adding a MFX configuration"
                "DeviceLUID property: %d.\n", sts);
-        goto unlock;
+        goto release;
     }
 
     ret = 0;
 
+release:
+    IDirect3D9Ex_Release(d3d9ex);
+    IDirect3DDevice9Ex_Release(device);
+
 unlock:
     IDirect3DDeviceManager9_UnlockDevice(devmgr, device_handle, FALSE);
+    IDirect3DDeviceManager9_CloseDeviceHandle(devmgr, device_handle);
 fail:
 #endif
     return ret;
@@ -1161,7 +1171,7 @@ static int qsv_init_internal_session(AVHWFramesContext *ctx,
                               MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
     par.AsyncDepth = 1;
 
-    par.vpp.In = frames_hwctx->surfaces[0].Info;
+    par.vpp.In = frames_hwctx->reserve_surface.Info;
 
     /* Apparently VPP requires the frame rate to be set to some value, otherwise
      * init will fail (probably for the framerate conversion filter). Since we
@@ -1249,6 +1259,14 @@ static int qsv_frames_init(AVHWFramesContext *ctx)
         s->ext_buffers[0] = (mfxExtBuffer*)&s->opaque_alloc;
     }
 #endif
+
+    ret = qsv_init_surface(ctx, &frames_hwctx->reserve_surface);
+    if (ret < 0) {
+#if QSV_HAVE_OPAQUE
+        av_freep(&s->surface_ptrs);
+#endif
+        return ret;
+    }
 
     s->session_download = NULL;
     s->session_upload   = NULL;
@@ -1526,7 +1544,6 @@ static int map_frame_to_surface(const AVFrame *frame, mfxFrameSurface1 *surface)
         surface->Data.R = frame->data[0] + 2;
         surface->Data.A = frame->data[0] + 3;
         break;
-#if CONFIG_VAAPI
     case AV_PIX_FMT_YUYV422:
         surface->Data.Y = frame->data[0];
         surface->Data.U = frame->data[0] + 1;
@@ -1563,7 +1580,6 @@ static int map_frame_to_surface(const AVFrame *frame, mfxFrameSurface1 *surface)
         surface->Data.U = frame->data[0];
         surface->Data.V = frame->data[0] + 2;
         break;
-#endif
     default:
         return MFX_ERR_UNSUPPORTED;
     }
@@ -1780,13 +1796,7 @@ static int qsv_frames_derive_to(AVHWFramesContext *dst_ctx,
 {
     QSVFramesContext *s = dst_ctx->internal->priv;
     AVQSVFramesContext *dst_hwctx = dst_ctx->hwctx;
-    int i;
-
-    if (src_ctx->initial_pool_size == 0) {
-        av_log(dst_ctx, AV_LOG_ERROR, "Only fixed-size pools can be "
-            "mapped to QSV frames.\n");
-        return AVERROR(EINVAL);
-    }
+    int i, ret;
 
     switch (src_ctx->device_ctx->type) {
 #if CONFIG_VAAPI
@@ -1802,10 +1812,19 @@ static int qsv_frames_derive_to(AVHWFramesContext *dst_ctx,
             if (!s->surfaces_internal)
                 return AVERROR(ENOMEM);
             for (i = 0; i < src_hwctx->nb_surfaces; i++) {
-                qsv_init_surface(dst_ctx, &s->surfaces_internal[i]);
+                ret = qsv_init_surface(dst_ctx, &s->surfaces_internal[i]);
+                if (ret < 0) {
+                    av_freep(&s->surfaces_internal);
+                    return ret;
+                }
                 s->handle_pairs_internal[i].first = src_hwctx->surface_ids + i;
                 s->handle_pairs_internal[i].second = (mfxMemId)MFX_INFINITE;
                 s->surfaces_internal[i].Data.MemId = (mfxMemId)&s->handle_pairs_internal[i];
+            }
+            ret = qsv_init_surface(dst_ctx, &dst_hwctx->reserve_surface);
+            if (ret < 0) {
+                av_freep(&s->surfaces_internal);
+                return ret;
             }
             dst_hwctx->nb_surfaces = src_hwctx->nb_surfaces;
             dst_hwctx->frame_type  = MFX_MEMTYPE_VIDEO_MEMORY_DECODER_TARGET;
@@ -1825,7 +1844,11 @@ static int qsv_frames_derive_to(AVHWFramesContext *dst_ctx,
             if (!s->surfaces_internal)
                 return AVERROR(ENOMEM);
             for (i = 0; i < src_ctx->initial_pool_size; i++) {
-                qsv_init_surface(dst_ctx, &s->surfaces_internal[i]);
+                ret = qsv_init_surface(dst_ctx, &s->surfaces_internal[i]);
+                if (ret < 0) {
+                    av_freep(&s->surfaces_internal);
+                    return ret;
+                }
                 s->handle_pairs_internal[i].first = (mfxMemId)src_hwctx->texture_infos[i].texture;
                 if (src_hwctx->BindFlags & D3D11_BIND_RENDER_TARGET) {
                     s->handle_pairs_internal[i].second = (mfxMemId)MFX_INFINITE;
@@ -1834,12 +1857,18 @@ static int qsv_frames_derive_to(AVHWFramesContext *dst_ctx,
                 }
                 s->surfaces_internal[i].Data.MemId = (mfxMemId)&s->handle_pairs_internal[i];
             }
+            ret = qsv_init_surface(dst_ctx, &dst_hwctx->reserve_surface);
+            if (ret < 0) {
+                av_freep(&s->surfaces_internal);
+                return ret;
+            }
             dst_hwctx->nb_surfaces = src_ctx->initial_pool_size;
             if (src_hwctx->BindFlags & D3D11_BIND_RENDER_TARGET) {
                 dst_hwctx->frame_type |= MFX_MEMTYPE_VIDEO_MEMORY_PROCESSOR_TARGET;
             } else {
                 dst_hwctx->frame_type |= MFX_MEMTYPE_VIDEO_MEMORY_DECODER_TARGET;
             }
+            dst_hwctx->require_sync = src_hwctx->require_sync;
         }
         break;
 #endif
@@ -1856,10 +1885,19 @@ static int qsv_frames_derive_to(AVHWFramesContext *dst_ctx,
             if (!s->surfaces_internal)
                 return AVERROR(ENOMEM);
             for (i = 0; i < src_hwctx->nb_surfaces; i++) {
-                qsv_init_surface(dst_ctx, &s->surfaces_internal[i]);
+                ret = qsv_init_surface(dst_ctx, &s->surfaces_internal[i]);
+                if (ret < 0) {
+                    av_freep(&s->surfaces_internal);
+                    return ret;
+                }
                 s->handle_pairs_internal[i].first = (mfxMemId)src_hwctx->surfaces[i];
                 s->handle_pairs_internal[i].second = (mfxMemId)MFX_INFINITE;
                 s->surfaces_internal[i].Data.MemId = (mfxMemId)&s->handle_pairs_internal[i];
+            }
+            ret = qsv_init_surface(dst_ctx, &dst_hwctx->reserve_surface);
+            if (ret < 0) {
+                av_freep(&s->surfaces_internal);
+                return ret;
             }
             dst_hwctx->nb_surfaces = src_hwctx->nb_surfaces;
             if (src_hwctx->surface_type == DXVA2_VideoProcessorRenderTarget)
@@ -1878,11 +1916,23 @@ static int qsv_frames_derive_to(AVHWFramesContext *dst_ctx,
     return 0;
 }
 
+static void qsv_umap_from_vaapi(AVHWFramesContext *dst_fc,
+                                 HWMapDescriptor *hwmap)
+{
+    mfxFrameSurface1 *new_sur = (mfxFrameSurface1 *)hwmap->priv;
+    mfxHDLPair *hdlpair = (mfxHDLPair *)new_sur->Data.MemId;
+    av_freep(&hdlpair->first);
+    av_freep(&new_sur->Data.MemId);
+    av_freep(&new_sur);
+}
+
 static int qsv_map_to(AVHWFramesContext *dst_ctx,
                       AVFrame *dst, const AVFrame *src, int flags)
 {
     AVQSVFramesContext *hwctx = dst_ctx->hwctx;
     int i, err, index = -1;
+    mfxFrameSurface1 *new_sur = NULL;
+    mfxHDLPair *new_hdlpair = NULL;
 
     for (i = 0; i < hwctx->nb_surfaces && index < 0; i++) {
         switch(src->format) {
@@ -1890,7 +1940,7 @@ static int qsv_map_to(AVHWFramesContext *dst_ctx,
         case AV_PIX_FMT_VAAPI:
         {
             mfxHDLPair *pair = (mfxHDLPair*)hwctx->surfaces[i].Data.MemId;
-            if (*(VASurfaceID*)pair->first == (VASurfaceID)src->data[3]) {
+            if (*(VASurfaceID*)pair->first == (VASurfaceID)(uintptr_t)src->data[3]) {
                 index = i;
                 break;
             }
@@ -1921,21 +1971,77 @@ static int qsv_map_to(AVHWFramesContext *dst_ctx,
         }
     }
     if (index < 0) {
-        av_log(dst_ctx, AV_LOG_ERROR, "Trying to map from a surface which "
-               "is not in the mapped frames context.\n");
-        return AVERROR(EINVAL);
-    }
+        switch (src->format) {
+#if CONFIG_VAAPI
+        case AV_PIX_FMT_VAAPI:
+        {
+            new_sur = (mfxFrameSurface1 *)av_mallocz(sizeof(*new_sur));
+            if (!new_sur) {
+                err = AVERROR(ENOMEM);
+                goto qsv_map_to_err;
+            }
+            err = qsv_init_surface(dst_ctx, new_sur);
+            if (err < 0)
+                goto qsv_map_to_err;
 
-    err = ff_hwframe_map_create(dst->hw_frames_ctx,
-                                dst, src, NULL, NULL);
-    if (err)
-        return err;
+            new_hdlpair = (mfxHDLPair *)av_mallocz(sizeof(*new_hdlpair));
+            if (!new_hdlpair) {
+                err = AVERROR(ENOMEM);
+                goto qsv_map_to_err;
+            }
+            new_hdlpair->first = (VASurfaceID *)av_mallocz(sizeof(VASurfaceID));
+            if (!new_hdlpair->first) {
+                err = AVERROR(ENOMEM);
+                goto qsv_map_to_err;
+            }
+            *(VASurfaceID*)(new_hdlpair->first) = (VASurfaceID)(uintptr_t)src->data[3];
+            new_sur->Data.MemId = new_hdlpair;
+
+            err = ff_hwframe_map_create(dst->hw_frames_ctx, dst, src,
+                                        &qsv_umap_from_vaapi,
+                                        (void*)new_sur);
+            if (err)
+                goto qsv_map_to_err;
+
+            av_log(dst_ctx, AV_LOG_DEBUG, "Trying to map from a surface which "
+                "is not in the mapped frames context, so create a new surface\n");
+        }
+        break;
+#endif
+#if CONFIG_DXVA2
+        case AV_PIX_FMT_DXVA2_VLD:
+        {
+            av_log(dst_ctx, AV_LOG_ERROR, "Trying to map from a surface which "
+                "is not in the mapped frames context.\n");
+            return AVERROR(EINVAL);
+        }
+        break;
+#endif
+        default:
+            return AVERROR(ENOSYS);
+        }
+    } else {
+        err = ff_hwframe_map_create(dst->hw_frames_ctx,
+                                    dst, src, NULL, NULL);
+        if (err)
+            goto qsv_map_to_err;
+    }
 
     dst->width   = src->width;
     dst->height  = src->height;
-    dst->data[3] = (uint8_t*)&hwctx->surfaces[index];
+    dst->data[3] = (uint8_t*)((index == -1) ? new_sur : &hwctx->surfaces[index]);
 
     return 0;
+
+qsv_map_to_err:
+    if (new_sur)
+        av_freep(&new_sur);
+    if (new_hdlpair) {
+        if (new_hdlpair->first)
+            av_freep(&new_hdlpair->first);
+        av_freep(&new_hdlpair);
+    }
+    return err;
 }
 
 static int qsv_frames_get_constraints(AVHWDeviceContext *ctx,
@@ -2094,6 +2200,15 @@ static int qsv_device_derive(AVHWDeviceContext *ctx,
                              AVDictionary *opts, int flags)
 {
     mfxIMPL impl;
+    QSVDevicePriv *priv;
+
+    priv = av_mallocz(sizeof(*priv));
+    if (!priv)
+        return AVERROR(ENOMEM);
+
+    ctx->user_opaque = priv;
+    ctx->free = qsv_device_free;
+
     impl = choose_implementation("hw_any", child_device_ctx->type);
     return qsv_device_derive_from_child(ctx, impl,
                                         child_device_ctx, flags);
@@ -2128,7 +2243,6 @@ static int qsv_device_create(AVHWDeviceContext *ctx, const char *device,
         }
     } else if (CONFIG_VAAPI) {
         child_device_type = AV_HWDEVICE_TYPE_VAAPI;
-#if QSV_ONEVPL
     } else if (CONFIG_D3D11VA) {  // Use D3D11 by default if d3d11va is enabled
         av_log(ctx, AV_LOG_VERBOSE,
                "Defaulting child_device_type to AV_HWDEVICE_TYPE_D3D11VA for oneVPL."
@@ -2137,16 +2251,6 @@ static int qsv_device_create(AVHWDeviceContext *ctx, const char *device,
         child_device_type = AV_HWDEVICE_TYPE_D3D11VA;
     } else if (CONFIG_DXVA2) {
         child_device_type = AV_HWDEVICE_TYPE_DXVA2;
-#else
-    } else if (CONFIG_DXVA2) {
-        av_log(NULL, AV_LOG_WARNING,
-                "WARNING: defaulting child_device_type to AV_HWDEVICE_TYPE_DXVA2 for compatibility "
-                "with old commandlines. This behaviour will be removed "
-                "in the future. Please explicitly set device type via \"-init_hw_device\" option.\n");
-        child_device_type = AV_HWDEVICE_TYPE_DXVA2;
-    } else if (CONFIG_D3D11VA) {
-        child_device_type = AV_HWDEVICE_TYPE_D3D11VA;
-#endif
     } else {
         av_log(ctx, AV_LOG_ERROR, "No supported child device type is enabled\n");
         return AVERROR(ENOSYS);
@@ -2202,7 +2306,14 @@ static int qsv_device_create(AVHWDeviceContext *ctx, const char *device,
 
     impl = choose_implementation(device, child_device_type);
 
-    return qsv_device_derive_from_child(ctx, impl, child_device, 0);
+    ret = qsv_device_derive_from_child(ctx, impl, child_device, 0);
+    if (ret == 0) {
+        ctx->internal->source_device = av_buffer_ref(priv->child_device_ctx);
+        if (!ctx->internal->source_device)
+            ret = AVERROR(ENOMEM);
+    }
+
+    return ret;
 }
 
 const HWContextType ff_hwcontext_type_qsv = {

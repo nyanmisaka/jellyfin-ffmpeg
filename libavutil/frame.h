@@ -866,6 +866,21 @@ int av_frame_copy(AVFrame *dst, const AVFrame *src);
  */
 int av_frame_copy_props(AVFrame *dst, const AVFrame *src);
 
+/** Copy actual data buffers instead of references.
+ */
+#define AV_FRAME_COPY_PROPS_FORCECOPY  1
+
+/**
+ * Copy only side-data from src to dst.
+ *
+ * @param dst a frame to which the side data should be copied.
+ * @param src a frame from which to copy the side data.
+ * @param flags flags of type AV_FRAME_COPY_PROPS_*, controlling copy behavior.
+ *
+ * @return >= 0 on success, a negative AVERROR on error.
+ */
+int av_frame_copy_side_data(AVFrame* dst, const AVFrame* src, int flags);
+
 /**
  * Get the buffer reference a given data plane is stored in.
  *
@@ -918,6 +933,10 @@ AVFrameSideData *av_frame_get_side_data(const AVFrame *frame,
  */
 void av_frame_remove_side_data(AVFrame *frame, enum AVFrameSideDataType type);
 
+/**
+ * Remove and free all side data in this frame.
+ */
+void av_frame_remove_all_side_data(AVFrame *frame);
 
 /**
  * Flags for frame cropping.

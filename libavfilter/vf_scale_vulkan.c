@@ -220,14 +220,17 @@ static av_cold int init_filter(AVFilterContext *ctx, AVFrame *in)
                 GLSLC(1, }                                                       );
             }
         } else {
-            GLSLC(1, vec4 res = scale_bilinear(0, pos, c_r, c_o);                );
-            GLSLF(1, res = rgb2yuv(res, %i);    ,s->out_range == AVCOL_RANGE_JPEG);
+            GLSLC(1, size = imageSize(output_img[0]);                            );
+            GLSLC(1, if (IS_WITHIN(pos, size)) {                                 );
+            GLSLC(2,     vec4 res = scale_bilinear(0, pos, c_r, c_o);            );
+            GLSLF(2,     res = rgb2yuv(res, %i);,s->out_range == AVCOL_RANGE_JPEG);
             switch (s->vkctx.output_format) {
-            case AV_PIX_FMT_NV12:    GLSLC(1, write_nv12(res, pos); ); break;
-            case AV_PIX_FMT_YUV420P: GLSLC(1,  write_420(res, pos); ); break;
-            case AV_PIX_FMT_YUV444P: GLSLC(1,  write_444(res, pos); ); break;
+            case AV_PIX_FMT_NV12:    GLSLC(2, write_nv12(res, pos); ); break;
+            case AV_PIX_FMT_YUV420P: GLSLC(2,  write_420(res, pos); ); break;
+            case AV_PIX_FMT_YUV444P: GLSLC(2,  write_444(res, pos); ); break;
             default: return AVERROR(EINVAL);
             }
+            GLSLC(1, }                                                           );
         }
 
         GLSLC(0, }                                                               );
@@ -299,7 +302,8 @@ static int process_frames(AVFilterContext *avctx, AVFrame *out_f, AVFrame *in_f)
     AVVkFrame *out = (AVVkFrame *)out_f->data[0];
     VkImageMemoryBarrier barriers[AV_NUM_DATA_POINTERS*2];
     int barrier_count = 0;
-    const int planes = av_pix_fmt_count_planes(s->vkctx.input_format);
+    const int in_planes = av_pix_fmt_count_planes(s->vkctx.input_format);
+    const int out_planes = av_pix_fmt_count_planes(s->vkctx.output_format);
     const VkFormat *input_formats = av_vkfmt_from_pixfmt(s->vkctx.input_format);
     const VkFormat *output_formats = av_vkfmt_from_pixfmt(s->vkctx.output_format);
 
@@ -307,24 +311,27 @@ static int process_frames(AVFilterContext *avctx, AVFrame *out_f, AVFrame *in_f)
     ff_vk_start_exec_recording(vkctx, s->exec);
     cmd_buf = ff_vk_get_exec_buf(s->exec);
 
-    for (int i = 0; i < planes; i++) {
+    for (int i = 0; i < in_planes; i++) {
         RET(ff_vk_create_imageview(vkctx, s->exec,
                                    &s->input_images[i].imageView, in->img[i],
                                    input_formats[i],
                                    ff_comp_identity_map));
 
+        s->input_images[i].imageLayout  = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
+
+    for (int i = 0; i < out_planes; i++) {
         RET(ff_vk_create_imageview(vkctx, s->exec,
                                    &s->output_images[i].imageView, out->img[i],
                                    output_formats[i],
                                    ff_comp_identity_map));
 
-        s->input_images[i].imageLayout  = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         s->output_images[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
 
     ff_vk_update_descriptor_set(vkctx, s->pl, 0);
 
-    for (int i = 0; i < planes; i++) {
+    for (int i = 0; i < in_planes; i++) {
         VkImageMemoryBarrier bar = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .srcAccessMask = 0,
@@ -345,7 +352,7 @@ static int process_frames(AVFilterContext *avctx, AVFrame *out_f, AVFrame *in_f)
         in->access[i]  = bar.dstAccessMask;
     }
 
-    for (int i = 0; i < av_pix_fmt_count_planes(s->vkctx.output_format); i++) {
+    for (int i = 0; i < out_planes; i++) {
         VkImageMemoryBarrier bar = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .srcAccessMask = 0,

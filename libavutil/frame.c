@@ -259,9 +259,39 @@ FF_ENABLE_DEPRECATION_WARNINGS
     return AVERROR(EINVAL);
 }
 
+int av_frame_copy_side_data(AVFrame* dst, const AVFrame* src, int flags)
+{
+    for (unsigned i = 0; i < src->nb_side_data; i++) {
+        const AVFrameSideData *sd_src = src->side_data[i];
+        AVFrameSideData *sd_dst;
+        if (   sd_src->type == AV_FRAME_DATA_PANSCAN
+            && (src->width != dst->width || src->height != dst->height))
+            continue;
+        if (flags & AV_FRAME_COPY_PROPS_FORCECOPY) {
+            sd_dst = av_frame_new_side_data(dst, sd_src->type,
+                                            sd_src->size);
+            if (!sd_dst) {
+                wipe_side_data(dst);
+                return AVERROR(ENOMEM);
+            }
+            memcpy(sd_dst->data, sd_src->data, sd_src->size);
+        } else {
+            AVBufferRef *ref = av_buffer_ref(sd_src->buf);
+            sd_dst = av_frame_new_side_data_from_buf(dst, sd_src->type, ref);
+            if (!sd_dst) {
+                av_buffer_unref(&ref);
+                wipe_side_data(dst);
+                return AVERROR(ENOMEM);
+            }
+        }
+        av_dict_copy(&sd_dst->metadata, sd_src->metadata, 0);
+    }
+    return 0;
+}
+
 static int frame_copy_props(AVFrame *dst, const AVFrame *src, int force_copy)
 {
-    int ret, i;
+    int ret;
 
     dst->key_frame              = src->key_frame;
     dst->pict_type              = src->pict_type;
@@ -310,31 +340,9 @@ FF_ENABLE_DEPRECATION_WARNINGS
 
     av_dict_copy(&dst->metadata, src->metadata, 0);
 
-    for (i = 0; i < src->nb_side_data; i++) {
-        const AVFrameSideData *sd_src = src->side_data[i];
-        AVFrameSideData *sd_dst;
-        if (   sd_src->type == AV_FRAME_DATA_PANSCAN
-            && (src->width != dst->width || src->height != dst->height))
-            continue;
-        if (force_copy) {
-            sd_dst = av_frame_new_side_data(dst, sd_src->type,
-                                            sd_src->size);
-            if (!sd_dst) {
-                wipe_side_data(dst);
-                return AVERROR(ENOMEM);
-            }
-            memcpy(sd_dst->data, sd_src->data, sd_src->size);
-        } else {
-            AVBufferRef *ref = av_buffer_ref(sd_src->buf);
-            sd_dst = av_frame_new_side_data_from_buf(dst, sd_src->type, ref);
-            if (!sd_dst) {
-                av_buffer_unref(&ref);
-                wipe_side_data(dst);
-                return AVERROR(ENOMEM);
-            }
-        }
-        av_dict_copy(&sd_dst->metadata, sd_src->metadata, 0);
-    }
+    if (ret = av_frame_copy_side_data(dst, src,
+        force_copy ? AV_FRAME_COPY_PROPS_FORCECOPY : 0) < 0)
+        return ret;
 
     ret = av_buffer_replace(&dst->opaque_ref, src->opaque_ref);
     ret |= av_buffer_replace(&dst->private_ref, src->private_ref);
@@ -790,6 +798,17 @@ void av_frame_remove_side_data(AVFrame *frame, enum AVFrameSideDataType type)
             frame->side_data[i] = frame->side_data[frame->nb_side_data - 1];
             frame->nb_side_data--;
         }
+    }
+}
+
+void av_frame_remove_all_side_data(AVFrame *frame)
+{
+    int i;
+
+    for (i = frame->nb_side_data - 1; i >= 0; i--) {
+        free_side_data(&frame->side_data[i]);
+        frame->side_data[i] = frame->side_data[frame->nb_side_data - 1];
+        frame->nb_side_data--;
     }
 }
 
