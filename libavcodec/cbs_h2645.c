@@ -34,41 +34,38 @@ static int cbs_read_ue_golomb(CodedBitstreamContext *ctx, GetBitContext *gbc,
                               uint32_t *write_to,
                               uint32_t range_min, uint32_t range_max)
 {
-    uint32_t value;
-    int position, i, j;
-    unsigned int k;
-    char bits[65];
+    uint32_t leading_bits, value;
+    int max_length, leading_zeroes;
 
-    position = get_bits_count(gbc);
+    CBS_TRACE_READ_START();
 
-    for (i = 0; i < 32; i++) {
-        if (get_bits_left(gbc) < i + 1) {
+    max_length = FFMIN(get_bits_left(gbc), 32);
+
+    leading_bits = show_bits_long(gbc, max_length);
+    if (leading_bits == 0) {
+        if (max_length >= 32) {
+            av_log(ctx->log_ctx, AV_LOG_ERROR, "Invalid ue-golomb code at "
+                   "%s: more than 31 zeroes.\n", name);
+            return AVERROR_INVALIDDATA;
+        } else {
             av_log(ctx->log_ctx, AV_LOG_ERROR, "Invalid ue-golomb code at "
                    "%s: bitstream ended.\n", name);
             return AVERROR_INVALIDDATA;
         }
-        k = get_bits1(gbc);
-        bits[i] = k ? '1' : '0';
-        if (k)
-            break;
     }
-    if (i >= 32) {
+
+    leading_zeroes = max_length - 1 - av_log2(leading_bits);
+    skip_bits_long(gbc, leading_zeroes);
+
+    if (get_bits_left(gbc) < leading_zeroes + 1) {
         av_log(ctx->log_ctx, AV_LOG_ERROR, "Invalid ue-golomb code at "
-               "%s: more than 31 zeroes.\n", name);
+               "%s: bitstream ended.\n", name);
         return AVERROR_INVALIDDATA;
     }
-    value = 1;
-    for (j = 0; j < i; j++) {
-        k = get_bits1(gbc);
-        bits[i + j + 1] = k ? '1' : '0';
-        value = value << 1 | k;
-    }
-    bits[i + j + 1] = 0;
-    --value;
 
-    if (ctx->trace_enable)
-        ff_cbs_trace_syntax_element(ctx, position, name, subscripts,
-                                    bits, value);
+    value = get_bits_long(gbc, leading_zeroes + 1) - 1;
+
+    CBS_TRACE_READ_END();
 
     if (value < range_min || value > range_max) {
         av_log(ctx->log_ctx, AV_LOG_ERROR, "%s out of range: "
@@ -86,45 +83,44 @@ static int cbs_read_se_golomb(CodedBitstreamContext *ctx, GetBitContext *gbc,
                               int32_t *write_to,
                               int32_t range_min, int32_t range_max)
 {
+    uint32_t leading_bits, unsigned_value;
+    int max_length, leading_zeroes;
     int32_t value;
-    int position, i, j;
-    unsigned int k;
-    uint32_t v;
-    char bits[65];
 
-    position = get_bits_count(gbc);
+    CBS_TRACE_READ_START();
 
-    for (i = 0; i < 32; i++) {
-        if (get_bits_left(gbc) < i + 1) {
+    max_length = FFMIN(get_bits_left(gbc), 32);
+
+    leading_bits = show_bits_long(gbc, max_length);
+    if (leading_bits == 0) {
+        if (max_length >= 32) {
+            av_log(ctx->log_ctx, AV_LOG_ERROR, "Invalid se-golomb code at "
+                   "%s: more than 31 zeroes.\n", name);
+            return AVERROR_INVALIDDATA;
+        } else {
             av_log(ctx->log_ctx, AV_LOG_ERROR, "Invalid se-golomb code at "
                    "%s: bitstream ended.\n", name);
             return AVERROR_INVALIDDATA;
         }
-        k = get_bits1(gbc);
-        bits[i] = k ? '1' : '0';
-        if (k)
-            break;
     }
-    if (i >= 32) {
+
+    leading_zeroes = max_length - 1 - av_log2(leading_bits);
+    skip_bits_long(gbc, leading_zeroes);
+
+    if (get_bits_left(gbc) < leading_zeroes + 1) {
         av_log(ctx->log_ctx, AV_LOG_ERROR, "Invalid se-golomb code at "
-               "%s: more than 31 zeroes.\n", name);
+               "%s: bitstream ended.\n", name);
         return AVERROR_INVALIDDATA;
     }
-    v = 1;
-    for (j = 0; j < i; j++) {
-        k = get_bits1(gbc);
-        bits[i + j + 1] = k ? '1' : '0';
-        v = v << 1 | k;
-    }
-    bits[i + j + 1] = 0;
-    if (v & 1)
-        value = -(int32_t)(v / 2);
-    else
-        value = v / 2;
 
-    if (ctx->trace_enable)
-        ff_cbs_trace_syntax_element(ctx, position, name, subscripts,
-                                    bits, value);
+    unsigned_value = get_bits_long(gbc, leading_zeroes + 1);
+
+    if (unsigned_value & 1)
+        value = -(int32_t)(unsigned_value / 2);
+    else
+        value = unsigned_value / 2;
+
+    CBS_TRACE_READ_END();
 
     if (value < range_min || value > range_max) {
         av_log(ctx->log_ctx, AV_LOG_ERROR, "%s out of range: "
@@ -144,6 +140,8 @@ static int cbs_write_ue_golomb(CodedBitstreamContext *ctx, PutBitContext *pbc,
 {
     int len;
 
+    CBS_TRACE_WRITE_START();
+
     if (value < range_min || value > range_max) {
         av_log(ctx->log_ctx, AV_LOG_ERROR, "%s out of range: "
                "%"PRIu32", but must be in [%"PRIu32",%"PRIu32"].\n",
@@ -156,26 +154,13 @@ static int cbs_write_ue_golomb(CodedBitstreamContext *ctx, PutBitContext *pbc,
     if (put_bits_left(pbc) < 2 * len + 1)
         return AVERROR(ENOSPC);
 
-    if (ctx->trace_enable) {
-        char bits[65];
-        int i;
-
-        for (i = 0; i < len; i++)
-            bits[i] = '0';
-        bits[len] = '1';
-        for (i = 0; i < len; i++)
-            bits[len + i + 1] = (value + 1) >> (len - i - 1) & 1 ? '1' : '0';
-        bits[len + len + 1] = 0;
-
-        ff_cbs_trace_syntax_element(ctx, put_bits_count(pbc),
-                                    name, subscripts, bits, value);
-    }
-
     put_bits(pbc, len, 0);
     if (len + 1 < 32)
         put_bits(pbc, len + 1, value + 1);
     else
         put_bits32(pbc, value + 1);
+
+    CBS_TRACE_WRITE_END();
 
     return 0;
 }
@@ -187,6 +172,8 @@ static int cbs_write_se_golomb(CodedBitstreamContext *ctx, PutBitContext *pbc,
 {
     int len;
     uint32_t uvalue;
+
+    CBS_TRACE_WRITE_START();
 
     if (value < range_min || value > range_max) {
         av_log(ctx->log_ctx, AV_LOG_ERROR, "%s out of range: "
@@ -207,26 +194,13 @@ static int cbs_write_se_golomb(CodedBitstreamContext *ctx, PutBitContext *pbc,
     if (put_bits_left(pbc) < 2 * len + 1)
         return AVERROR(ENOSPC);
 
-    if (ctx->trace_enable) {
-        char bits[65];
-        int i;
-
-        for (i = 0; i < len; i++)
-            bits[i] = '0';
-        bits[len] = '1';
-        for (i = 0; i < len; i++)
-            bits[len + i + 1] = (uvalue + 1) >> (len - i - 1) & 1 ? '1' : '0';
-        bits[len + len + 1] = 0;
-
-        ff_cbs_trace_syntax_element(ctx, put_bits_count(pbc),
-                                    name, subscripts, bits, value);
-    }
-
     put_bits(pbc, len, 0);
     if (len + 1 < 32)
         put_bits(pbc, len + 1, uvalue + 1);
     else
         put_bits32(pbc, uvalue + 1);
+
+    CBS_TRACE_WRITE_END();
 
     return 0;
 }
@@ -261,8 +235,6 @@ static int cbs_h265_payload_extension_present(GetBitContext *gbc, uint32_t paylo
 
 #define u(width, name, range_min, range_max) \
         xu(width, name, current->name, range_min, range_max, 0, )
-#define ub(width, name) \
-        xu(width, name, current->name, 0, MAX_UINT_BITS(width), 0, )
 #define flag(name) ub(1, name)
 #define ue(name, range_min, range_max) \
         xue(name, current->name, range_min, range_max, 0, )
@@ -298,6 +270,12 @@ static int cbs_h265_payload_extension_present(GetBitContext *gbc, uint32_t paylo
 #define READWRITE read
 #define RWContext GetBitContext
 
+#define ub(width, name) do { \
+        uint32_t value; \
+        CHECK(ff_cbs_read_simple_unsigned(ctx, rw, width, #name, \
+                                          &value)); \
+        current->name = value; \
+    } while (0)
 #define xu(width, name, var, range_min, range_max, subs, ...) do { \
         uint32_t value; \
         CHECK(ff_cbs_read_unsigned(ctx, rw, width, #name, \
@@ -372,6 +350,7 @@ static int cbs_h2645_read_more_rbsp_data(GetBitContext *gbc)
 #undef READ
 #undef READWRITE
 #undef RWContext
+#undef ub
 #undef xu
 #undef xi
 #undef xue
@@ -387,6 +366,11 @@ static int cbs_h2645_read_more_rbsp_data(GetBitContext *gbc)
 #define READWRITE write
 #define RWContext PutBitContext
 
+#define ub(width, name) do { \
+        uint32_t value = current->name; \
+        CHECK(ff_cbs_write_simple_unsigned(ctx, rw, width, #name, \
+                                           value)); \
+    } while (0)
 #define xu(width, name, var, range_min, range_max, subs, ...) do { \
         uint32_t value = var; \
         CHECK(ff_cbs_write_unsigned(ctx, rw, width, #name, \
@@ -450,6 +434,7 @@ static int cbs_h2645_read_more_rbsp_data(GetBitContext *gbc)
 #undef WRITE
 #undef READWRITE
 #undef RWContext
+#undef ub
 #undef xu
 #undef xi
 #undef xue

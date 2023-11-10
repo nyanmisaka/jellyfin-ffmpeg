@@ -54,10 +54,21 @@ typedef struct AVQSVFramesContext {
     mfxFrameSurface1 *surfaces;
     int            nb_surfaces;
 
+    /*
+     * This surface store the surface information,
+     * and can be used to init dec, enc and vpp.
+     */
+    mfxFrameSurface1 reserve_surface;
+
     /**
      * A combination of MFX_MEMTYPE_* describing the frame pool.
      */
     int frame_type;
+
+    /**
+     * Whether the frames require extra sync when exporting as external memory.
+     */
+    int require_sync;
 } AVQSVFramesContext;
 
 #endif /* AVUTIL_HWCONTEXT_QSV_H */

@@ -532,6 +532,7 @@ struct AVFilterLink {
     int w;                      ///< agreed upon image width
     int h;                      ///< agreed upon image height
     AVRational sample_aspect_ratio; ///< agreed upon sample aspect ratio
+    int fixed_pool_size;        ///< fixed size of the frame pool for reverse hw mapping
     /* These parameters apply only to audio */
 #if FF_API_OLD_CHANNEL_LAYOUT
     /**

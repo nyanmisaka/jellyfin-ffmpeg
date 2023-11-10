@@ -253,6 +253,11 @@ static void *input_thread(void *arg)
     while (1) {
         DemuxMsg msg = { NULL };
 
+        if (paused_start) {
+            av_usleep(1000); // Be more responsive to unpausing than main thread
+            continue;
+        }
+
         ret = av_read_frame(f->ctx, pkt);
 
         if (ret == AVERROR(EAGAIN)) {

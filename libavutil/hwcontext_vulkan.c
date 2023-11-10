@@ -111,6 +111,9 @@ typedef struct VulkanDevicePriv {
 
     /* Intel */
     int dev_is_intel;
+
+    /* Amd */
+    int dev_is_amd;
 } VulkanDevicePriv;
 
 typedef struct VulkanFramesPriv {
@@ -231,6 +234,7 @@ static const struct {
     { AV_PIX_FMT_BGR32,  { VK_FORMAT_A8B8G8R8_UNORM_PACK32 } },
     { AV_PIX_FMT_0BGR32, { VK_FORMAT_A8B8G8R8_UNORM_PACK32 } },
 
+    { AV_PIX_FMT_X2BGR10, { VK_FORMAT_A2B10G10R10_UNORM_PACK32 } },
     { AV_PIX_FMT_X2RGB10, { VK_FORMAT_A2R10G10B10_UNORM_PACK32 } },
 
     { AV_PIX_FMT_GBRAP, { VK_FORMAT_R8_UNORM, VK_FORMAT_R8_UNORM, VK_FORMAT_R8_UNORM, VK_FORMAT_R8_UNORM } },
@@ -774,7 +778,7 @@ static const char *vk_dev_type(enum VkPhysicalDeviceType type)
 static int find_device(AVHWDeviceContext *ctx, VulkanDeviceSelection *select)
 {
     int err = 0, choice = -1;
-    uint32_t num;
+    uint32_t num, api = 0;
     VkResult ret;
     VulkanDevicePriv *p = ctx->internal->priv;
     FFVulkanFunctions *vk = &p->vkfn;
@@ -828,49 +832,61 @@ static int find_device(AVHWDeviceContext *ctx, VulkanDeviceSelection *select)
 
     if (select->has_uuid) {
         for (int i = 0; i < num; i++) {
-            if (!strncmp(idp[i].deviceUUID, select->uuid, VK_UUID_SIZE)) {
+            if (!strncmp(idp[i].deviceUUID, select->uuid, VK_UUID_SIZE) &&
+                prop[i].properties.apiVersion > api) {
                 choice = i;
-                goto end;
-             }
+                api = prop[i].properties.apiVersion;
+            }
         }
-        av_log(ctx, AV_LOG_ERROR, "Unable to find device by given UUID!\n");
-        err = AVERROR(ENODEV);
+        if (choice == -1) {
+            av_log(ctx, AV_LOG_ERROR, "Unable to find device by given UUID!\n");
+            err = AVERROR(ENODEV);
+        }
         goto end;
     } else if (select->name) {
         av_log(ctx, AV_LOG_VERBOSE, "Requested device: %s\n", select->name);
         for (int i = 0; i < num; i++) {
-            if (strstr(prop[i].properties.deviceName, select->name)) {
+            if (strstr(prop[i].properties.deviceName, select->name) &&
+                prop[i].properties.apiVersion > api) {
                 choice = i;
-                goto end;
-             }
+                api = prop[i].properties.apiVersion;
+            }
         }
-        av_log(ctx, AV_LOG_ERROR, "Unable to find device \"%s\"!\n",
-               select->name);
-        err = AVERROR(ENODEV);
+        if (choice == -1) {
+            av_log(ctx, AV_LOG_ERROR, "Unable to find device \"%s\"!\n",
+                   select->name);
+            err = AVERROR(ENODEV);
+        }
         goto end;
     } else if (select->pci_device) {
         av_log(ctx, AV_LOG_VERBOSE, "Requested device: 0x%x\n", select->pci_device);
         for (int i = 0; i < num; i++) {
-            if (select->pci_device == prop[i].properties.deviceID) {
+            if (select->pci_device == prop[i].properties.deviceID &&
+                prop[i].properties.apiVersion > api) {
                 choice = i;
-                goto end;
+                api = prop[i].properties.apiVersion;
             }
         }
-        av_log(ctx, AV_LOG_ERROR, "Unable to find device with PCI ID 0x%x!\n",
-               select->pci_device);
-        err = AVERROR(EINVAL);
+        if (choice == -1) {
+            av_log(ctx, AV_LOG_ERROR, "Unable to find device with PCI ID 0x%x!\n",
+                   select->pci_device);
+            err = AVERROR(EINVAL);
+        }
         goto end;
     } else if (select->vendor_id) {
         av_log(ctx, AV_LOG_VERBOSE, "Requested vendor: 0x%x\n", select->vendor_id);
         for (int i = 0; i < num; i++) {
-            if (select->vendor_id == prop[i].properties.vendorID) {
+            if (select->vendor_id == prop[i].properties.vendorID &&
+                prop[i].properties.apiVersion > api) {
                 choice = i;
-                goto end;
+                api = prop[i].properties.apiVersion;
             }
         }
-        av_log(ctx, AV_LOG_ERROR, "Unable to find device with Vendor ID 0x%x!\n",
-               select->vendor_id);
-        err = AVERROR(ENODEV);
+        if (choice == -1) {
+            av_log(ctx, AV_LOG_ERROR, "Unable to find device with Vendor ID 0x%x!\n",
+                   select->vendor_id);
+            err = AVERROR(ENODEV);
+        }
         goto end;
     } else {
         if (select->index < num) {
@@ -1470,6 +1486,13 @@ static int vulkan_device_init(AVHWDeviceContext *ctx)
 
     p->dev_is_nvidia = (p->props.properties.vendorID == 0x10de);
     p->dev_is_intel  = (p->props.properties.vendorID == 0x8086);
+    p->dev_is_amd    = (p->props.properties.vendorID == 0x1002);
+
+#if CONFIG_LIBDRM
+    /* AMD encoder requires contiguous and linear images */
+    if (p->dev_is_amd)
+        p->use_linear_images = 1;
+#endif
 
     vk->GetPhysicalDeviceQueueFamilyProperties(hwctx->phys_dev, &queue_num, NULL);
     if (!queue_num) {
@@ -2273,20 +2296,14 @@ static int vulkan_frames_init(AVHWFramesContext *hwfc)
     AVVulkanDeviceContext *dev_hwctx = hwfc->device_ctx->hwctx;
     VulkanDevicePriv *p = hwfc->device_ctx->internal->priv;
     const VkImageDrmFormatModifierListCreateInfoEXT *modifier_info;
-    const int has_modifiers = !!(p->extensions & FF_VK_EXT_DRM_MODIFIER_FLAGS);
-
-    /* Default tiling flags */
-    hwctx->tiling = hwctx->tiling ? hwctx->tiling :
-                    has_modifiers ? VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT :
-                    p->use_linear_images ? VK_IMAGE_TILING_LINEAR :
-                    VK_IMAGE_TILING_OPTIMAL;
+    int has_modifiers = !!(p->extensions & FF_VK_EXT_DRM_MODIFIER_FLAGS);
 
     if (!hwctx->usage)
         hwctx->usage = FF_VK_DEFAULT_USAGE_FLAGS;
 
     if (!(hwctx->flags & AV_VK_FRAME_FLAG_NONE)) {
         if (p->contiguous_planes == 1 ||
-           ((p->contiguous_planes == -1) && p->dev_is_intel))
+           (p->contiguous_planes == -1 && (p->dev_is_intel || p->dev_is_amd)))
            hwctx->flags |= AV_VK_FRAME_FLAG_CONTIGUOUS_MEMORY;
     }
 
@@ -2298,9 +2315,6 @@ static int vulkan_frames_init(AVHWFramesContext *hwfc)
         const VkFormat *fmt = av_vkfmt_from_pixfmt(hwfc->sw_format);
         VkImageDrmFormatModifierListCreateInfoEXT *modifier_info;
         FFVulkanFunctions *vk = &p->vkfn;
-        VkDrmFormatModifierPropertiesEXT *mod_props;
-        uint64_t *modifiers;
-        int modifier_count = 0;
 
         VkDrmFormatModifierPropertiesListEXT mod_props_list = {
             .sType = VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT,
@@ -2316,65 +2330,79 @@ static int vulkan_frames_init(AVHWFramesContext *hwfc)
         /* Get all supported modifiers */
         vk->GetPhysicalDeviceFormatProperties2(dev_hwctx->phys_dev, fmt[0], &prop);
 
-        if (!mod_props_list.drmFormatModifierCount) {
-            av_log(hwfc, AV_LOG_ERROR, "There are no supported modifiers for the given sw_format\n");
-            return AVERROR(EINVAL);
-        }
+        if (mod_props_list.drmFormatModifierCount) {
+            VkDrmFormatModifierPropertiesEXT *mod_props;
+            uint64_t *modifiers;
+            int modifier_count = 0;
 
-        /* Createa structure to hold the modifier list info */
-        modifier_info = av_mallocz(sizeof(*modifier_info));
-        if (!modifier_info)
-            return AVERROR(ENOMEM);
+            /* Createa structure to hold the modifier list info */
+            modifier_info = av_mallocz(sizeof(*modifier_info));
+            if (!modifier_info)
+                return AVERROR(ENOMEM);
 
-        modifier_info->pNext = NULL;
-        modifier_info->sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT;
+            modifier_info->pNext = NULL;
+            modifier_info->sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT;
 
-        /* Add structure to the image creation pNext chain */
-        if (!hwctx->create_pnext)
-            hwctx->create_pnext = modifier_info;
-        else
-            vk_link_struct(hwctx->create_pnext, (void *)modifier_info);
+            /* Add structure to the image creation pNext chain */
+            if (!hwctx->create_pnext)
+                hwctx->create_pnext = modifier_info;
+            else
+                vk_link_struct(hwctx->create_pnext, (void *)modifier_info);
 
-        /* Backup the allocated struct to be freed later */
-        fp->modifier_info = modifier_info;
+            /* Backup the allocated struct to be freed later */
+            fp->modifier_info = modifier_info;
 
-        /* Allocate list of modifiers */
-        modifiers = av_mallocz(mod_props_list.drmFormatModifierCount *
-                               sizeof(*modifiers));
-        if (!modifiers)
-            return AVERROR(ENOMEM);
+            /* Allocate list of modifiers */
+            modifiers = av_mallocz(mod_props_list.drmFormatModifierCount *
+                                sizeof(*modifiers));
+            if (!modifiers)
+                return AVERROR(ENOMEM);
 
-        modifier_info->pDrmFormatModifiers = modifiers;
+            modifier_info->pDrmFormatModifiers = modifiers;
 
-        /* Allocate a temporary list to hold all modifiers supported */
-        mod_props = av_mallocz(mod_props_list.drmFormatModifierCount *
-                               sizeof(*mod_props));
-        if (!mod_props)
-            return AVERROR(ENOMEM);
+            /* Allocate a temporary list to hold all modifiers supported */
+            mod_props = av_mallocz(mod_props_list.drmFormatModifierCount *
+                                sizeof(*mod_props));
+            if (!mod_props)
+                return AVERROR(ENOMEM);
 
-        mod_props_list.pDrmFormatModifierProperties = mod_props;
+            mod_props_list.pDrmFormatModifierProperties = mod_props;
 
-        /* Finally get all modifiers from the device */
-        vk->GetPhysicalDeviceFormatProperties2(dev_hwctx->phys_dev, fmt[0], &prop);
+            /* Finally get all modifiers from the device */
+            vk->GetPhysicalDeviceFormatProperties2(dev_hwctx->phys_dev, fmt[0], &prop);
 
-        /* Reject any modifiers that don't match our requirements */
-        for (int i = 0; i < mod_props_list.drmFormatModifierCount; i++) {
-            if (!(mod_props[i].drmFormatModifierTilingFeatures & hwctx->usage))
-                continue;
+            if (p->use_linear_images) {
+                has_modifiers = 0;
+                modifiers[modifier_count++] = 0x0;
+            } else {
+                /* Reject any modifiers that don't match our requirements */
+                for (int i = 0; i < mod_props_list.drmFormatModifierCount; i++) {
+                    if (!(mod_props[i].drmFormatModifierTilingFeatures & hwctx->usage))
+                        continue;
+                    modifiers[modifier_count++] = mod_props[i].drmFormatModifier;
+                }
 
-            modifiers[modifier_count++] = mod_props[i].drmFormatModifier;
-        }
+                if (!modifier_count) {
+                    av_log(hwfc, AV_LOG_ERROR, "None of the given modifiers supports"
+                                            " the usage flags!\n");
+                    av_freep(&mod_props);
+                    return AVERROR(EINVAL);
+                }
+            }
 
-        if (!modifier_count) {
-            av_log(hwfc, AV_LOG_ERROR, "None of the given modifiers supports"
-                                       " the usage flags!\n");
+            modifier_info->drmFormatModifierCount = modifier_count;
             av_freep(&mod_props);
-            return AVERROR(EINVAL);
+        } else {
+            av_log(hwfc, AV_LOG_DEBUG, "There are no supported modifiers for the given sw_format\n");
+            has_modifiers = 0;
         }
-
-        modifier_info->drmFormatModifierCount = modifier_count;
-        av_freep(&mod_props);
     }
+
+    /* Default tiling flags */
+    hwctx->tiling = hwctx->tiling ? hwctx->tiling :
+                    has_modifiers ? VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT :
+                    p->use_linear_images ? VK_IMAGE_TILING_LINEAR :
+                    VK_IMAGE_TILING_OPTIMAL;
 
     err = create_exec_ctx(hwfc, &fp->conv_ctx,
                           dev_hwctx->queue_family_comp_index,
@@ -2452,9 +2480,11 @@ static void vulkan_unmap_frame(AVHWFramesContext *hwfc, HWMapDescriptor *hwmap)
 {
     VulkanMapping *map = hwmap->priv;
     AVVulkanDeviceContext *hwctx = hwfc->device_ctx->hwctx;
+    AVVulkanFramesContext *hwfctx = hwfc->hwctx;
     const int planes = av_pix_fmt_count_planes(hwfc->sw_format);
     VulkanDevicePriv *p = hwfc->device_ctx->internal->priv;
     FFVulkanFunctions *vk = &p->vkfn;
+    int mem_planes = 0;
 
     /* Check if buffer needs flushing */
     if ((map->flags & AV_HWFRAME_MAP_WRITE) &&
@@ -2476,7 +2506,8 @@ static void vulkan_unmap_frame(AVHWFramesContext *hwfc, HWMapDescriptor *hwmap)
         }
     }
 
-    for (int i = 0; i < planes; i++)
+    mem_planes = hwfctx->flags & AV_VK_FRAME_FLAG_CONTIGUOUS_MEMORY ? 1 : planes;
+    for (int i = 0; i < mem_planes; i++)
         vk->UnmapMemory(hwctx->act_dev, map->frame->mem[i]);
 
     av_free(map);
@@ -2625,6 +2656,10 @@ static const struct {
     { DRM_FORMAT_XRGB8888, VK_FORMAT_B8G8R8A8_UNORM },
     { DRM_FORMAT_ABGR8888, VK_FORMAT_R8G8B8A8_UNORM },
     { DRM_FORMAT_XBGR8888, VK_FORMAT_R8G8B8A8_UNORM },
+    { DRM_FORMAT_ARGB2101010, VK_FORMAT_A2R10G10B10_UNORM_PACK32 },
+    { DRM_FORMAT_XRGB2101010, VK_FORMAT_A2R10G10B10_UNORM_PACK32 },
+    { DRM_FORMAT_ABGR2101010, VK_FORMAT_A2B10G10R10_UNORM_PACK32 },
+    { DRM_FORMAT_XBGR2101010, VK_FORMAT_A2B10G10R10_UNORM_PACK32 },
 
     // All these DRM_FORMATs were added in the same libdrm commit.
 #ifdef DRM_FORMAT_XYUV8888
@@ -2659,6 +2694,7 @@ static int vulkan_map_from_drm_frame_desc(AVHWFramesContext *hwfc, AVVkFrame **f
     const AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)src->data[0];
     VkBindImageMemoryInfo bind_info[AV_DRM_MAX_PLANES];
     VkBindImagePlaneMemoryInfo plane_info[AV_DRM_MAX_PLANES];
+    const int has_modifiers = !!(p->extensions & FF_VK_EXT_DRM_MODIFIER_FLAGS);
 
     for (int i = 0; i < desc->nb_layers; i++) {
         if (drm_to_vulkan_fmt(desc->layers[i].format) == VK_FORMAT_UNDEFINED) {
@@ -2668,13 +2704,22 @@ static int vulkan_map_from_drm_frame_desc(AVHWFramesContext *hwfc, AVVkFrame **f
         }
     }
 
+    if (!has_modifiers &&
+        desc->objects[0].format_modifier != DRM_FORMAT_MOD_INVALID &&
+        desc->objects[0].format_modifier != DRM_FORMAT_MOD_LINEAR) {
+        av_log(ctx, AV_LOG_ERROR, "The driver can only import DRM frame with invalid/linear modifier!\n");
+        err = AVERROR_EXTERNAL;
+        goto fail;
+    }
+
     if (!(f = av_vk_frame_alloc())) {
         av_log(ctx, AV_LOG_ERROR, "Unable to allocate memory for AVVkFrame!\n");
         err = AVERROR(ENOMEM);
         goto fail;
     }
 
-    f->tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+    f->tiling = has_modifiers ? VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT :
+                VK_IMAGE_TILING_LINEAR;
 
     for (int i = 0; i < desc->nb_layers; i++) {
         const int planes = desc->layers[i].nb_planes;
@@ -2745,7 +2790,7 @@ static int vulkan_map_from_drm_frame_desc(AVHWFramesContext *hwfc, AVVkFrame **f
         };
         VkPhysicalDeviceImageFormatInfo2 fmt_props = {
             .sType  = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
-            .pNext  = &props_ext,
+            .pNext  = has_modifiers ? &props_ext : NULL,
             .format = create_info.format,
             .type   = create_info.imageType,
             .tiling = create_info.tiling,
@@ -2762,6 +2807,10 @@ static int vulkan_map_from_drm_frame_desc(AVHWFramesContext *hwfc, AVVkFrame **f
             err = AVERROR_EXTERNAL;
             goto fail;
         }
+
+        /* Skip checking if the driver has no support for the DRM modifier extension */
+        if (!has_modifiers && !fmt_props.pNext)
+            fmt_props.pNext = &props_ext;
 
         /* Set the image width/height */
         get_plane_wh(&create_info.extent.width, &create_info.extent.height,
@@ -3315,6 +3364,7 @@ static int vulkan_map_to_drm(AVHWFramesContext *hwfc, AVFrame *dst,
     AVVulkanDeviceContext *hwctx = hwfc->device_ctx->hwctx;
     AVVulkanFramesContext *hwfctx = hwfc->hwctx;
     const int planes = av_pix_fmt_count_planes(hwfc->sw_format);
+    const int has_modifiers = !!(p->extensions & FF_VK_EXT_DRM_MODIFIER_FLAGS);
     VkImageDrmFormatModifierPropertiesEXT drm_mod = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT,
     };
@@ -3342,10 +3392,16 @@ static int vulkan_map_to_drm(AVHWFramesContext *hwfc, AVFrame *dst,
     if (err < 0)
         goto end;
 
-    ret = vk->GetImageDrmFormatModifierPropertiesEXT(hwctx->act_dev, f->img[0],
+    if (has_modifiers) {
+        ret = vk->GetImageDrmFormatModifierPropertiesEXT(hwctx->act_dev, f->img[0],
                                                      &drm_mod);
-    if (ret != VK_SUCCESS) {
-        av_log(hwfc, AV_LOG_ERROR, "Failed to retrieve DRM format modifier!\n");
+        if (ret != VK_SUCCESS) {
+            av_log(hwfc, AV_LOG_ERROR, "Failed to retrieve DRM format modifier!\n");
+            err = AVERROR_EXTERNAL;
+            goto end;
+        }
+    } else if (f->tiling != VK_IMAGE_TILING_LINEAR) {
+        av_log(hwfc, AV_LOG_ERROR, "The driver can only export linear images to DRM frame!\n");
         err = AVERROR_EXTERNAL;
         goto end;
     }
@@ -3367,7 +3423,7 @@ static int vulkan_map_to_drm(AVHWFramesContext *hwfc, AVFrame *dst,
 
         drm_desc->nb_objects++;
         drm_desc->objects[i].size = f->size[i];
-        drm_desc->objects[i].format_modifier = drm_mod.drmFormatModifier;
+        drm_desc->objects[i].format_modifier = has_modifiers ? drm_mod.drmFormatModifier : 0x0;
     }
 
     drm_desc->nb_layers = planes;
