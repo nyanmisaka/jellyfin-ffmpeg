@@ -21,8 +21,27 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <libdrm/drm_fourcc.h>
 
 #include "hwcontext_drm.h"
+
+#ifndef DRM_FORMAT_NV15
+#define DRM_FORMAT_NV15 fourcc_code('N', 'A', '1', '2')
+#endif
+#ifndef DRM_FORMAT_NV20
+#define DRM_FORMAT_NV20 fourcc_code('N', 'V', '2', '0')
+#endif
+
+#ifndef DRM_FORMAT_MOD_VENDOR_ARM
+#define DRM_FORMAT_MOD_VENDOR_ARM 0x08
+#endif
+#ifndef DRM_FORMAT_MOD_ARM_TYPE_AFBC
+#define DRM_FORMAT_MOD_ARM_TYPE_AFBC 0x00
+#endif
+
+#define drm_is_afbc(mod) \
+        ((mod >> 52) == (DRM_FORMAT_MOD_ARM_TYPE_AFBC | \
+                (DRM_FORMAT_MOD_VENDOR_ARM << 4)))
 
 /**
  * @file

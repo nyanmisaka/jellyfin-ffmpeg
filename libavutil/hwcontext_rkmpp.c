@@ -40,14 +40,12 @@
 #include "hwcontext_internal.h"
 #include "imgutils.h"
 
-#ifndef DRM_FORMAT_NV15
-#define DRM_FORMAT_NV15 fourcc_code('N', 'A', '1', '2')
-#endif
-
 static const struct {
     enum AVPixelFormat pixfmt;
     uint32_t drm_format;
 } supported_formats[] = {
+    /* grayscale */
+    { AV_PIX_FMT_GRAY8,    DRM_FORMAT_R8        },
     /* planar YUV */
     { AV_PIX_FMT_YUV420P,  DRM_FORMAT_YUV420,   },
     { AV_PIX_FMT_YUV422P,  DRM_FORMAT_YUV422,   },
@@ -61,11 +59,14 @@ static const struct {
     /* semi-planar YUV 10-bit */
     { AV_PIX_FMT_P010,     DRM_FORMAT_P010,     },
     { AV_PIX_FMT_NV15,     DRM_FORMAT_NV15,     },
+    { AV_PIX_FMT_NV20,     DRM_FORMAT_NV20,     },
     /* packed YUV */
     { AV_PIX_FMT_YUYV422,  DRM_FORMAT_YUYV,     },
     { AV_PIX_FMT_YVYU422,  DRM_FORMAT_YVYU,     },
     { AV_PIX_FMT_UYVY422,  DRM_FORMAT_UYVY,     },
     /* packed RGB */
+    { AV_PIX_FMT_RGB555LE, DRM_FORMAT_XRGB1555, },
+    { AV_PIX_FMT_BGR555LE, DRM_FORMAT_XBGR1555, },
     { AV_PIX_FMT_RGB565LE, DRM_FORMAT_RGB565,   },
     { AV_PIX_FMT_BGR565LE, DRM_FORMAT_BGR565,   },
     { AV_PIX_FMT_RGB24,    DRM_FORMAT_RGB888,   },
@@ -258,7 +259,8 @@ static int rkmpp_get_aligned_linesize(enum AVPixelFormat pix_fmt, int width, int
     const int is_packed_fmt = is_rgb || (!is_rgb && !is_planar);
     int linesize;
 
-    if (pix_fmt == AV_PIX_FMT_NV15) {
+    if (pix_fmt == AV_PIX_FMT_NV15 ||
+        pix_fmt == AV_PIX_FMT_NV20) {
         const int log2_chroma_w = plane == 1 ? 1 : 0;
         const int width_align_256_odds = FFALIGN(width << log2_chroma_w, 256) | 256;
         return FFALIGN(width_align_256_odds * 10 / 8, 64);
@@ -294,6 +296,7 @@ static AVBufferRef *rkmpp_drm_pool_alloc(void *opaque, size_t size)
     AVBufferRef *ref;
 
     int i;
+    int dmcb_w, dmcb_h;
     const AVPixFmtDescriptor *pixdesc = av_pix_fmt_desc_get(hwfc->sw_format);
     struct drm_mode_create_dumb dmcb;
     struct drm_mode_map_dumb dmmd;
@@ -306,10 +309,17 @@ static AVBufferRef *rkmpp_drm_pool_alloc(void *opaque, size_t size)
     if (!desc)
         return NULL;
 
+    dmcb_w = hwfc->width;
+    dmcb_h = hwfc->height;
+    if (pixdesc->flags & AV_PIX_FMT_FLAG_PLANAR) {
+        dmcb_w = dmcb_w * 6 / 5;
+        dmcb_h = dmcb_h * 6 / 5;
+    }
+
     memset(&dmcb, 0, sizeof(struct drm_mode_create_dumb));
     dmcb.bpp    = rkmpp_get_padded_bits_per_pixel(hwfc->sw_format);
-    dmcb.width  = FFALIGN(hwfc->width * 6 / 5,  64);
-    dmcb.height = FFALIGN(hwfc->height * 6 / 5, 64);
+    dmcb.width  = FFALIGN(dmcb_w, 64);
+    dmcb.height = FFALIGN(dmcb_h, 64);
     dmcb.flags  = hwctx->flags;
     ret = drmIoctl(hwctx->fd, DRM_IOCTL_MODE_CREATE_DUMB, &dmcb);
     if (ret < 0) {

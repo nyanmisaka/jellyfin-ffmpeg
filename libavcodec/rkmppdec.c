@@ -29,22 +29,15 @@
 
 #include <drm_fourcc.h>
 #include <rockchip/rk_mpi.h>
-#include <unistd.h>
-#include <stdint.h>
 
-#include "internal.h"
 #include "codec_internal.h"
-#include "avcodec.h"
-#include "hwconfig.h"
 #include "decode.h"
+#include "hwconfig.h"
+#include "internal.h"
 
-#include "libavutil/macros.h"
-#include "libavutil/log.h"
-#include "libavutil/opt.h"
-#include "libavutil/buffer.h"
-#include "libavutil/pixfmt.h"
-#include "libavutil/pixdesc.h"
 #include "libavutil/hwcontext_rkmpp.h"
+#include "libavutil/opt.h"
+#include "libavutil/pixdesc.h"
 
 typedef struct RKMPPDecodeContext {
     AVClass       *class;
@@ -62,6 +55,7 @@ typedef struct RKMPPDecodeContext {
     AVFrame        last_frame;
 
     int            fast_mode;
+    int            afbc_mode;
 } RKMPPDecodeContext;
 
 static MppCodingType rkmpp_get_coding_type(AVCodecContext *avctx)
@@ -86,6 +80,18 @@ static uint32_t rkmpp_get_drm_format(MppFrameFormat mpp_format)
     case MPP_FMT_YUV420SP:          return DRM_FORMAT_NV12;
     case MPP_FMT_YUV420SP_10BIT:    return DRM_FORMAT_NV15;
     case MPP_FMT_YUV422SP:          return DRM_FORMAT_NV16;
+    case MPP_FMT_YUV422SP_10BIT:    return DRM_FORMAT_NV20;
+    default:                        return DRM_FORMAT_INVALID;
+    }
+}
+
+static uint32_t rkmpp_get_drm_afbc_format(MppFrameFormat mpp_format)
+{
+    switch (mpp_format & MPP_FRAME_FMT_MASK) {
+    case MPP_FMT_YUV420SP:          return DRM_FORMAT_YUV420_8BIT;
+    case MPP_FMT_YUV420SP_10BIT:    return DRM_FORMAT_YUV420_10BIT;
+    case MPP_FMT_YUV422SP:          return DRM_FORMAT_YUYV;
+    case MPP_FMT_YUV422SP_10BIT:    return DRM_FORMAT_Y210;
     default:                        return DRM_FORMAT_INVALID;
     }
 }
@@ -96,6 +102,7 @@ static uint32_t rkmpp_get_av_format(MppFrameFormat mpp_format)
     case MPP_FMT_YUV420SP:          return AV_PIX_FMT_NV12;
     case MPP_FMT_YUV420SP_10BIT:    return AV_PIX_FMT_NV15;
     case MPP_FMT_YUV422SP:          return AV_PIX_FMT_NV16;
+    case MPP_FMT_YUV422SP_10BIT:    return AV_PIX_FMT_NV20;
     default:                        return AV_PIX_FMT_NONE;
     }
 }
@@ -160,18 +167,27 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
         goto fail;
     }
 
+    if (r->afbc_mode) {
+        MppFrameFormat afbc_fmt = MPP_FRAME_FBC_AFBC_V2;
+        if ((ret = r->mapi->control(r->mctx, MPP_DEC_SET_OUTPUT_FORMAT, &afbc_fmt)) != MPP_OK) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to set AFBC mode: %d\n", ret);
+            ret = AVERROR_EXTERNAL;
+            goto fail;
+        }
+    }
+
     if ((ret = r->mapi->control(r->mctx, MPP_DEC_SET_PARSER_FAST_MODE, &r->fast_mode)) != MPP_OK) {
         av_log(avctx, AV_LOG_ERROR, "Failed to set parser fast mode: %d\n", ret);
         ret = AVERROR_EXTERNAL;
         goto fail;
     }
-
+#if 0
     if ((ret = r->mapi->control(r->mctx, MPP_DEC_SET_DISABLE_ERROR, NULL)) != MPP_OK) {
         av_log(avctx, AV_LOG_ERROR, "Failed to set disable error: %d\n", ret);
         ret = AVERROR_EXTERNAL;
         goto fail;
     }
-
+#endif
     if (avctx->hw_device_ctx) {
         r->hwdevice = av_buffer_ref(avctx->hw_device_ctx);
         if (!r->hwdevice) {
@@ -220,12 +236,15 @@ static int rkmpp_set_buffer_group(AVCodecContext *avctx,
     switch (avctx->codec_id) {
     case AV_CODEC_ID_H264:
     case AV_CODEC_ID_HEVC:
-        hwfc->initial_pool_size = 20 + 2;
+        hwfc->initial_pool_size = 20 + 3;
         break;
     default:
-        hwfc->initial_pool_size = 10 + 2;
+        hwfc->initial_pool_size = 10 + 3;
         break;
     }
+
+    if (avctx->extra_hw_frames > 0)
+        hwfc->initial_pool_size += avctx->extra_hw_frames;
 
     if ((ret = av_hwframe_ctx_init(r->hwframe)) < 0) {
         av_log(avctx, AV_LOG_ERROR, "Failed to init RKMPP frame pool\n");
@@ -327,14 +346,21 @@ static int rkmpp_export_frame(AVCodecContext *avctx, AVFrame *frame, MppFrame mp
     desc->objects[0].ptr  = mpp_buffer_get_ptr(mpp_buf);
     desc->objects[0].size = mpp_buffer_get_size(mpp_buf);
 
+    if (r->afbc_mode)
+        desc->objects[0].format_modifier =
+            DRM_FORMAT_MOD_ARM_AFBC(AFBC_FORMAT_MOD_SPARSE | AFBC_FORMAT_MOD_BLOCK_SIZE_16x16);
+
     desc->nb_layers = 1;
     layer = &desc->layers[0];
-    layer->format = rkmpp_get_drm_format(mpp_frame_get_fmt(mpp_frame));
+    layer->format = r->afbc_mode ? rkmpp_get_drm_afbc_format(mpp_frame_get_fmt(mpp_frame))
+                                 : rkmpp_get_drm_format(mpp_frame_get_fmt(mpp_frame));
 
-    layer->nb_planes = 2;
+    layer->nb_planes = r->afbc_mode ? 1 : 2;
     layer->planes[0].object_index = 0;
-    layer->planes[0].offset = 0;
+    layer->planes[0].offset =
+        r->afbc_mode ? mpp_frame_get_offset_y(mpp_frame) * mpp_frame_get_hor_stride(mpp_frame) : 0;
     layer->planes[0].pitch = mpp_frame_get_hor_stride(mpp_frame);
+
     layer->planes[1].object_index = 0;
     layer->planes[1].offset = layer->planes[0].pitch * mpp_frame_get_ver_stride(mpp_frame);
     layer->planes[1].pitch = layer->planes[0].pitch;
@@ -427,8 +453,8 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
         goto exit;
     }
     if (mpp_frame_get_errinfo(mpp_frame)) {
-        av_log(avctx, AV_LOG_ERROR, "Received a 'errinfo' frame\n");
-        ret = AVERROR_EXTERNAL;
+        av_log(avctx, AV_LOG_DEBUG, "Received a 'errinfo' frame\n");
+        ret = AVERROR(EAGAIN);
         goto exit;
     }
 
@@ -479,6 +505,7 @@ static int rkmpp_get_frame(AVCodecContext *avctx, AVFrame *frame, int timeout)
         case AV_PIX_FMT_NV12:
         case AV_PIX_FMT_NV16:
         case AV_PIX_FMT_NV15:
+        case AV_PIX_FMT_NV20:
             {
                 AVFrame *tmp_frame = av_frame_alloc();
                 if (!tmp_frame) {
@@ -548,7 +575,7 @@ static int rkmpp_send_packet(AVCodecContext *avctx, AVPacket *pkt)
     MppPacket mpkt;
     int64_t pts = pkt->pts;
     int ret;
-
+#if 0
     /* generate alternative pts */
     if (pts == AV_NOPTS_VALUE || pts < 0) {
         if (!r->pts_step && avctx->framerate.den && avctx->framerate.num) {
@@ -564,7 +591,7 @@ static int rkmpp_send_packet(AVCodecContext *avctx, AVPacket *pkt)
             pts = pkt->dts;
         }
     }
-
+#endif
     if ((ret = mpp_packet_init(&mpkt, pkt->data, pkt->size)) != MPP_OK) {
         av_log(avctx, AV_LOG_ERROR, "Failed to init packet: %d\n", ret);
         return AVERROR_EXTERNAL;
@@ -615,7 +642,7 @@ send_pkt:
     }
 
     /* were here only when draining and buffer is full */
-    ret_get = rkmpp_get_frame(avctx, frame, MPP_TIMEOUT_BLOCK);
+    ret_get = rkmpp_get_frame(avctx, frame, 100);
     if (ret_get == AVERROR_EOF)
         av_log(avctx, AV_LOG_DEBUG, "Decoder is at EOF\n");
     /* this is not likely but lets handle it in case synchronization issues of MPP */
@@ -657,6 +684,7 @@ static const AVCodecHWConfigInternal *const rkmpp_decoder_hw_configs[] = {
 
 static const AVOption options[] = {
     { "fast_mode", "Enable fast parsing to improve decoding parallelism", OFFSET(fast_mode), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, VD },
+    { "afbc_mode", "Enable AFBC (Arm Frame Buffer Compression) to save bandwidth", OFFSET(afbc_mode), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VD },
     { NULL }
 };
 
@@ -686,6 +714,7 @@ const FFCodec ff_##x##_rkmpp_decoder = { \
                                                     AV_PIX_FMT_NV12, \
                                                     AV_PIX_FMT_NV16, \
                                                     AV_PIX_FMT_NV15, \
+                                                    AV_PIX_FMT_NV20, \
                                                     AV_PIX_FMT_NONE }, \
     .hw_configs     = rkmpp_decoder_hw_configs, \
     .p.wrapper_name = "rkmpp", \

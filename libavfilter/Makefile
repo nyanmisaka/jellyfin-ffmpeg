@@ -29,6 +29,7 @@ OBJS-$(HAVE_THREADS)                         += pthread.o
 
 # subsystems
 OBJS-$(CONFIG_QSVVPP)                        += qsvvpp.o
+OBJS-$(CONFIG_RKRGA)                         += rkrga_common.o
 OBJS-$(CONFIG_SCENE_SAD)                     += scene_sad.o
 OBJS-$(CONFIG_DNN)                           += dnn_filter_common.o
 include $(SRC_PATH)/libavfilter/dnn/Makefile
@@ -452,7 +453,7 @@ OBJS-$(CONFIG_SCALE_OPENCL_FILTER)           += vf_scale_opencl.o opencl.o openc
 OBJS-$(CONFIG_SCALE_QSV_FILTER)              += vf_vpp_qsv.o
 OBJS-$(CONFIG_SCALE_VAAPI_FILTER)            += vf_scale_vaapi.o scale_eval.o vaapi_vpp.o
 OBJS-$(CONFIG_SCALE_VULKAN_FILTER)           += vf_scale_vulkan.o vulkan.o vulkan_filter.o
-OBJS-$(CONFIG_SCALE_RKRGA_FILTER)            += vf_scale_rkrga.o scale_eval.o
+OBJS-$(CONFIG_SCALE_RKRGA_FILTER)            += vf_scale_rkrga.o scale_eval.o rkrga_common.o
 OBJS-$(CONFIG_SCALE2REF_FILTER)              += vf_scale.o scale_eval.o
 OBJS-$(CONFIG_SCALE2REF_NPP_FILTER)          += vf_scale_npp.o scale_eval.o
 OBJS-$(CONFIG_SCDET_FILTER)                  += vf_scdet.o
@@ -635,6 +636,7 @@ SKIPHEADERS-$(CONFIG_LCMS2)                  += fflcms2.h
 SKIPHEADERS-$(CONFIG_LIBVIDSTAB)             += vidstabutils.h
 
 SKIPHEADERS-$(CONFIG_QSVVPP)                 += qsvvpp.h
+SKIPHEADERS-$(CONFIG_RKRGA)                  += rkrga_common.h
 SKIPHEADERS-$(CONFIG_OPENCL)                 += opencl.h
 SKIPHEADERS-$(CONFIG_VAAPI)                  += vaapi_vpp.h
 SKIPHEADERS-$(CONFIG_VULKAN)                 += vulkan.h vulkan_filter.h
