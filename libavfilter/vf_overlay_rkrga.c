@@ -208,6 +208,7 @@ static int rgaoverlay_activate(AVFilterContext *ctx)
     }
 
     if (!r->rga.got_frame) {
+        FF_FILTER_FORWARD_WANTED(outlink, inlink_overlay);
         FF_FILTER_FORWARD_WANTED(outlink, inlink_main);
         return FFERROR_NOT_READY;
     } else
