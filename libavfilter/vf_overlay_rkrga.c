@@ -182,19 +182,21 @@ static int rgaoverlay_activate(AVFilterContext *ctx)
     AVFilterLink *inlink_main    = ctx->inputs[0];
     AVFilterLink *inlink_overlay = ctx->inputs[1];
     AVFilterLink *outlink        = ctx->outputs[0];
-    int ret;
-
+    int i, ret;
     int status = 0;
     int64_t pts = AV_NOPTS_VALUE;
 
-    FF_FILTER_FORWARD_STATUS_BACK(outlink, inlink_main);
+    FF_FILTER_FORWARD_STATUS_BACK_ALL(outlink, ctx);
 
     if (r->rga.eof)
         goto eof;
-    else if (ff_inlink_acknowledge_status(inlink_main, &status, &pts)) {
-        if (status == AVERROR_EOF) {
-            r->rga.eof = 1;
-            goto eof;
+
+    for (i = 0; i < ctx->nb_inputs; i++) {
+        if (ff_inlink_acknowledge_status(ctx->inputs[i], &status, &pts)) {
+            if (status == AVERROR_EOF) {
+                r->rga.eof = 1;
+                goto eof;
+            }
         }
     }
 
@@ -208,8 +210,11 @@ static int rgaoverlay_activate(AVFilterContext *ctx)
     }
 
     if (!r->rga.got_frame) {
-        FF_FILTER_FORWARD_WANTED(outlink, inlink_overlay);
-        FF_FILTER_FORWARD_WANTED(outlink, inlink_main);
+        for (i = 0; i < ctx->nb_inputs; i++) {
+            if (!ff_inlink_check_available_frame(ctx->inputs[i])) {
+                FF_FILTER_FORWARD_WANTED(outlink, ctx->inputs[i]);
+            }
+        }
         return FFERROR_NOT_READY;
     } else
         r->rga.got_frame = 0;
