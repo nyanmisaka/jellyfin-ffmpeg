@@ -35,7 +35,8 @@
 #include "libavutil/hwcontext_rkmpp.h"
 
 #define ALIGN_DOWN(a, b) ((a) & ~((b)-1))
-#define RK_RGA_YUV_ALIGN 2
+#define RK_RGA_YUV_ALIGN         2
+#define RK_RGA_AFBC_STRIDE_ALIGN 16
 
 #define FF_INLINK_IDX(link)  ((int)((link)->dstpad - (link)->dst->input_pads))
 #define FF_OUTLINK_IDX(link) ((int)((link)->srcpad - (link)->src->output_pads))
