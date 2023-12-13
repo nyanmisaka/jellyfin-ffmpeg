@@ -83,6 +83,16 @@ typedef CL_API_ENTRY cl_mem(CL_API_CALL *clConvertImageAMD_fn)(
 #include <CL/cl_ext.h>
 #include <drm_fourcc.h>
 #include "hwcontext_drm.h"
+
+typedef intptr_t cl_import_properties_arm;
+typedef CL_API_ENTRY cl_mem(CL_API_CALL *clImportMemoryARM_fn)(
+    cl_context context,
+    cl_mem_flags flags,
+    const cl_import_properties_arm *properties,
+    void *memory,
+    size_t size,
+    cl_int *errcode_ret);
+
 #endif
 
 #if HAVE_OPENCL_VAAPI_INTEL_MEDIA && CONFIG_LIBMFX
@@ -150,6 +160,9 @@ typedef struct OpenCLDeviceContext {
 
 #if HAVE_OPENCL_DRM_ARM
     int drm_arm_mapping_usable;
+
+    clImportMemoryARM_fn
+        clImportMemoryARM;
 #endif
 } OpenCLDeviceContext;
 
@@ -927,7 +940,8 @@ static int opencl_device_init(AVHWDeviceContext *hwdev)
             fail = 1;
         }
 
-        // clImportMemoryARM() is linked statically.
+        CL_FUNC(clImportMemoryARM,
+                "DRM to OpenCL mapping on ARM");
 
         if (fail) {
             av_log(hwdev, AV_LOG_WARNING, "DRM to OpenCL mapping on ARM "
@@ -1404,6 +1418,7 @@ static int opencl_device_derive(AVHWDeviceContext *hwdev,
 
 #if HAVE_OPENCL_DRM_ARM
     case AV_HWDEVICE_TYPE_DRM:
+    case AV_HWDEVICE_TYPE_RKMPP:
         {
             OpenCLDeviceSelector selector = {
                 .platform_index      = -1,
@@ -3193,6 +3208,7 @@ static int opencl_map_from_drm_arm(AVHWFramesContext *dst_fc, AVFrame *dst,
     AVHWFramesContext *src_fc =
         (AVHWFramesContext*)src->hw_frames_ctx->data;
     AVOpenCLDeviceContext *dst_dev = dst_fc->device_ctx->hwctx;
+    OpenCLDeviceContext *device_priv = dst_fc->device_ctx->internal->priv;
     const AVDRMFrameDescriptor *desc;
     DRMARMtoOpenCLMapping *mapping = NULL;
     cl_mem_flags cl_flags;
@@ -3226,8 +3242,8 @@ static int opencl_map_from_drm_arm(AVHWFramesContext *dst_fc, AVFrame *dst,
         }
 
         mapping->object_buffers[i] =
-            clImportMemoryARM(dst_dev->context, cl_flags, props,
-                              &fd, desc->objects[i].size, &cle);
+            device_priv->clImportMemoryARM(dst_dev->context, cl_flags, props,
+                                           &fd, desc->objects[i].size, &cle);
         if (!mapping->object_buffers[i]) {
             av_log(dst_fc, AV_LOG_ERROR, "Failed to create CL buffer "
                    "from object %d (fd %d, size %"SIZE_SPECIFIER") of DRM frame: %d.\n",
@@ -3257,6 +3273,8 @@ static int opencl_map_from_drm_arm(AVHWFramesContext *dst_fc, AVFrame *dst,
                        "layer %d plane %d): %d.\n", p, i, j, err);
                 goto fail;
             }
+
+            image_desc.image_row_pitch = plane->pitch;
 
             region.origin = plane->offset;
             region.size   = image_desc.image_row_pitch *
