@@ -456,7 +456,7 @@ popd
 popd
 
 # SVT-AV1
-git clone -b v1.7.0 --depth=1 https://gitlab.com/AOMediaCodec/SVT-AV1.git
+git clone -b v1.8.0 --depth=1 https://gitlab.com/AOMediaCodec/SVT-AV1.git
 pushd SVT-AV1
 mkdir build
 pushd build
@@ -557,7 +557,7 @@ mv * ${FF_DEPS_PREFIX}/include/AMF
 popd
 
 # VPL
-git clone -b v2023.3.1 --depth=1 https://github.com/oneapi-src/oneVPL.git
+git clone -b v2023.4.0 --depth=1 https://github.com/oneapi-src/oneVPL.git
 pushd oneVPL
 mkdir build && pushd build
 cmake \
