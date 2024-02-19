@@ -74,3 +74,31 @@ CVMetalTextureRef ff_metal_texture_from_pixbuf(void *ctx,
 
     return tex;
 }
+
+CVMetalTextureRef ff_metal_texture_from_non_planer_pixbuf(void *ctx,
+                                               CVMetalTextureCacheRef textureCache,
+                                               CVPixelBufferRef pixbuf,
+                                               int plane,
+                                               MTLPixelFormat format)
+{
+    CVMetalTextureRef tex = NULL;
+    CVReturn ret;
+
+    ret = CVMetalTextureCacheCreateTextureFromImage(
+        NULL,
+        textureCache,
+        pixbuf,
+        NULL,
+        format,
+        CVPixelBufferGetWidth(pixbuf),
+        CVPixelBufferGetHeight(pixbuf),
+        plane,
+        &tex
+    );
+    if (ret != kCVReturnSuccess) {
+        av_log(ctx, AV_LOG_ERROR, "ff_metal_texture_from_non_planer_pixbuf Failed to create CVMetalTexture from image: %d\n", ret);
+        return NULL;
+    }
+
+    return tex;
+}
