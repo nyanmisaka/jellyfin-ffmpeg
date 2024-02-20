@@ -429,6 +429,8 @@ static int do_config_output(AVFilterLink *link) API_AVAILABLE(macos(10.11), ios(
     int ret = 0;
 
     link->hw_frames_ctx = av_hwframe_ctx_alloc(ctx->device_ref);
+    link->time_base = avctx->inputs[0]->time_base;
+    ctx->fs.time_base = link->time_base;
     if (!link->hw_frames_ctx) {
         av_log(avctx, AV_LOG_ERROR, "Failed to create HW frame context "
                "for output.\n");
