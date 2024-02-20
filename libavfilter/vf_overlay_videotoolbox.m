@@ -126,8 +126,13 @@ static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(9.0
     in_main_desc = av_pix_fmt_desc_get(frames_ctx->sw_format);
     in_overlay_desc = av_pix_fmt_desc_get(frames_ctx_overlay->sw_format);
     if (in_main_desc->comp[0].depth >= 10) {
-        mtl_format = MTLPixelFormatRGBA16Unorm;
-        cv_format = kCVPixelFormatType_64RGBALE;
+        if (@available(macOS 11.3, iOS 14.2, *)) {
+            mtl_format = MTLPixelFormatRGBA16Unorm;
+            cv_format = kCVPixelFormatType_64RGBALE;
+        } else {
+            mtl_format = MTLPixelFormatRGBA16Float;
+            cv_format = kCVPixelFormatType_64RGBAHalf;
+        }
     }
     // read main and overlay frames from inputs
     ret = ff_framesync_get_frame(fs, 0, &input_main, 0);
