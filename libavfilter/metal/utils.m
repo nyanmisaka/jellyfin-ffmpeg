@@ -55,6 +55,9 @@ CVMetalTextureRef ff_metal_texture_from_pixbuf(void *ctx,
 {
     CVMetalTextureRef tex = NULL;
     CVReturn ret;
+    bool is_planer = CVPixelBufferIsPlanar(pixbuf);
+    size_t width = is_planer ? CVPixelBufferGetWidthOfPlane(pixbuf, plane) : CVPixelBufferGetWidth(pixbuf);
+    size_t height = is_planer ? CVPixelBufferGetHeightOfPlane(pixbuf, plane) : CVPixelBufferGetHeight(pixbuf);
 
     ret = CVMetalTextureCacheCreateTextureFromImage(
         NULL,
@@ -62,41 +65,13 @@ CVMetalTextureRef ff_metal_texture_from_pixbuf(void *ctx,
         pixbuf,
         NULL,
         format,
-        CVPixelBufferGetWidthOfPlane(pixbuf, plane),
-        CVPixelBufferGetHeightOfPlane(pixbuf, plane),
+        width,
+        height,
         plane,
         &tex
     );
     if (ret != kCVReturnSuccess) {
         av_log(ctx, AV_LOG_ERROR, "Failed to create CVMetalTexture from image: %d\n", ret);
-        return NULL;
-    }
-
-    return tex;
-}
-
-CVMetalTextureRef ff_metal_texture_from_non_planer_pixbuf(void *ctx,
-                                               CVMetalTextureCacheRef textureCache,
-                                               CVPixelBufferRef pixbuf,
-                                               int plane,
-                                               MTLPixelFormat format)
-{
-    CVMetalTextureRef tex = NULL;
-    CVReturn ret;
-
-    ret = CVMetalTextureCacheCreateTextureFromImage(
-        NULL,
-        textureCache,
-        pixbuf,
-        NULL,
-        format,
-        CVPixelBufferGetWidth(pixbuf),
-        CVPixelBufferGetHeight(pixbuf),
-        plane,
-        &tex
-    );
-    if (ret != kCVReturnSuccess) {
-        av_log(ctx, AV_LOG_ERROR, "ff_metal_texture_from_non_planer_pixbuf Failed to create CVMetalTexture from image: %d\n", ret);
         return NULL;
     }
 

@@ -34,7 +34,9 @@
 extern char ff_vf_overlay_videotoolbox_metallib_data[];
 extern unsigned int ff_vf_overlay_videotoolbox_metallib_len;
 
-typedef struct API_AVAILABLE(macos(10.11), ios(8.0)) OverlayVideoToolboxContext {
+// Although iOS 8.0 introduced basic Metal support, its feature set is not complete and does not have CoreImage compatability.
+// We have to set the minimum iOS version to 9.0.
+typedef struct API_AVAILABLE(macos(10.11), ios(9.0)) OverlayVideoToolboxContext {
     AVBufferRef *device_ref;
     FFFrameSync fs;
     CVMetalTextureCacheRef textureCache;
@@ -51,11 +53,12 @@ typedef struct API_AVAILABLE(macos(10.11), ios(8.0)) OverlayVideoToolboxContext 
     id<MTLFunction> mtlFunction;
     id<MTLBuffer> mtlParamsBuffer;
 
-    int              output_configured;
-    uint              x_position;
-    uint              y_position;
+    int output_configured;
+    uint x_position;
+    uint y_position;
     enum AVPixelFormat output_format;
-} OverlayVideoToolboxContext API_AVAILABLE(macos(10.11), ios(8.0));
+
+} OverlayVideoToolboxContext API_AVAILABLE(macos(10.11), ios(9.0));
 
 struct mtlBlendParams {
     uint x_position;
@@ -72,28 +75,32 @@ static void call_kernel(AVFilterContext *avctx,
                         id<MTLTexture> main,
                         id<MTLTexture> overlay,
                         uint x_position,
-                        uint y_position) API_AVAILABLE(macos(10.11), ios(8.0))
+                        uint y_position) API_AVAILABLE(macos(10.11), ios(9.0))
 {
     OverlayVideoToolboxContext *ctx = avctx->priv;
-    id<MTLCommandBuffer> buffer = ctx->mtlQueue.commandBuffer;
-    id<MTLComputeCommandEncoder> encoder = buffer.computeCommandEncoder;
+    // Both the command buffer and encoder are auto-released by objc on default.
+    // Use CFBridgingRetain to get a more C-like behavior.
+    id<MTLCommandBuffer> buffer = CFBridgingRetain(ctx->mtlQueue.commandBuffer);
+    id<MTLComputeCommandEncoder> encoder = CFBridgingRetain((__bridge id<MTLCommandBuffer>)buffer.computeCommandEncoder);
 
     struct mtlBlendParams *params = (struct mtlBlendParams *)ctx->mtlParamsBuffer.contents;
     *params = (struct mtlBlendParams){
         .x_position = x_position,
         .y_position = y_position,
     };
-    [encoder setTexture:main atIndex:0];
-    [encoder setTexture:overlay atIndex:1];
-    [encoder setTexture:dst atIndex:2];
-    [encoder setBuffer:ctx->mtlParamsBuffer offset:0 atIndex:3];
-    ff_metal_compute_encoder_dispatch(ctx->mtlDevice, ctx->mtlPipeline, encoder, dst.width, dst.height);
-    [encoder endEncoding];
-    [buffer commit];
-    [buffer waitUntilCompleted];
+    [(__bridge id<MTLComputeCommandEncoder>)encoder setTexture:main atIndex:0];
+    [(__bridge id<MTLComputeCommandEncoder>)encoder setTexture:overlay atIndex:1];
+    [(__bridge id<MTLComputeCommandEncoder>)encoder setTexture:dst atIndex:2];
+    [(__bridge id<MTLComputeCommandEncoder>)encoder setBuffer:ctx->mtlParamsBuffer offset:0 atIndex:3];
+    ff_metal_compute_encoder_dispatch(ctx->mtlDevice, ctx->mtlPipeline, (__bridge id<MTLComputeCommandEncoder>)encoder, dst.width, dst.height);
+    [(__bridge id<MTLComputeCommandEncoder>)encoder endEncoding];
+    [(__bridge id<MTLCommandBuffer>)buffer commit];
+    [(__bridge id<MTLCommandBuffer>)buffer waitUntilCompleted];
+    ff_objc_release(&encoder);
+    ff_objc_release(&buffer);
 }
 
-static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(8.0))
+static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(9.0))
 {
     AVFilterContext *avctx = fs->parent;
     OverlayVideoToolboxContext *ctx = avctx->priv;
@@ -104,18 +111,24 @@ static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(8.0
     AVFrame *output;
     AVHWFramesContext *frames_ctx = (AVHWFramesContext*)inlink->hw_frames_ctx->data;
     AVHWFramesContext *frames_ctx_overlay = (AVHWFramesContext*)inlink_overlay->hw_frames_ctx->data;
-    const AVPixFmtDescriptor *in_overlay_desc;
+    const AVPixFmtDescriptor *in_main_desc, *in_overlay_desc;
 
     CIImage *main_image = NULL;
     CIImage *output_image = NULL;
+    CIImage *overlay_image = NULL;
     CVMetalTextureRef main, dst, overlay;
-    id<MTLCommandBuffer> mtl_buffer = ctx->mtlQueue.commandBuffer;
     id<MTLTexture> tex_main, tex_overlay, tex_dst;
 
-    MTLPixelFormat format = MTLPixelFormatBGRA8Unorm;
+    MTLPixelFormat mtl_format = MTLPixelFormatBGRA8Unorm;
+    OSType cv_format = kCVPixelFormatType_32BGRA;
     int ret;
     int i, overlay_planes = 0;
+    in_main_desc = av_pix_fmt_desc_get(frames_ctx->sw_format);
     in_overlay_desc = av_pix_fmt_desc_get(frames_ctx_overlay->sw_format);
+    if (in_main_desc->comp[0].depth >= 10) {
+        mtl_format = MTLPixelFormatRGBA16Unorm;
+        cv_format = kCVPixelFormatType_64RGBALE;
+    }
     // read main and overlay frames from inputs
     ret = ff_framesync_get_frame(fs, 0, &input_main, 0);
     if (ret < 0)
@@ -125,58 +138,65 @@ static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(8.0
         return ret;
     if (!input_main)
         return AVERROR_BUG;
-    if (!input_overlay)
-        return ff_filter_frame(outlink, input_main);
-
     output = ff_get_video_buffer(outlink, outlink->w, outlink->h);
     ret = av_frame_copy_props(output, input_main);
     if (ret < 0)
         return ret;
-    [mtl_buffer commit];
+    if (!input_overlay) {
+        main_image = CFBridgingRetain([CIImage imageWithCVPixelBuffer: (CVPixelBufferRef)input_main->data[3]]);
+        [(__bridge CIContext*)ctx->coreImageCtx render: (__bridge CIImage*)main_image toCVPixelBuffer: (CVPixelBufferRef)output->data[3]];
+        CFRelease(main_image);
+        CVBufferPropagateAttachments((CVPixelBufferRef)input_main->data[3], (CVPixelBufferRef)output->data[3]);
+        return ff_filter_frame(outlink, output);
+    }
     for (i = 0; i < in_overlay_desc->nb_components; i++)
         overlay_planes = FFMAX(overlay_planes,
                                in_overlay_desc->comp[i].plane + 1);
-    if (overlay_planes > 1) {
+    // We need to convert input overlay when it is planer or the color depth does not match
+    if (overlay_planes > 1 || in_main_desc->comp[0].depth != in_overlay_desc->comp[0].depth) {
+        if (!ctx->inputOverlayPixelBufferCache) {
+            ret = CVPixelBufferCreate(kCFAllocatorDefault,
+                                      CVPixelBufferGetWidthOfPlane((CVPixelBufferRef)input_overlay->data[3], 0),
+                                      CVPixelBufferGetHeightOfPlane((CVPixelBufferRef)input_overlay->data[3], 0),
+                                      cv_format,
+                                      (__bridge CFDictionaryRef)@{
+                                          (NSString *)kCVPixelBufferCGImageCompatibilityKey: @(YES),
+                                          (NSString *)kCVPixelBufferMetalCompatibilityKey: @(YES)
+                                      },
+                                      &ctx->inputOverlayPixelBufferCache);
+            if (ret < 0)
+                return ret;
+        }
         if (@available(macOS 10.8, iOS 16.0, *)) {
+            // The YUV formatted overlays will be hwuploaded to kCVPixelFormatType_4444AYpCbCr16, which is not render-able using CoreImage.
+            // As a fallback, use VTPixelTransferSessionTransferImage instead.
+            // This should work on all macOS version provides Metal, but is only available on iOS >=16.
+            // FIXME: should we just use VTPixelTransferSessionTransferImage by default as its performance is not differentiable from CoreImage from further testing?
             if (!ctx->vtSession) {
                 ret = VTPixelTransferSessionCreate(NULL, &ctx->vtSession);
                 if (ret < 0)
                     return ret;
             }
-            if (!ctx->inputOverlayPixelBufferCache) {
-                ret = CVPixelBufferCreate(kCFAllocatorDefault,
-                                          CVPixelBufferGetWidthOfPlane((CVPixelBufferRef)input_overlay->data[3], 0),
-                                          CVPixelBufferGetHeightOfPlane((CVPixelBufferRef)input_overlay->data[3], 0),
-                                          kCVPixelFormatType_32BGRA,
-                                          (__bridge CFDictionaryRef)@{
-                                              (NSString *)kCVPixelBufferCGImageCompatibilityKey: @(YES),
-                                              (NSString *)kCVPixelBufferMetalCompatibilityKey: @(YES)
-                                          },
-                                          &ctx->inputOverlayPixelBufferCache);
-                if (ret < 0)
-                    return ret;
-            }
-            // The YUV formatted overlays will be hwuploaded to kCVPixelFormatType_4444AYpCbCr16, which is not render-able using CoreImage.
-            // As a fallback, use the (much) slower VTPixelTransferSessionTransferImage instead.
-            // This should work on all macOS version provides Metal, but is only available on iOS >=16.
             ret = VTPixelTransferSessionTransferImage(ctx->vtSession,(CVPixelBufferRef)input_overlay->data[3] ,ctx->inputOverlayPixelBufferCache);
             if (ret < 0)
                 return ret;
-            overlay = ff_metal_texture_from_non_planer_pixbuf(avctx, ctx->textureCache, ctx->inputOverlayPixelBufferCache, 0, format);
         } else {
-            av_log(ctx, AV_LOG_ERROR, "VTPixelTransferSessionTransferImage is not available on this OS version\n");
-            av_log(ctx, AV_LOG_ERROR, "Try an overlay with kCVPixelFormatType_32BGRA\n");
-            return AVERROR(ENOSYS);
+            av_log(ctx, AV_LOG_WARNING, "VTPixelTransferSessionTransferImage is not available on this OS version\n");
+            av_log(ctx, AV_LOG_WARNING, "Try an overlay with BGRA format if you see no overlay\n");
+            overlay_image = CFBridgingRetain([CIImage imageWithCVPixelBuffer: (CVPixelBufferRef)input_overlay->data[3]]);
+            [(__bridge CIContext*)ctx->coreImageCtx render: (__bridge CIImage*)main_image toCVPixelBuffer: ctx->inputOverlayPixelBufferCache];
+            CFRelease(overlay_image);
         }
+        overlay = ff_metal_texture_from_pixbuf(avctx, ctx->textureCache, ctx->inputOverlayPixelBufferCache, 0, mtl_format);
     } else {
-        overlay = ff_metal_texture_from_non_planer_pixbuf(avctx, ctx->textureCache, (CVPixelBufferRef)input_overlay->data[3], 0, format);
+        overlay = ff_metal_texture_from_pixbuf(avctx, ctx->textureCache, (CVPixelBufferRef)input_overlay->data[3], 0, mtl_format);
     }
     main_image = CFBridgingRetain([CIImage imageWithCVPixelBuffer: (CVPixelBufferRef)input_main->data[3]]);
     if (!ctx->inputMainPixelBufferCache) {
         ret = CVPixelBufferCreate(kCFAllocatorDefault,
                                   CVPixelBufferGetWidthOfPlane((CVPixelBufferRef)input_main->data[3], 0),
                                   CVPixelBufferGetHeightOfPlane((CVPixelBufferRef)input_main->data[3], 0),
-                                  kCVPixelFormatType_32BGRA,
+                                  cv_format,
                                   (__bridge CFDictionaryRef)@{
                                       (NSString *)kCVPixelBufferCGImageCompatibilityKey: @(YES),
                                       (NSString *)kCVPixelBufferMetalCompatibilityKey: @(YES)
@@ -189,7 +209,7 @@ static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(8.0
         ret = CVPixelBufferCreate(kCFAllocatorDefault,
                                   CVPixelBufferGetWidthOfPlane((CVPixelBufferRef)input_main->data[3], 0),
                                   CVPixelBufferGetHeightOfPlane((CVPixelBufferRef)input_main->data[3], 0),
-                                  kCVPixelFormatType_32BGRA,
+                                  cv_format,
                                   (__bridge CFDictionaryRef)@{
                                       (NSString *)kCVPixelBufferCGImageCompatibilityKey: @(YES),
                                       (NSString *)kCVPixelBufferMetalCompatibilityKey: @(YES)
@@ -199,27 +219,25 @@ static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(8.0
             return ret;
     }
     [(__bridge CIContext*)ctx->coreImageCtx render: (__bridge CIImage*)main_image toCVPixelBuffer: ctx->inputMainPixelBufferCache];
-    [mtl_buffer waitUntilCompleted];
-    main = ff_metal_texture_from_non_planer_pixbuf(avctx, ctx->textureCache, ctx->inputMainPixelBufferCache, 0, format);
-    dst = ff_metal_texture_from_non_planer_pixbuf(avctx, ctx->textureCache, ctx->outputPixelBufferCache, 0, format);
+    CFRelease(main_image);
+    main = ff_metal_texture_from_pixbuf(avctx, ctx->textureCache, ctx->inputMainPixelBufferCache, 0, mtl_format);
+    dst = ff_metal_texture_from_pixbuf(avctx, ctx->textureCache, ctx->outputPixelBufferCache, 0, mtl_format);
     tex_main = CVMetalTextureGetTexture(main);
     tex_overlay  = CVMetalTextureGetTexture(overlay);
     tex_dst = CVMetalTextureGetTexture(dst);
     call_kernel(avctx, tex_dst, tex_main, tex_overlay, ctx->x_position, ctx->y_position);
     output_image = CFBridgingRetain([CIImage imageWithCVPixelBuffer: ctx->outputPixelBufferCache]);
     [(__bridge CIContext*)ctx->coreImageCtx render: (__bridge CIImage*)output_image toCVPixelBuffer: (CVPixelBufferRef)output->data[3]];
-    [mtl_buffer waitUntilCompleted];
+    CFRelease(output_image);
     CFRelease(main);
     CFRelease(overlay);
     CFRelease(dst);
-    CFRelease(main_image);
-    CFRelease(output_image);
     CVBufferPropagateAttachments((CVPixelBufferRef)input_main->data[3], (CVPixelBufferRef)output->data[3]);
 
     return ff_filter_frame(outlink, output);
 }
 
-static av_cold void do_uninit(AVFilterContext *avctx) API_AVAILABLE(macos(10.11), ios(8.0))
+static av_cold void do_uninit(AVFilterContext *avctx) API_AVAILABLE(macos(10.11), ios(9.0))
 {
     OverlayVideoToolboxContext *ctx = avctx->priv;
     if(ctx->coreImageCtx) {
@@ -263,12 +281,12 @@ static av_cold void do_uninit(AVFilterContext *avctx) API_AVAILABLE(macos(10.11)
 
 static av_cold void overlay_videotoolbox_uninit(AVFilterContext *ctx)
 {
-    if (@available(macOS 10.11, iOS 8.0, *)) {
+    if (@available(macOS 10.11, iOS 9.0, *)) {
         do_uninit(ctx);
     }
 }
 
-static av_cold int do_init(AVFilterContext *ctx) API_AVAILABLE(macos(10.11), ios(8.0))
+static av_cold int do_init(AVFilterContext *ctx) API_AVAILABLE(macos(10.11), ios(9.0))
 {
     OverlayVideoToolboxContext *s = ctx->priv;
     NSError *err = nil;
@@ -332,10 +350,13 @@ static av_cold int do_init(AVFilterContext *ctx) API_AVAILABLE(macos(10.11), ios
         goto fail;
     }
 
-    s->coreImageCtx = CFBridgingRetain([CIContext contextWithMTLCommandQueue: s->mtlQueue]);
+    if (@available(macOS 10.15, iOS 13.0, *)) {
+        s->coreImageCtx = CFBridgingRetain([CIContext contextWithMTLCommandQueue: s->mtlQueue]);
+    } else {
+        s->coreImageCtx = CFBridgingRetain([CIContext contextWithMTLDevice: s->mtlDevice]);
+    }
     s->fs.on_event = &overlay_vt_blend;
     s->output_format = AV_PIX_FMT_NONE;
-    av_log(ctx, AV_LOG_INFO, "do_init!\n");
 
     return 0;
 fail:
@@ -345,7 +366,7 @@ fail:
 
 static av_cold int overlay_videotoolbox_init(AVFilterContext *ctx)
 {
-    if (@available(macOS 10.11, iOS 8.0, *)) {
+    if (@available(macOS 10.11, iOS 9.0, *)) {
         // Ensure we calculated OVERLAY_VT_CTX_SIZE correctly
         static_assert(OVERLAY_VT_CTX_SIZE == sizeof(OverlayVideoToolboxContext), "Incorrect OVERLAY_VT_CTX_SIZE value!");
         return do_init(ctx);
@@ -355,7 +376,7 @@ static av_cold int overlay_videotoolbox_init(AVFilterContext *ctx)
     }
 }
 
-static int do_config_input(AVFilterLink *inlink) API_AVAILABLE(macos(10.11), ios(8.0))
+static int do_config_input(AVFilterLink *inlink) API_AVAILABLE(macos(10.11), ios(9.0))
 {
     AVFilterContext *avctx = inlink->dst;
     OverlayVideoToolboxContext *ctx = avctx->priv;
@@ -387,7 +408,7 @@ static int do_config_input(AVFilterLink *inlink) API_AVAILABLE(macos(10.11), ios
 static int config_input(AVFilterLink *inlink)
 {
     AVFilterContext *ctx = inlink->dst;
-    if (@available(macOS 10.13, iOS 9.0, *)) {
+    if (@available(macOS 10.11, iOS 9.0, *)) {
         return do_config_input(inlink);
     } else {
         av_log(ctx, AV_LOG_ERROR, "Metal is not available on this OS version\n");
@@ -395,14 +416,13 @@ static int config_input(AVFilterLink *inlink)
     }
 }
 
-static int do_config_output(AVFilterLink *link) API_AVAILABLE(macos(10.11), ios(8.0))
+static int do_config_output(AVFilterLink *link) API_AVAILABLE(macos(10.11), ios(9.0))
 {
     AVHWFramesContext *output_frames;
     AVFilterContext *avctx = link->src;
     OverlayVideoToolboxContext *ctx = avctx->priv;
     int ret = 0;
 
-    av_log(avctx, AV_LOG_INFO, "do_config_output!\n");
     link->hw_frames_ctx = av_hwframe_ctx_alloc(ctx->device_ref);
     if (!link->hw_frames_ctx) {
         av_log(avctx, AV_LOG_ERROR, "Failed to create HW frame context "
@@ -440,7 +460,7 @@ static int do_config_output(AVFilterLink *link) API_AVAILABLE(macos(10.11), ios(
 static int config_output(AVFilterLink *link)
 {
     AVFilterContext *ctx = link->src;
-    if (@available(macOS 10.13, iOS 9.0, *)) {
+    if (@available(macOS 10.11, iOS 9.0, *)) {
         return do_config_output(link);
     } else {
         av_log(ctx, AV_LOG_ERROR, "Metal is not available on this OS version\n");
@@ -459,13 +479,21 @@ static int overlay_videotoolbox_activate(AVFilterContext *avctx) {
 
 static const AVOption overlay_videotoolbox_options[] = {
     { "x", "Overlay x position",
-      OFFSET(x_position), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, .flags = FLAGS },
+        OFFSET(x_position), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, .flags = FLAGS },
     { "y", "Overlay y position",
-      OFFSET(y_position), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, .flags = FLAGS },
+        OFFSET(y_position), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, .flags = FLAGS },
+    { "eof_action", "Action to take when encountering EOF from secondary input ",
+        OFFSET(fs.opt_eof_action), AV_OPT_TYPE_INT, { .i64 = EOF_ACTION_REPEAT },
+        EOF_ACTION_REPEAT, EOF_ACTION_PASS, .flags = FLAGS, .unit = "eof_action" },
+        { "repeat", "Repeat the previous frame.",   0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_REPEAT }, .flags = FLAGS, .unit = "eof_action" },
+        { "endall", "End both streams.",            0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_ENDALL }, .flags = FLAGS, .unit = "eof_action" },
+        { "pass",   "Pass through the main input.", 0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_PASS },   .flags = FLAGS, .unit = "eof_action" },
+    { "shortest", "force termination when the shortest input terminates", OFFSET(fs.opt_shortest), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
+    { "repeatlast", "repeat overlay of the last overlay frame", OFFSET(fs.opt_repeatlast), AV_OPT_TYPE_BOOL, {.i64=1}, 0, 1, FLAGS },
     { NULL },
 };
 
-AVFILTER_DEFINE_CLASS(overlay_videotoolbox);
+FRAMESYNC_DEFINE_CLASS(overlay_videotoolbox, OverlayVideoToolboxContext, fs);
 
 static const AVFilterPad overlay_videotoolbox_inputs[] = {
     {
@@ -495,7 +523,8 @@ const AVFilter ff_vf_overlay_videotoolbox = {
     .priv_class     = &overlay_videotoolbox_class,
     .init           = overlay_videotoolbox_init,
     .uninit         = overlay_videotoolbox_uninit,
-    .activate        = overlay_videotoolbox_activate,
+    .activate       = overlay_videotoolbox_activate,
+    .preinit        = overlay_videotoolbox_framesync_preinit,
     FILTER_SINGLE_PIXFMT(AV_PIX_FMT_VIDEOTOOLBOX),
     FILTER_INPUTS(overlay_videotoolbox_inputs),
     FILTER_OUTPUTS(overlay_videotoolbox_outputs),
