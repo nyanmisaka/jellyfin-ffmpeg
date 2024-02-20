@@ -289,20 +289,20 @@ static av_cold void overlay_videotoolbox_uninit(AVFilterContext *ctx)
     }
 }
 
-static av_cold int do_init(AVFilterContext *ctx) API_AVAILABLE(macos(10.11), ios(9.0))
+static av_cold int do_init(AVFilterContext *avctx) API_AVAILABLE(macos(10.11), ios(9.0))
 {
-    OverlayVideoToolboxContext *s = ctx->priv;
+    OverlayVideoToolboxContext *ctx = avctx->priv;
     NSError *err = nil;
     CVReturn ret;
     dispatch_data_t libData;
 
-    s->mtlDevice = MTLCreateSystemDefaultDevice();
-    if (!s->mtlDevice) {
-        av_log(ctx, AV_LOG_ERROR, "Unable to find Metal device\n");
+    ctx->mtlDevice = MTLCreateSystemDefaultDevice();
+    if (!ctx->mtlDevice) {
+        av_log(avctx, AV_LOG_ERROR, "Unable to find Metal device\n");
         goto fail;
     }
 
-    av_log(ctx, AV_LOG_INFO, "Using Metal device: %s\n", s->mtlDevice.name.UTF8String);
+    av_log(ctx, AV_LOG_INFO, "Using Metal device: %s\n", ctx->mtlDevice.name.UTF8String);
 
     libData = dispatch_data_create(
         ff_vf_overlay_videotoolbox_metallib_data,
@@ -310,71 +310,73 @@ static av_cold int do_init(AVFilterContext *ctx) API_AVAILABLE(macos(10.11), ios
         nil,
         nil);
 
-    s->mtlLibrary = [s->mtlDevice newLibraryWithData:libData error:&err];
+    ctx->mtlLibrary = [ctx->mtlDevice newLibraryWithData:libData error:&err];
     dispatch_release(libData);
     libData = nil;
-    s->mtlFunction = [s->mtlLibrary newFunctionWithName:@"blend_shader"];
-    if (!s->mtlFunction) {
-        av_log(ctx, AV_LOG_ERROR, "Failed to create Metal function!\n");
+    ctx->mtlFunction = [ctx->mtlLibrary newFunctionWithName:@"blend_shader"];
+    if (!ctx->mtlFunction) {
+        av_log(avctx, AV_LOG_ERROR, "Failed to create Metal function!\n");
         goto fail;
     }
 
-    s->mtlQueue = s->mtlDevice.newCommandQueue;
-    if (!s->mtlQueue) {
-        av_log(ctx, AV_LOG_ERROR, "Failed to create Metal command queue!\n");
+    ctx->mtlQueue = ctx->mtlDevice.newCommandQueue;
+    if (!ctx->mtlQueue) {
+        av_log(avctx, AV_LOG_ERROR, "Failed to create Metal command queue!\n");
         goto fail;
     }
 
-    s->mtlPipeline = [s->mtlDevice
-        newComputePipelineStateWithFunction:s->mtlFunction
+    ctx->mtlPipeline = [ctx->mtlDevice
+        newComputePipelineStateWithFunction:ctx->mtlFunction
         error:&err];
     if (err) {
         av_log(ctx, AV_LOG_ERROR, "Failed to create Metal compute pipeline: %s\n", err.description.UTF8String);
         goto fail;
     }
 
-    s->mtlParamsBuffer = [s->mtlDevice
+    ctx->mtlParamsBuffer = [ctx->mtlDevice
         newBufferWithLength:sizeof(struct mtlBlendParams)
         options:MTLResourceStorageModeShared];
-    if (!s->mtlParamsBuffer) {
-        av_log(ctx, AV_LOG_ERROR, "Failed to create Metal buffer for parameters\n");
+    if (!ctx->mtlParamsBuffer) {
+        av_log(avctx, AV_LOG_ERROR, "Failed to create Metal buffer for parameters\n");
         goto fail;
     }
 
     ret = CVMetalTextureCacheCreate(
         NULL,
         NULL,
-        s->mtlDevice,
+        ctx->mtlDevice,
         NULL,
-        &s->textureCache
+        &ctx->textureCache
     );
     if (ret != kCVReturnSuccess) {
-        av_log(ctx, AV_LOG_ERROR, "Failed to create CVMetalTextureCache: %d\n", ret);
+        av_log(avctx, AV_LOG_ERROR, "Failed to create CVMetalTextureCache: %d\n", ret);
         goto fail;
     }
 
     if (@available(macOS 10.8, iOS 16.0, *)) {
-        ret = VTPixelTransferSessionCreate(NULL, &s->vtSession);
-        if (ret < 0)
-            return ret;
+        ret = VTPixelTransferSessionCreate(NULL, &ctx->vtSession);
+        if (ret != kCVReturnSuccess) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to create VTPixelTransferSession: %d\n", ret);
+            goto fail;
+        }
     } else {
         // Use CoreImage as fallback for old OS.
         // CoreImage has comparable performance to VTPixelTransferSession, but it supports less pixel formats than VTPixelTransferSession.
         // Warn user about possible incorrect results.
-        av_log(ctx, AV_LOG_WARNING, "VTPixelTransferSessionTransferImage is not available on this OS version, fallback using CoreImage\n");
-        av_log(ctx, AV_LOG_WARNING, "Try an overlay with BGRA format if you see no overlay\n");
+        av_log(avctx, AV_LOG_WARNING, "VTPixelTransferSessionTransferImage is not available on this OS version, fallback using CoreImage\n");
+        av_log(avctx, AV_LOG_WARNING, "Try an overlay with BGRA format if you see no overlay\n");
         if (@available(macOS 10.15, iOS 13.0, *)) {
-            s->coreImageCtx = CFBridgingRetain([CIContext contextWithMTLCommandQueue: s->mtlQueue]);
+            ctx->coreImageCtx = CFBridgingRetain([CIContext contextWithMTLCommandQueue: ctx->mtlQueue]);
         } else {
-            s->coreImageCtx = CFBridgingRetain([CIContext contextWithMTLDevice: s->mtlDevice]);
+            ctx->coreImageCtx = CFBridgingRetain([CIContext contextWithMTLDevice: ctx->mtlDevice]);
         }
     }
-    s->fs.on_event = &overlay_vt_blend;
-    s->output_format = AV_PIX_FMT_NONE;
+    ctx->fs.on_event = &overlay_vt_blend;
+    ctx->output_format = AV_PIX_FMT_NONE;
 
     return 0;
 fail:
-    overlay_videotoolbox_uninit(ctx);
+    overlay_videotoolbox_uninit(avctx);
     return AVERROR_EXTERNAL;
 }
 
