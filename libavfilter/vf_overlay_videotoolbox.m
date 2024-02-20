@@ -100,6 +100,22 @@ static void call_kernel(AVFilterContext *avctx,
     ff_objc_release(&buffer);
 }
 
+static int transfer_pixel_buffer(OverlayVideoToolboxContext *ctx, CVPixelBufferRef source, CVPixelBufferRef destination) {
+    if (@available(macOS 10.8, iOS 16.0, *)) {
+        int ret = 0;
+        ret = VTPixelTransferSessionTransferImage(ctx->vtSession,source ,destination);
+        if (ret < 0)
+            return ret;
+    } else {
+        CIImage *temp_image = NULL;
+        temp_image = CFBridgingRetain([CIImage imageWithCVPixelBuffer: source]);
+        [(__bridge CIContext*)ctx->coreImageCtx render: (__bridge CIImage*)temp_image toCVPixelBuffer: destination];
+        CFRelease(temp_image);
+        CVBufferPropagateAttachments(source, destination);
+    }
+    return 0;
+}
+
 static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(9.0))
 {
     AVFilterContext *avctx = fs->parent;
@@ -113,9 +129,6 @@ static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(9.0
     AVHWFramesContext *frames_ctx_overlay = (AVHWFramesContext*)inlink_overlay->hw_frames_ctx->data;
     const AVPixFmtDescriptor *in_main_desc, *in_overlay_desc;
 
-    CIImage *main_image = NULL;
-    CIImage *output_image = NULL;
-    CIImage *overlay_image = NULL;
     CVMetalTextureRef main, dst, overlay;
     id<MTLTexture> tex_main, tex_overlay, tex_dst;
 
@@ -148,10 +161,7 @@ static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(9.0
     if (ret < 0)
         return ret;
     if (!input_overlay) {
-        main_image = CFBridgingRetain([CIImage imageWithCVPixelBuffer: (CVPixelBufferRef)input_main->data[3]]);
-        [(__bridge CIContext*)ctx->coreImageCtx render: (__bridge CIImage*)main_image toCVPixelBuffer: (CVPixelBufferRef)output->data[3]];
-        CFRelease(main_image);
-        CVBufferPropagateAttachments((CVPixelBufferRef)input_main->data[3], (CVPixelBufferRef)output->data[3]);
+        transfer_pixel_buffer(ctx, (CVPixelBufferRef)input_main->data[3], (CVPixelBufferRef)output->data[3]);
         return ff_filter_frame(outlink, output);
     }
     for (i = 0; i < in_overlay_desc->nb_components; i++)
@@ -172,31 +182,11 @@ static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(9.0
             if (ret < 0)
                 return ret;
         }
-        if (@available(macOS 10.8, iOS 16.0, *)) {
-            // The YUV formatted overlays will be hwuploaded to kCVPixelFormatType_4444AYpCbCr16, which is not render-able using CoreImage.
-            // As a fallback, use VTPixelTransferSessionTransferImage instead.
-            // This should work on all macOS version provides Metal, but is only available on iOS >=16.
-            // FIXME: should we just use VTPixelTransferSessionTransferImage by default as its performance is not differentiable from CoreImage from further testing?
-            if (!ctx->vtSession) {
-                ret = VTPixelTransferSessionCreate(NULL, &ctx->vtSession);
-                if (ret < 0)
-                    return ret;
-            }
-            ret = VTPixelTransferSessionTransferImage(ctx->vtSession,(CVPixelBufferRef)input_overlay->data[3] ,ctx->inputOverlayPixelBufferCache);
-            if (ret < 0)
-                return ret;
-        } else {
-            av_log(ctx, AV_LOG_WARNING, "VTPixelTransferSessionTransferImage is not available on this OS version\n");
-            av_log(ctx, AV_LOG_WARNING, "Try an overlay with BGRA format if you see no overlay\n");
-            overlay_image = CFBridgingRetain([CIImage imageWithCVPixelBuffer: (CVPixelBufferRef)input_overlay->data[3]]);
-            [(__bridge CIContext*)ctx->coreImageCtx render: (__bridge CIImage*)main_image toCVPixelBuffer: ctx->inputOverlayPixelBufferCache];
-            CFRelease(overlay_image);
-        }
+        transfer_pixel_buffer(ctx, (CVPixelBufferRef)input_overlay->data[3], ctx->inputOverlayPixelBufferCache);
         overlay = ff_metal_texture_from_pixbuf(avctx, ctx->textureCache, ctx->inputOverlayPixelBufferCache, 0, mtl_format);
     } else {
         overlay = ff_metal_texture_from_pixbuf(avctx, ctx->textureCache, (CVPixelBufferRef)input_overlay->data[3], 0, mtl_format);
     }
-    main_image = CFBridgingRetain([CIImage imageWithCVPixelBuffer: (CVPixelBufferRef)input_main->data[3]]);
     if (!ctx->inputMainPixelBufferCache) {
         ret = CVPixelBufferCreate(kCFAllocatorDefault,
                                   CVPixelBufferGetWidthOfPlane((CVPixelBufferRef)input_main->data[3], 0),
@@ -223,21 +213,17 @@ static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(9.0
         if (ret < 0)
             return ret;
     }
-    [(__bridge CIContext*)ctx->coreImageCtx render: (__bridge CIImage*)main_image toCVPixelBuffer: ctx->inputMainPixelBufferCache];
-    CFRelease(main_image);
+    transfer_pixel_buffer(ctx, (CVPixelBufferRef)input_main->data[3], ctx->inputMainPixelBufferCache);
     main = ff_metal_texture_from_pixbuf(avctx, ctx->textureCache, ctx->inputMainPixelBufferCache, 0, mtl_format);
     dst = ff_metal_texture_from_pixbuf(avctx, ctx->textureCache, ctx->outputPixelBufferCache, 0, mtl_format);
     tex_main = CVMetalTextureGetTexture(main);
     tex_overlay  = CVMetalTextureGetTexture(overlay);
     tex_dst = CVMetalTextureGetTexture(dst);
     call_kernel(avctx, tex_dst, tex_main, tex_overlay, ctx->x_position, ctx->y_position);
-    output_image = CFBridgingRetain([CIImage imageWithCVPixelBuffer: ctx->outputPixelBufferCache]);
-    [(__bridge CIContext*)ctx->coreImageCtx render: (__bridge CIImage*)output_image toCVPixelBuffer: (CVPixelBufferRef)output->data[3]];
-    CFRelease(output_image);
+    transfer_pixel_buffer(ctx, ctx->outputPixelBufferCache, (CVPixelBufferRef)output->data[3]);
     CFRelease(main);
     CFRelease(overlay);
     CFRelease(dst);
-    CVBufferPropagateAttachments((CVPixelBufferRef)input_main->data[3], (CVPixelBufferRef)output->data[3]);
 
     return ff_filter_frame(outlink, output);
 }
@@ -355,10 +341,21 @@ static av_cold int do_init(AVFilterContext *ctx) API_AVAILABLE(macos(10.11), ios
         goto fail;
     }
 
-    if (@available(macOS 10.15, iOS 13.0, *)) {
-        s->coreImageCtx = CFBridgingRetain([CIContext contextWithMTLCommandQueue: s->mtlQueue]);
+    if (@available(macOS 10.8, iOS 16.0, *)) {
+        ret = VTPixelTransferSessionCreate(NULL, &s->vtSession);
+        if (ret < 0)
+            return ret;
     } else {
-        s->coreImageCtx = CFBridgingRetain([CIContext contextWithMTLDevice: s->mtlDevice]);
+        // Use CoreImage as fallback for old OS.
+        // CoreImage has comparable performance to VTPixelTransferSession, but it supports less pixel formats than VTPixelTransferSession.
+        // Warn user about possible incorrect results.
+        av_log(ctx, AV_LOG_WARNING, "VTPixelTransferSessionTransferImage is not available on this OS version, fallback using CoreImage\n");
+        av_log(ctx, AV_LOG_WARNING, "Try an overlay with BGRA format if you see no overlay\n");
+        if (@available(macOS 10.15, iOS 13.0, *)) {
+            s->coreImageCtx = CFBridgingRetain([CIContext contextWithMTLCommandQueue: s->mtlQueue]);
+        } else {
+            s->coreImageCtx = CFBridgingRetain([CIContext contextWithMTLDevice: s->mtlDevice]);
+        }
     }
     s->fs.on_event = &overlay_vt_blend;
     s->output_format = AV_PIX_FMT_NONE;
