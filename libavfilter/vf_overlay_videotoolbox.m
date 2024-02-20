@@ -100,6 +100,8 @@ static void call_kernel(AVFilterContext *avctx,
     ff_objc_release(&buffer);
 }
 
+// Copies and/or converts one pixel buffer to another.
+// This transparently handles pixel format and color spaces, and will do a conversion if needed.
 static int transfer_pixel_buffer(OverlayVideoToolboxContext *ctx, CVPixelBufferRef source, CVPixelBufferRef destination) {
     if (@available(macOS 10.8, iOS 16.0, *)) {
         int ret = 0;
@@ -161,7 +163,9 @@ static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(9.0
     if (ret < 0)
         return ret;
     if (!input_overlay) {
-        transfer_pixel_buffer(ctx, (CVPixelBufferRef)input_main->data[3], (CVPixelBufferRef)output->data[3]);
+        ret = transfer_pixel_buffer(ctx, (CVPixelBufferRef)input_main->data[3], (CVPixelBufferRef)output->data[3]);
+        if (ret < 0)
+            return ret;
         return ff_filter_frame(outlink, output);
     }
     for (i = 0; i < in_overlay_desc->nb_components; i++)
@@ -182,7 +186,9 @@ static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(9.0
             if (ret < 0)
                 return ret;
         }
-        transfer_pixel_buffer(ctx, (CVPixelBufferRef)input_overlay->data[3], ctx->inputOverlayPixelBufferCache);
+        ret = transfer_pixel_buffer(ctx, (CVPixelBufferRef)input_overlay->data[3], ctx->inputOverlayPixelBufferCache);
+        if (ret < 0)
+            return ret;
         overlay = ff_metal_texture_from_pixbuf(avctx, ctx->textureCache, ctx->inputOverlayPixelBufferCache, 0, mtl_format);
     } else {
         overlay = ff_metal_texture_from_pixbuf(avctx, ctx->textureCache, (CVPixelBufferRef)input_overlay->data[3], 0, mtl_format);
@@ -213,14 +219,18 @@ static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(9.0
         if (ret < 0)
             return ret;
     }
-    transfer_pixel_buffer(ctx, (CVPixelBufferRef)input_main->data[3], ctx->inputMainPixelBufferCache);
+    ret = transfer_pixel_buffer(ctx, (CVPixelBufferRef)input_main->data[3], ctx->inputMainPixelBufferCache);
+    if (ret < 0)
+        return ret;
     main = ff_metal_texture_from_pixbuf(avctx, ctx->textureCache, ctx->inputMainPixelBufferCache, 0, mtl_format);
     dst = ff_metal_texture_from_pixbuf(avctx, ctx->textureCache, ctx->outputPixelBufferCache, 0, mtl_format);
     tex_main = CVMetalTextureGetTexture(main);
     tex_overlay  = CVMetalTextureGetTexture(overlay);
     tex_dst = CVMetalTextureGetTexture(dst);
     call_kernel(avctx, tex_dst, tex_main, tex_overlay, ctx->x_position, ctx->y_position);
-    transfer_pixel_buffer(ctx, ctx->outputPixelBufferCache, (CVPixelBufferRef)output->data[3]);
+    ret = transfer_pixel_buffer(ctx, ctx->outputPixelBufferCache, (CVPixelBufferRef)output->data[3]);
+    if (ret < 0)
+        return ret;
     CFRelease(main);
     CFRelease(overlay);
     CFRelease(dst);
