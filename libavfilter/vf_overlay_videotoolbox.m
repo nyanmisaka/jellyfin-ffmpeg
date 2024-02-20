@@ -145,6 +145,8 @@ static int overlay_vt_blend(FFFrameSync *fs) API_AVAILABLE(macos(10.11), ios(9.0
             mtl_format = MTLPixelFormatRGBA16Unorm;
             cv_format = kCVPixelFormatType_64RGBALE;
         } else {
+            // On older OS versions, 64-bit RGBA with 16-bit little-endian full-range samples is not supported.
+            // To handle inputs with color depth greater than 8, convert colors to float type during filtering on these versions.
             mtl_format = MTLPixelFormatRGBA16Float;
             cv_format = kCVPixelFormatType_64RGBAHalf;
         }
