@@ -19071,13 +19071,13 @@ See @ref{framesync}.
 @itemize
 @item
 Overlay an image LOGO at the top-left corner of the INPUT video.
-The INPUT video is in nv12 format and the LOGO image is in rgba format
+The INPUT video is in nv12 format and the LOGO image is in rgba format.
 @example
 -hwaccel videotoolbox -i INPUT -i LOGO -codec:v:0 h264_videotoolbox -filter_complex "[0:v]format=nv12,hwupload[a], [1:v]format=rgba,hwupload[b], [a][b]overlay_videotoolbox" OUTPUT
 @end example
 @item
 Overlay an SDR video OVERLAY at the top-left corner of the HDR video MAIN.
-The INPUT video is in p010 format and the LOGO image is in nv12 format
+The INPUT video is in p010 format and the LOGO image is in nv12 format.
 The OUTPUT video will also be an HDR video with OVERLAY mapped to HDR.
 @example
 -hwaccel -i MAIN -i OVERLAY -codec:v:0 hevc_videotoolbox -tag:v hvc1 -filter_complex "[0:v]format=p010,hwupload[a], [1:v]format=nv12,hwupload[b], [a][b]overlay_videotoolbox" OUTPUT
