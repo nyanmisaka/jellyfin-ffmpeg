@@ -1,0 +1,4279 @@
+Index: FFmpeg/MAINTAINERS
+===================================================================
+--- FFmpeg.orig/MAINTAINERS
++++ FFmpeg/MAINTAINERS
+@@ -34,8 +34,8 @@ Miscellaneous Areas
+ ===================
+ 
+ documentation                           Stefano Sabatini, Mike Melanson, Timothy Gu, Gyan Doshi
+-project server day to day operations    Árpád Gereöffy, Michael Niedermayer, Reimar Doeffinger, Alexander Strasser, Nikolay Aleksandrov
+-project server emergencies              Árpád Gereöffy, Reimar Doeffinger, Alexander Strasser, Nikolay Aleksandrov
++project server day to day operations    Árpád Gereöffy, Michael Niedermayer, Reimar Doeffinger, Alexander Strasser, Nikolay Aleksandrov, Timo Rothenpieler
++project server emergencies              Árpád Gereöffy, Reimar Doeffinger, Alexander Strasser, Nikolay Aleksandrov, Timo Rothenpieler
+ presets                                 Robert Swain
+ metadata subsystem                      Aurelien Jacobs
+ release management                      Michael Niedermayer
+@@ -535,10 +535,12 @@ wm4
+ Releases
+ ========
+ 
++7.0                                     Michael Niedermayer
++6.1                                     Michael Niedermayer
++5.1                                     Michael Niedermayer
++4.4                                     Michael Niedermayer
++3.4                                     Michael Niedermayer
+ 2.8                                     Michael Niedermayer
+-2.7                                     Michael Niedermayer
+-2.6                                     Michael Niedermayer
+-2.5                                     Michael Niedermayer
+ 
+ If you want to maintain an older release, please contact us
+ 
+Index: FFmpeg/configure
+===================================================================
+--- FFmpeg.orig/configure
++++ FFmpeg/configure
+@@ -7364,7 +7364,7 @@ fi
+ 
+ if enabled x86; then
+     case $target_os in
+-        mingw32*|mingw64*|win32|win64|linux|cygwin*)
++        freebsd|mingw32*|mingw64*|win32|win64|linux|cygwin*)
+             ;;
+         *)
+             disable ffnvcodec cuvid nvdec nvenc
+Index: FFmpeg/doc/developer.texi
+===================================================================
+--- FFmpeg.orig/doc/developer.texi
++++ FFmpeg/doc/developer.texi
+@@ -638,6 +638,11 @@ patch is inline or attached per mail.
+ You can check @url{https://patchwork.ffmpeg.org}, if your patch does not show up, its mime type
+ likely was wrong.
+ 
++@subheading How to setup git send-email?
++
++Please see @url{https://git-send-email.io/}.
++For gmail additionally see @url{https://shallowsky.com/blog/tech/email/gmail-app-passwds.html}.
++
+ @subheading Sending patches from email clients
+ Using @code{git send-email} might not be desirable for everyone. The
+ following trick allows to send patches via email clients in a safe
+Index: FFmpeg/doc/examples/mux.c
+===================================================================
+--- FFmpeg.orig/doc/examples/mux.c
++++ FFmpeg/doc/examples/mux.c
+@@ -347,8 +347,7 @@ static int write_audio_frame(AVFormatCon
+     if (frame) {
+         /* convert samples from native format to destination codec format, using the resampler */
+         /* compute destination number of samples */
+-        dst_nb_samples = av_rescale_rnd(swr_get_delay(ost->swr_ctx, c->sample_rate) + frame->nb_samples,
+-                                        c->sample_rate, c->sample_rate, AV_ROUND_UP);
++        dst_nb_samples = swr_get_delay(ost->swr_ctx, c->sample_rate) + frame->nb_samples;
+         av_assert0(dst_nb_samples == frame->nb_samples);
+ 
+         /* when we pass a frame to the encoder, it may keep a reference to it
+Index: FFmpeg/doc/examples/vaapi_encode.c
+===================================================================
+--- FFmpeg.orig/doc/examples/vaapi_encode.c
++++ FFmpeg/doc/examples/vaapi_encode.c
+@@ -88,6 +88,10 @@ static int encode_write(AVCodecContext *
+         enc_pkt->stream_index = 0;
+         ret = fwrite(enc_pkt->data, enc_pkt->size, 1, fout);
+         av_packet_unref(enc_pkt);
++        if (ret != enc_pkt->size) {
++            ret = AVERROR(errno);
++            break;
++        }
+     }
+ 
+ end:
+Index: FFmpeg/fftools/cmdutils.c
+===================================================================
+--- FFmpeg.orig/fftools/cmdutils.c
++++ FFmpeg/fftools/cmdutils.c
+@@ -581,7 +581,7 @@ static const AVOption *opt_find(void *ob
+     return o;
+ }
+ 
+-#define FLAGS (o->type == AV_OPT_TYPE_FLAGS && (arg[0]=='-' || arg[0]=='+')) ? AV_DICT_APPEND : 0
++#define FLAGS ((o->type == AV_OPT_TYPE_FLAGS && (arg[0]=='-' || arg[0]=='+')) ? AV_DICT_APPEND : 0)
+ int opt_default(void *optctx, const char *opt, const char *arg)
+ {
+     const AVOption *o;
+Index: FFmpeg/fftools/ffmpeg.c
+===================================================================
+--- FFmpeg.orig/fftools/ffmpeg.c
++++ FFmpeg/fftools/ffmpeg.c
+@@ -312,8 +312,9 @@ static int read_key(void)
+         }
+         //Read it
+         if(nchars != 0) {
+-            read(0, &ch, 1);
+-            return ch;
++            if (read(0, &ch, 1) == 1)
++                return ch;
++            return 0;
+         }else{
+             return -1;
+         }
+Index: FFmpeg/fftools/ffmpeg_enc.c
+===================================================================
+--- FFmpeg.orig/fftools/ffmpeg_enc.c
++++ FFmpeg/fftools/ffmpeg_enc.c
+@@ -171,7 +171,7 @@ int enc_open(void *opaque, const AVFrame
+     InputStream *ist = ost->ist;
+     Encoder              *e = ost->enc;
+     AVCodecContext *enc_ctx = ost->enc_ctx;
+-    Decoder            *dec;
++    Decoder            *dec = NULL;
+     const AVCodec      *enc = enc_ctx->codec;
+     OutputFile          *of = ost->file;
+     FrameData *fd;
+@@ -504,9 +504,9 @@ void enc_stats_write(OutputStream *ost,
+     AVRational  tbi = (AVRational){ 0, 1};
+     int64_t    ptsi = INT64_MAX;
+ 
+-    const FrameData *fd;
++    const FrameData *fd = NULL;
+ 
+-    if ((frame && frame->opaque_ref) || (pkt && pkt->opaque_ref)) {
++    if (frame ? frame->opaque_ref : pkt->opaque_ref) {
+         fd   = (const FrameData*)(frame ? frame->opaque_ref->data : pkt->opaque_ref->data);
+         tbi  = fd->dec.tb;
+         ptsi = fd->dec.pts;
+Index: FFmpeg/fftools/ffplay.c
+===================================================================
+--- FFmpeg.orig/fftools/ffplay.c
++++ FFmpeg/fftools/ffplay.c
+@@ -3843,8 +3843,13 @@ int main(int argc, char **argv)
+         if (vk_renderer) {
+             AVDictionary *dict = NULL;
+ 
+-            if (vulkan_params)
+-                av_dict_parse_string(&dict, vulkan_params, "=", ":", 0);
++            if (vulkan_params) {
++                int ret = av_dict_parse_string(&dict, vulkan_params, "=", ":", 0);
++                if (ret < 0) {
++                    av_log(NULL, AV_LOG_FATAL, "Failed to parse, %s\n", vulkan_params);
++                    do_exit(NULL);
++                }
++            }
+             ret = vk_renderer_create(vk_renderer, window, dict);
+             av_dict_free(&dict);
+             if (ret < 0) {
+Index: FFmpeg/fftools/ffplay_renderer.c
+===================================================================
+--- FFmpeg.orig/fftools/ffplay_renderer.c
++++ FFmpeg/fftools/ffplay_renderer.c
+@@ -765,7 +765,7 @@ static void destroy(VkRenderer *renderer
+         vkDestroySurfaceKHR = (PFN_vkDestroySurfaceKHR)
+                 ctx->get_proc_addr(ctx->inst, "vkDestroySurfaceKHR");
+         vkDestroySurfaceKHR(ctx->inst, ctx->vk_surface, NULL);
+-        ctx->vk_surface = NULL;
++        ctx->vk_surface = VK_NULL_HANDLE;
+     }
+ 
+     av_buffer_unref(&ctx->hw_device_ref);
+Index: FFmpeg/libavcodec/aacps_tablegen_template.c
+===================================================================
+--- FFmpeg.orig/libavcodec/aacps_tablegen_template.c
++++ FFmpeg/libavcodec/aacps_tablegen_template.c
+@@ -22,6 +22,8 @@
+ 
+ #include <stdlib.h>
+ #define BUILD_TABLES
++#include "config.h"
++#undef CONFIG_HARDCODED_TABLES
+ #define CONFIG_HARDCODED_TABLES 0
+ #include "aac_defines.h"
+ 
+Index: FFmpeg/libavcodec/alsdec.c
+===================================================================
+--- FFmpeg.orig/libavcodec/alsdec.c
++++ FFmpeg/libavcodec/alsdec.c
+@@ -2110,8 +2110,8 @@ static av_cold int decode_init(AVCodecCo
+ 
+     if (sconf->floating) {
+         ctx->acf               = av_malloc_array(channels, sizeof(*ctx->acf));
+-        ctx->shift_value       = av_malloc_array(channels, sizeof(*ctx->shift_value));
+-        ctx->last_shift_value  = av_malloc_array(channels, sizeof(*ctx->last_shift_value));
++        ctx->shift_value       = av_calloc(channels, sizeof(*ctx->shift_value));
++        ctx->last_shift_value  = av_calloc(channels, sizeof(*ctx->last_shift_value));
+         ctx->last_acf_mantissa = av_malloc_array(channels, sizeof(*ctx->last_acf_mantissa));
+         ctx->raw_mantissa      = av_calloc(channels, sizeof(*ctx->raw_mantissa));
+ 
+Index: FFmpeg/libavcodec/cbs_av1.c
+===================================================================
+--- FFmpeg.orig/libavcodec/cbs_av1.c
++++ FFmpeg/libavcodec/cbs_av1.c
+@@ -36,7 +36,7 @@ static int cbs_av1_read_uvlc(CodedBitstr
+     CBS_TRACE_READ_START();
+ 
+     zeroes = 0;
+-    while (1) {
++    while (zeroes < 32) {
+         if (get_bits_left(gbc) < 1) {
+             av_log(ctx->log_ctx, AV_LOG_ERROR, "Invalid uvlc code at "
+                    "%s: bitstream ended.\n", name);
+@@ -49,10 +49,18 @@ static int cbs_av1_read_uvlc(CodedBitstr
+     }
+ 
+     if (zeroes >= 32) {
+-        // Note that the spec allows an arbitrarily large number of
+-        // zero bits followed by a one bit in this case, but the
+-        // libaom implementation does not support it.
+-        value = MAX_UINT_BITS(32);
++        // The spec allows at least thirty-two zero bits followed by a
++        // one to mean 2^32-1, with no constraint on the number of
++        // zeroes.  The libaom reference decoder does not match this,
++        // instead reading thirty-two zeroes but not the following one
++        // to mean 2^32-1.  These two interpretations are incompatible
++        // and other implementations may follow one or the other.
++        // Therefore we reject thirty-two zeroes because the intended
++        // behaviour is not clear.
++        av_log(ctx->log_ctx, AV_LOG_ERROR, "Thirty-two zero bits in "
++               "%s uvlc code: considered invalid due to conflicting "
++               "standard and reference decoder behaviour.\n", name);
++        return AVERROR_INVALIDDATA;
+     } else {
+         if (get_bits_left(gbc) < zeroes) {
+             av_log(ctx->log_ctx, AV_LOG_ERROR, "Invalid uvlc code at "
+Index: FFmpeg/libavcodec/cbs_jpeg.c
+===================================================================
+--- FFmpeg.orig/libavcodec/cbs_jpeg.c
++++ FFmpeg/libavcodec/cbs_jpeg.c
+@@ -145,13 +145,13 @@ static int cbs_jpeg_split_fragment(Coded
+             }
+         } else {
+             i = start;
+-            if (i + 2 > frag->data_size) {
++            if (i > frag->data_size - 2) {
+                 av_log(ctx->log_ctx, AV_LOG_ERROR, "Invalid JPEG image: "
+                        "truncated at %02x marker.\n", marker);
+                 return AVERROR_INVALIDDATA;
+             }
+             length = AV_RB16(frag->data + i);
+-            if (i + length > frag->data_size) {
++            if (length > frag->data_size - i) {
+                 av_log(ctx->log_ctx, AV_LOG_ERROR, "Invalid JPEG image: "
+                        "truncated at %02x marker segment.\n", marker);
+                 return AVERROR_INVALIDDATA;
+Index: FFmpeg/libavcodec/cfhdenc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/cfhdenc.c
++++ FFmpeg/libavcodec/cfhdenc.c
+@@ -258,8 +258,8 @@ static av_cold int cfhd_encode_init(AVCo
+     if (ret < 0)
+         return ret;
+ 
+-    if (avctx->height < 4) {
+-        av_log(avctx, AV_LOG_ERROR, "Height must be >= 4.\n");
++    if (avctx->height < 32) {
++        av_log(avctx, AV_LOG_ERROR, "Height must be >= 32.\n");
+         return AVERROR_INVALIDDATA;
+     }
+ 
+@@ -553,7 +553,7 @@ static int cfhd_encode_frame(AVCodecCont
+                          width, height * 2);
+     }
+ 
+-    ret = ff_alloc_packet(avctx, pkt, 256LL + s->planes * (2LL * avctx->width * (avctx->height + 15) + 2048LL));
++    ret = ff_alloc_packet(avctx, pkt, 256LL + s->planes * (4LL * avctx->width * (avctx->height + 15) + 2048LL));
+     if (ret < 0)
+         return ret;
+ 
+@@ -761,7 +761,6 @@ static int cfhd_encode_frame(AVCodecCont
+                         } else if (count > 0) {
+                             count = put_runcode(pb, count, rb);
+                         }
+-
+                         put_bits(pb, cb[index].size, cb[index].bits);
+                     }
+ 
+Index: FFmpeg/libavcodec/cri.c
+===================================================================
+--- FFmpeg.orig/libavcodec/cri.c
++++ FFmpeg/libavcodec/cri.c
+@@ -234,10 +234,14 @@ static int cri_decode_frame(AVCodecConte
+             s->data_size = length;
+             goto skip;
+         case 105:
++            if (length <= 0)
++                return AVERROR_INVALIDDATA;
+             hflip = bytestream2_get_byte(gb) != 0;
+             length--;
+             goto skip;
+         case 106:
++            if (length <= 0)
++                return AVERROR_INVALIDDATA;
+             vflip = bytestream2_get_byte(gb) != 0;
+             length--;
+             goto skip;
+Index: FFmpeg/libavcodec/dxv.c
+===================================================================
+--- FFmpeg.orig/libavcodec/dxv.c
++++ FFmpeg/libavcodec/dxv.c
+@@ -240,7 +240,7 @@ static int get_opcodes(GetByteContext *g
+ 
+     size_in_bits = bytestream2_get_le32(gb);
+     endoffset = ((size_in_bits + 7) >> 3) - 4;
+-    if (endoffset <= 0 || bytestream2_get_bytes_left(gb) < endoffset)
++    if ((int)endoffset <= 0 || bytestream2_get_bytes_left(gb) < endoffset)
+         return AVERROR_INVALIDDATA;
+ 
+     offset = endoffset;
+Index: FFmpeg/libavcodec/flac_parser.c
+===================================================================
+--- FFmpeg.orig/libavcodec/flac_parser.c
++++ FFmpeg/libavcodec/flac_parser.c
+@@ -519,6 +519,8 @@ static int check_header_mismatch(FLACPar
+         for (i = 0; i < FLAC_MAX_SEQUENTIAL_HEADERS && curr != child; i++)
+             curr = curr->next;
+ 
++        av_assert0(i < FLAC_MAX_SEQUENTIAL_HEADERS);
++
+         if (header->link_penalty[i] < FLAC_HEADER_CRC_FAIL_PENALTY ||
+             header->link_penalty[i] == FLAC_HEADER_NOT_PENALIZED_YET) {
+             FLACHeaderMarker *start, *end;
+Index: FFmpeg/libavcodec/golomb.h
+===================================================================
+--- FFmpeg.orig/libavcodec/golomb.h
++++ FFmpeg/libavcodec/golomb.h
+@@ -402,6 +402,7 @@ static inline int get_ur_golomb(GetBitCo
+     log = av_log2(buf);
+ 
+     if (log > 31 - limit) {
++        av_assert2(log >= k);
+         buf >>= log - k;
+         buf  += (30U - log) << k;
+         LAST_SKIP_BITS(re, gb, 32 + k - log);
+@@ -424,6 +425,8 @@ static inline int get_ur_golomb(GetBitCo
+ 
+ /**
+  * read unsigned golomb rice code (jpegls).
++ *
++ * @returns -1 on error
+  */
+ static inline int get_ur_golomb_jpegls(GetBitContext *gb, int k, int limit,
+                                        int esc_len)
+@@ -535,6 +538,8 @@ static inline int get_sr_golomb(GetBitCo
+ 
+ /**
+  * read signed golomb rice code (flac).
++ *
++ * @returns INT_MIN on error
+  */
+ static inline int get_sr_golomb_flac(GetBitContext *gb, int k, int limit,
+                                      int esc_len)
+Index: FFmpeg/libavcodec/hdrenc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/hdrenc.c
++++ FFmpeg/libavcodec/hdrenc.c
+@@ -124,7 +124,7 @@ static int hdr_encode_frame(AVCodecConte
+     uint8_t *buf;
+     int ret;
+ 
+-    packet_size = avctx->width * avctx->height * 4LL + 1024LL;
++    packet_size = avctx->height * 4LL + avctx->width * avctx->height * 8LL + 1024LL;
+     if ((ret = ff_get_encode_buffer(avctx, pkt, packet_size, 0)) < 0)
+         return ret;
+ 
+Index: FFmpeg/libavcodec/hevcdec.c
+===================================================================
+--- FFmpeg.orig/libavcodec/hevcdec.c
++++ FFmpeg/libavcodec/hevcdec.c
+@@ -686,6 +686,10 @@ static int hls_slice_header(HEVCContext
+ 
+         if (s->ps.pps->dependent_slice_segments_enabled_flag)
+             sh->dependent_slice_segment_flag = get_bits1(gb);
++        if (sh->dependent_slice_segment_flag && !s->slice_initialized) {
++            av_log(s->avctx, AV_LOG_ERROR, "Independent slice segment missing.\n");
++            return AVERROR_INVALIDDATA;
++        }
+ 
+         slice_address_length = av_ceil_log2(s->ps.sps->ctb_width *
+                                             s->ps.sps->ctb_height);
+@@ -974,9 +978,6 @@ static int hls_slice_header(HEVCContext
+         } else {
+             sh->slice_loop_filter_across_slices_enabled_flag = s->ps.pps->seq_loop_filter_across_slices_enabled_flag;
+         }
+-    } else if (!s->slice_initialized) {
+-        av_log(s->avctx, AV_LOG_ERROR, "Independent slice segment missing.\n");
+-        return AVERROR_INVALIDDATA;
+     }
+ 
+     sh->num_entry_point_offsets = 0;
+@@ -3065,8 +3066,11 @@ static int decode_nal_unit(HEVCContext *
+     case HEVC_NAL_RASL_N:
+     case HEVC_NAL_RASL_R:
+         ret = hls_slice_header(s);
+-        if (ret < 0)
++        if (ret < 0) {
++            // hls_slice_header() does not cleanup on failure thus the state now is inconsistant so we cannot use it on depandant slices
++            s->slice_initialized = 0;
+             return ret;
++        }
+         if (ret == 1) {
+             ret = AVERROR_INVALIDDATA;
+             goto fail;
+Index: FFmpeg/libavcodec/iff.c
+===================================================================
+--- FFmpeg.orig/libavcodec/iff.c
++++ FFmpeg/libavcodec/iff.c
+@@ -522,7 +522,7 @@ static int decode_byterun2(uint8_t *dst,
+                            GetByteContext *gb)
+ {
+     GetByteContext cmds;
+-    unsigned count;
++    int count;
+     int i, y_pos = 0, x_pos = 0;
+ 
+     if (bytestream2_get_be32(gb) != MKBETAG('V', 'D', 'A', 'T'))
+@@ -530,7 +530,7 @@ static int decode_byterun2(uint8_t *dst,
+ 
+     bytestream2_skip(gb, 4);
+     count = bytestream2_get_be16(gb) - 2;
+-    if (bytestream2_get_bytes_left(gb) < count)
++    if (count < 0 || bytestream2_get_bytes_left(gb) < count)
+         return 0;
+ 
+     bytestream2_init(&cmds, gb->buffer, count);
+Index: FFmpeg/libavcodec/ilbcdec.c
+===================================================================
+--- FFmpeg.orig/libavcodec/ilbcdec.c
++++ FFmpeg/libavcodec/ilbcdec.c
+@@ -1095,12 +1095,6 @@ static void do_plc(int16_t *plc_residual
+ 
+         if (s->consPLICount * s->block_samples > 320) {
+             use_gain = 29491;   /* 0.9 in Q15 */
+-        } else if (s->consPLICount * s->block_samples > 640) {
+-            use_gain = 22938;   /* 0.7 in Q15 */
+-        } else if (s->consPLICount * s->block_samples > 960) {
+-            use_gain = 16384;   /* 0.5 in Q15 */
+-        } else if (s->consPLICount * s->block_samples > 1280) {
+-            use_gain = 0;       /* 0.0 in Q15 */
+         }
+ 
+         /* Compute mixing factor of picth repeatition and noise:
+Index: FFmpeg/libavcodec/imm4.c
+===================================================================
+--- FFmpeg.orig/libavcodec/imm4.c
++++ FFmpeg/libavcodec/imm4.c
+@@ -219,12 +219,15 @@ static int decode_intra(AVCodecContext *
+ 
+     for (y = 0; y < avctx->height; y += 16) {
+         for (x = 0; x < avctx->width; x += 16) {
+-            unsigned flag, cbphi, cbplo;
++            unsigned flag, cbplo;
++            int cbphi;
+ 
+             cbplo = get_vlc2(gb, cbplo_tab, CBPLO_VLC_BITS, 1);
+             flag = get_bits1(gb);
+ 
+             cbphi = get_cbphi(gb, 1);
++            if (cbphi < 0)
++                return cbphi;
+ 
+             ret = decode_blocks(avctx, gb, cbplo | (cbphi << 2), 0, offset, flag);
+             if (ret < 0)
+@@ -272,7 +275,8 @@ static int decode_inter(AVCodecContext *
+     for (y = 0; y < avctx->height; y += 16) {
+         for (x = 0; x < avctx->width; x += 16) {
+             int reverse, intra_block, value;
+-            unsigned cbphi, cbplo, flag2 = 0;
++            unsigned cbplo, flag2 = 0;
++            int cbphi;
+ 
+             if (get_bits1(gb)) {
+                 copy_block16(frame->data[0] + y * frame->linesize[0] + x,
+@@ -298,6 +302,9 @@ static int decode_inter(AVCodecContext *
+ 
+             cbplo = value >> 4;
+             cbphi = get_cbphi(gb, reverse);
++            if (cbphi < 0)
++                return cbphi;
++
+             if (intra_block) {
+                 ret = decode_blocks(avctx, gb, cbplo | (cbphi << 2), 0, offset, flag2);
+                 if (ret < 0)
+Index: FFmpeg/libavcodec/j2kenc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/j2kenc.c
++++ FFmpeg/libavcodec/j2kenc.c
+@@ -1348,7 +1348,7 @@ static void makelayers(Jpeg2000EncoderCo
+     }
+ }
+ 
+-static int getcut(Jpeg2000Cblk *cblk, uint64_t lambda, int dwt_norm)
++static int getcut(Jpeg2000Cblk *cblk, uint64_t lambda)
+ {
+     int passno, res = 0;
+     for (passno = 0; passno < cblk->npasses; passno++){
+@@ -1360,7 +1360,7 @@ static int getcut(Jpeg2000Cblk *cblk, ui
+         dd = cblk->passes[passno].disto
+            - (res ? cblk->passes[res-1].disto : 0);
+ 
+-        if (((dd * dwt_norm) >> WMSEDEC_SHIFT) * dwt_norm >= dr * lambda)
++        if (dd  >= dr * lambda)
+             res = passno+1;
+     }
+     return res;
+@@ -1383,11 +1383,12 @@ static void truncpasses(Jpeg2000EncoderC
+                     Jpeg2000Band *band = reslevel->band + bandno;
+                     Jpeg2000Prec *prec = band->prec + precno;
+ 
++                    int64_t dwt_norm = dwt_norms[codsty->transform == FF_DWT53][bandpos][lev] * (int64_t)band->i_stepsize >> 15;
++                    int64_t lambda_prime = av_rescale(s->lambda, 1 << WMSEDEC_SHIFT, dwt_norm * dwt_norm);
+                     for (cblkno = 0; cblkno < prec->nb_codeblocks_height * prec->nb_codeblocks_width; cblkno++){
+                         Jpeg2000Cblk *cblk = prec->cblk + cblkno;
+ 
+-                        cblk->ninclpasses = getcut(cblk, s->lambda,
+-                                (int64_t)dwt_norms[codsty->transform == FF_DWT53][bandpos][lev] * (int64_t)band->i_stepsize >> 15);
++                        cblk->ninclpasses = getcut(cblk, lambda_prime);
+                         cblk->layers[0].data_start = cblk->data;
+                         cblk->layers[0].cum_passes = cblk->ninclpasses;
+                         cblk->layers[0].npasses = cblk->ninclpasses;
+Index: FFmpeg/libavcodec/jfdctint_template.c
+===================================================================
+--- FFmpeg.orig/libavcodec/jfdctint_template.c
++++ FFmpeg/libavcodec/jfdctint_template.c
+@@ -69,7 +69,7 @@
+ #define GLOBAL(x) x
+ #define RIGHT_SHIFT(x, n) ((x) >> (n))
+ #define MULTIPLY16C16(var,const) ((var)*(const))
+-#define DESCALE(x,n)  RIGHT_SHIFT((x) + (1 << ((n) - 1)), n)
++#define DESCALE(x,n)  RIGHT_SHIFT((int)(x) + (1 << ((n) - 1)), n)
+ 
+ 
+ /*
+@@ -175,7 +175,7 @@
+ #if BITS_IN_JSAMPLE == 8 && CONST_BITS<=13 && PASS1_BITS<=2
+ #define MULTIPLY(var,const)  MULTIPLY16C16(var,const)
+ #else
+-#define MULTIPLY(var,const)  ((var) * (const))
++#define MULTIPLY(var,const)  (int)((var) * (unsigned)(const))
+ #endif
+ 
+ 
+@@ -261,7 +261,7 @@ FUNC(ff_jpeg_fdct_islow)(int16_t *data)
+ {
+   int tmp0, tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7;
+   int tmp10, tmp11, tmp12, tmp13;
+-  int z1, z2, z3, z4, z5;
++  unsigned z1, z2, z3, z4, z5;
+   int16_t *dataptr;
+   int ctr;
+ 
+Index: FFmpeg/libavcodec/leaddec.c
+===================================================================
+--- FFmpeg.orig/libavcodec/leaddec.c
++++ FFmpeg/libavcodec/leaddec.c
+@@ -196,7 +196,9 @@ static int lead_decode_frame(AVCodecCont
+             i++;
+     }
+ 
+-    init_get_bits8(&gb, s->bitstream_buf, size);
++    ret = init_get_bits8(&gb, s->bitstream_buf, size);
++    if (ret < 0)
++        return ret;
+ 
+     if (avctx->pix_fmt == AV_PIX_FMT_YUV420P && zero) {
+         for (int mb_y = 0; mb_y < avctx->height / 8; mb_y++)
+Index: FFmpeg/libavcodec/libvpxenc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/libvpxenc.c
++++ FFmpeg/libavcodec/libvpxenc.c
+@@ -2040,6 +2040,7 @@ const FFCodec ff_libvpx_vp8_encoder = {
+     FF_CODEC_ENCODE_CB(vpx_encode),
+     .close          = vpx_free,
+     .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE |
++                      FF_CODEC_CAP_INIT_CLEANUP |
+                       FF_CODEC_CAP_AUTO_THREADS,
+     .p.pix_fmts     = (const enum AVPixelFormat[]){ AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUVA420P, AV_PIX_FMT_NONE },
+     .p.priv_class   = &class_vp8,
+@@ -2116,6 +2117,7 @@ FFCodec ff_libvpx_vp9_encoder = {
+     FF_CODEC_ENCODE_CB(vpx_encode),
+     .close          = vpx_free,
+     .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE |
++                      FF_CODEC_CAP_INIT_CLEANUP |
+                       FF_CODEC_CAP_AUTO_THREADS,
+     .defaults       = defaults,
+     .init_static_data = vp9_init_static,
+Index: FFmpeg/libavcodec/libx264.c
+===================================================================
+--- FFmpeg.orig/libavcodec/libx264.c
++++ FFmpeg/libavcodec/libx264.c
+@@ -929,7 +929,9 @@ static int set_avcc_extradata(AVCodecCon
+          *
+          * +4 to skip until sps id.
+          */
+-        init_get_bits8(&gbc, sps + 4, sps_nal->i_payload - 4 - 4);
++        ret = init_get_bits8(&gbc, sps + 4, sps_nal->i_payload - 4 - 4);
++        if (ret < 0)
++            return ret;
+         // Skip sps id
+         get_ue_golomb_31(&gbc);
+         chroma_format_idc = get_ue_golomb_31(&gbc);
+Index: FFmpeg/libavcodec/loco.c
+===================================================================
+--- FFmpeg.orig/libavcodec/loco.c
++++ FFmpeg/libavcodec/loco.c
+@@ -92,10 +92,15 @@ static inline int loco_get_rice(RICECont
+     if (get_bits_left(&r->gb) < 1)
+         return INT_MIN;
+     v = get_ur_golomb_jpegls(&r->gb, loco_get_rice_param(r), INT_MAX, 0);
++    if (v == -1)
++        return INT_MIN;
+     loco_update_rice_param(r, (v + 1) >> 1);
+     if (!v) {
+         if (r->save >= 0) {
+-            r->run = get_ur_golomb_jpegls(&r->gb, 2, INT_MAX, 0);
++            int run = get_ur_golomb_jpegls(&r->gb, 2, INT_MAX, 0);
++            if (run == -1)
++                return INT_MIN;
++            r->run = run;
+             if (r->run > 1)
+                 r->save += r->run + 1;
+             else
+@@ -152,6 +157,8 @@ static int loco_decode_plane(LOCOContext
+ 
+     /* restore top left pixel */
+     val     = loco_get_rice(&rc);
++    if (val == INT_MIN)
++        return AVERROR_INVALIDDATA;
+     data[0] = 128 + val;
+     /* restore top line */
+     for (i = 1; i < width; i++) {
+Index: FFmpeg/libavcodec/mediacodecenc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/mediacodecenc.c
++++ FFmpeg/libavcodec/mediacodecenc.c
+@@ -200,9 +200,19 @@ static av_cold int mediacodec_init(AVCod
+     ff_AMediaFormat_setString(format, "mime", codec_mime);
+     // Workaround the alignment requirement of mediacodec. We can't do it
+     // silently for AV_PIX_FMT_MEDIACODEC.
+-    if (avctx->pix_fmt != AV_PIX_FMT_MEDIACODEC) {
++    if (avctx->pix_fmt != AV_PIX_FMT_MEDIACODEC &&
++        (avctx->codec_id == AV_CODEC_ID_H264 ||
++         avctx->codec_id == AV_CODEC_ID_HEVC)) {
+         s->width = FFALIGN(avctx->width, 16);
+         s->height = FFALIGN(avctx->height, 16);
++        // If avctx video size is aligned to 16 already, we don't need to do
++        // anything. If align is needed for HEVC, we should use the maximum CTU
++        // size.
++        if (avctx->codec_id == AV_CODEC_ID_HEVC &&
++            (s->width != avctx->width || s->height != avctx->height)) {
++            s->width = FFALIGN(avctx->width, 64);
++            s->height = FFALIGN(avctx->height, 64);
++        }
+     } else {
+         s->width = avctx->width;
+         s->height = avctx->height;
+Index: FFmpeg/libavcodec/mfenc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/mfenc.c
++++ FFmpeg/libavcodec/mfenc.c
+@@ -248,7 +248,7 @@ static int mf_sample_to_avpacket(AVCodec
+     if ((ret = ff_get_encode_buffer(avctx, avpkt, len, 0)) < 0)
+         return ret;
+ 
+-    IMFSample_ConvertToContiguousBuffer(sample, &buffer);
++    hr = IMFSample_ConvertToContiguousBuffer(sample, &buffer);
+     if (FAILED(hr))
+         return AVERROR_EXTERNAL;
+ 
+Index: FFmpeg/libavcodec/mlpenc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/mlpenc.c
++++ FFmpeg/libavcodec/mlpenc.c
+@@ -1414,7 +1414,8 @@ static int estimate_coeff(MLPEncodeConte
+     int32_t maxl = INT32_MIN, maxr = INT32_MIN, minl = INT32_MAX, minr = INT32_MAX;
+     int64_t summ = 0, sums = 0, suml = 0, sumr = 0, enl = 0, enr = 0;
+     const int shift = 14 - ctx->rematrix_precision;
+-    int32_t cf0, cf1, e[4], d[4], ml, mr;
++    int32_t cf0, cf1, e[4], d[4];
++    int64_t ml, mr;
+     int i, count = 0;
+ 
+     for (int j = 0; j <= ctx->cur_restart_interval; j++) {
+@@ -1447,8 +1448,8 @@ static int estimate_coeff(MLPEncodeConte
+     summ -= FFABS(suml + sumr);
+     sums -= FFABS(suml - sumr);
+ 
+-    ml = maxl - minl;
+-    mr = maxr - minr;
++    ml = maxl - (int64_t)minl;
++    mr = maxr - (int64_t)minr;
+ 
+     if (!summ && !sums)
+         return 0;
+Index: FFmpeg/libavcodec/motion_est.c
+===================================================================
+--- FFmpeg.orig/libavcodec/motion_est.c
++++ FFmpeg/libavcodec/motion_est.c
+@@ -1446,7 +1446,7 @@ static inline int direct_search(MpegEncC
+         s->b_direct_mv_table[mot_xy][0]= 0;
+         s->b_direct_mv_table[mot_xy][1]= 0;
+ 
+-        return 256*256*256*64;
++        return 256*256*256*64-1;
+     }
+ 
+     c->xmin= xmin;
+Index: FFmpeg/libavcodec/mpeg12enc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/mpeg12enc.c
++++ FFmpeg/libavcodec/mpeg12enc.c
+@@ -333,7 +333,7 @@ static void mpeg1_encode_sequence_header
+     else
+         /* VBV calculation: Scaled so that a VCD has the proper
+          * VBV size of 40 kilobytes */
+-        vbv_buffer_size = ((20 * s->bit_rate) / (1151929 / 2)) * 8 * 1024;
++        vbv_buffer_size = av_rescale_rnd(s->bit_rate, 20, 1151929 / 2, AV_ROUND_ZERO) * 8 * 1024;
+     vbv_buffer_size = (vbv_buffer_size + 16383) / 16384;
+ 
+     put_sbits(&s->pb, 18, v);
+Index: FFmpeg/libavcodec/mpegvideo_enc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/mpegvideo_enc.c
++++ FFmpeg/libavcodec/mpegvideo_enc.c
+@@ -1252,6 +1252,8 @@ static int load_input_picture(MpegEncCon
+     /* shift buffer entries */
+     for (int i = flush_offset; i <= MAX_B_FRAMES; i++)
+         s->input_picture[i - flush_offset] = s->input_picture[i];
++    for (int i = MAX_B_FRAMES + 1 - flush_offset; i <= MAX_B_FRAMES; i++)
++        s->input_picture[i] = NULL;
+ 
+     s->input_picture[encoding_delay] = pic;
+ 
+Index: FFmpeg/libavcodec/notchlc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/notchlc.c
++++ FFmpeg/libavcodec/notchlc.c
+@@ -242,7 +242,9 @@ static int decode_blocks(AVCodecContext
+ 
+         bytestream2_seek(&dgb, s->y_data_offset + row_offset, SEEK_SET);
+ 
+-        init_get_bits8(&bit, dgb.buffer, bytestream2_get_bytes_left(&dgb));
++        ret = init_get_bits8(&bit, dgb.buffer, bytestream2_get_bytes_left(&dgb));
++        if (ret < 0)
++            return ret;
+         for (int x = 0; x < avctx->width; x += 4) {
+             unsigned item = bytestream2_get_le32(gb);
+             unsigned y_min = item & 4095;
+Index: FFmpeg/libavcodec/nvenc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/nvenc.c
++++ FFmpeg/libavcodec/nvenc.c
+@@ -984,7 +984,7 @@ static av_cold int nvenc_recalc_surfaces
+ 
+     // Output in the worst case will only start when the surface buffer is completely full.
+     // Hence we need to keep at least the max amount of surfaces plus the max reorder delay around.
+-    ctx->frame_data_array_nb = ctx->nb_surfaces + ctx->encode_config.frameIntervalP - 1;
++    ctx->frame_data_array_nb = FFMAX(ctx->nb_surfaces, ctx->nb_surfaces + ctx->encode_config.frameIntervalP - 1);
+ 
+     return 0;
+ }
+@@ -1893,7 +1893,7 @@ av_cold int ff_nvenc_encode_close(AVCode
+     av_fifo_freep2(&ctx->unused_surface_queue);
+ 
+     if (ctx->frame_data_array) {
+-        for (i = 0; i < ctx->nb_surfaces; i++)
++        for (i = 0; i < ctx->frame_data_array_nb; i++)
+             av_buffer_unref(&ctx->frame_data_array[i].frame_opaque_ref);
+         av_freep(&ctx->frame_data_array);
+     }
+Index: FFmpeg/libavcodec/osq.c
+===================================================================
+--- FFmpeg.orig/libavcodec/osq.c
++++ FFmpeg/libavcodec/osq.c
+@@ -160,11 +160,15 @@ static int update_residue_parameter(OSQC
+ 
+     sum = cb->sum;
+     x = sum / cb->count;
+-    rice_k = av_ceil_log2(x);
++    rice_k = ceil(log2(x));
+     if (rice_k >= 30) {
+-        rice_k = floor(sum / 1.4426952 + 0.5);
+-        if (rice_k < 1)
++        double f = floor(sum / 1.4426952 + 0.5);
++        if (f <= 1) {
+             rice_k = 1;
++        } else if (f >= 31) {
++            rice_k = 31;
++        } else
++            rice_k = f;
+     }
+ 
+     return rice_k;
+@@ -320,7 +324,7 @@ static int do_decode(AVCodecContext *avc
+             cb->prev = prev;
+ 
+             if (downsample)
+-                dst[n] *= 256;
++                dst[n] *= 256U;
+ 
+             dst[E] = dst[D];
+             dst[D] = dst[C];
+@@ -351,7 +355,7 @@ static int osq_decode_block(AVCodecConte
+     const int nb_channels = avctx->ch_layout.nb_channels;
+     const int nb_samples = frame->nb_samples;
+     OSQContext *s = avctx->priv_data;
+-    const int factor = s->factor;
++    const unsigned factor = s->factor;
+     int ret, decorrelate, downsample;
+     GetBitContext *gb = &s->gb;
+ 
+Index: FFmpeg/libavcodec/pcm-bluray.c
+===================================================================
+--- FFmpeg.orig/libavcodec/pcm-bluray.c
++++ FFmpeg/libavcodec/pcm-bluray.c
+@@ -167,7 +167,7 @@ static int pcm_bluray_decode_frame(AVCod
+             samples *= num_source_channels;
+             if (AV_SAMPLE_FMT_S16 == avctx->sample_fmt) {
+ #if HAVE_BIGENDIAN
+-                bytestream2_get_buffer(&gb, dst16, buf_size);
++                bytestream2_get_buffer(&gb, (uint8_t*)dst16, buf_size);
+ #else
+                 do {
+                     *dst16++ = bytestream2_get_be16u(&gb);
+@@ -187,7 +187,8 @@ static int pcm_bluray_decode_frame(AVCod
+             if (AV_SAMPLE_FMT_S16 == avctx->sample_fmt) {
+                 do {
+ #if HAVE_BIGENDIAN
+-                    bytestream2_get_buffer(&gb, dst16, avctx->ch_layout.nb_channels * 2);
++                    bytestream2_get_buffer(&gb, (uint8_t*)dst16,
++                                           avctx->ch_layout.nb_channels * 2);
+                     dst16 += avctx->ch_layout.nb_channels;
+ #else
+                     channel = avctx->ch_layout.nb_channels;
+Index: FFmpeg/libavcodec/pcm-dvd.c
+===================================================================
+--- FFmpeg.orig/libavcodec/pcm-dvd.c
++++ FFmpeg/libavcodec/pcm-dvd.c
+@@ -157,7 +157,7 @@ static void *pcm_dvd_decode_samples(AVCo
+     switch (avctx->bits_per_coded_sample) {
+     case 16: {
+ #if HAVE_BIGENDIAN
+-        bytestream2_get_buffer(&gb, dst16, blocks * s->block_size);
++        bytestream2_get_buffer(&gb, (uint8_t*)dst16, blocks * s->block_size);
+         dst16 += blocks * s->block_size / 2;
+ #else
+         int samples = blocks * avctx->ch_layout.nb_channels;
+Index: FFmpeg/libavcodec/pcm-dvdenc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/pcm-dvdenc.c
++++ FFmpeg/libavcodec/pcm-dvdenc.c
+@@ -116,7 +116,7 @@ static int pcm_dvd_encode_frame(AVCodecC
+ {
+     PCMDVDContext *s = avctx->priv_data;
+     int samples = frame->nb_samples * avctx->ch_layout.nb_channels;
+-    int64_t pkt_size = (frame->nb_samples / s->samples_per_block) * s->block_size + 3;
++    int64_t pkt_size = (int64_t)(frame->nb_samples / s->samples_per_block) * s->block_size + 3;
+     int blocks = (pkt_size - 3) / s->block_size;
+     const int16_t *src16;
+     const int32_t *src32;
+Index: FFmpeg/libavcodec/pixlet.c
+===================================================================
+--- FFmpeg.orig/libavcodec/pixlet.c
++++ FFmpeg/libavcodec/pixlet.c
+@@ -230,8 +230,8 @@ static int read_high_coeffs(AVCodecConte
+         if (cnt1 >= length) {
+             cnt1 = get_bits(bc, nbits);
+         } else {
+-            pfx = 14 + ((((uint64_t)(value - 14)) >> 32) & (value - 14));
+-            if (pfx < 1 || pfx > 25)
++            pfx = FFMIN(value, 14);
++            if (pfx < 1)
+                 return AVERROR_INVALIDDATA;
+             cnt1 *= (1 << pfx) - 1;
+             shbits = show_bits(bc, pfx);
+Index: FFmpeg/libavcodec/pngdec.c
+===================================================================
+--- FFmpeg.orig/libavcodec/pngdec.c
++++ FFmpeg/libavcodec/pngdec.c
+@@ -85,11 +85,12 @@ typedef struct PNGDecContext {
+     int have_clli;
+     uint32_t clli_max;
+     uint32_t clli_avg;
+-    int have_mdvc;
+-    uint16_t mdvc_primaries[3][2];
+-    uint16_t mdvc_white_point[2];
+-    uint32_t mdvc_max_lum;
+-    uint32_t mdvc_min_lum;
++    /* Mastering Display Color Volume */
++    int have_mdcv;
++    uint16_t mdcv_primaries[3][2];
++    uint16_t mdcv_white_point[2];
++    uint32_t mdcv_max_lum;
++    uint32_t mdcv_min_lum;
+ 
+     enum PNGHeaderState hdr_state;
+     enum PNGImageState pic_state;
+@@ -762,24 +763,24 @@ static int populate_avctx_color_fields(A
+         }
+     }
+ 
+-    if (s->have_mdvc) {
+-        AVMasteringDisplayMetadata *mdvc;
++    if (s->have_mdcv) {
++        AVMasteringDisplayMetadata *mdcv;
+ 
+-        ret = ff_decode_mastering_display_new(avctx, frame, &mdvc);
++        ret = ff_decode_mastering_display_new(avctx, frame, &mdcv);
+         if (ret < 0)
+             return ret;
+ 
+-        if (mdvc) {
+-            mdvc->has_primaries = 1;
++        if (mdcv) {
++            mdcv->has_primaries = 1;
+             for (int i = 0; i < 3; i++) {
+-                mdvc->display_primaries[i][0] = av_make_q(s->mdvc_primaries[i][0], 50000);
+-                mdvc->display_primaries[i][1] = av_make_q(s->mdvc_primaries[i][1], 50000);
++                mdcv->display_primaries[i][0] = av_make_q(s->mdcv_primaries[i][0], 50000);
++                mdcv->display_primaries[i][1] = av_make_q(s->mdcv_primaries[i][1], 50000);
+             }
+-            mdvc->white_point[0] = av_make_q(s->mdvc_white_point[0], 50000);
+-            mdvc->white_point[1] = av_make_q(s->mdvc_white_point[1], 50000);
+-            mdvc->has_luminance = 1;
+-            mdvc->max_luminance = av_make_q(s->mdvc_max_lum, 10000);
+-            mdvc->min_luminance = av_make_q(s->mdvc_min_lum, 10000);
++            mdcv->white_point[0] = av_make_q(s->mdcv_white_point[0], 50000);
++            mdcv->white_point[1] = av_make_q(s->mdcv_white_point[1], 50000);
++            mdcv->has_luminance = 1;
++            mdcv->max_luminance = av_make_q(s->mdcv_max_lum, 10000);
++            mdcv->min_luminance = av_make_q(s->mdcv_min_lum, 10000);
+         }
+     }
+ 
+@@ -1081,17 +1082,20 @@ static int decode_sbit_chunk(AVCodecCont
+         return AVERROR_INVALIDDATA;
+     }
+ 
+-    channels = ff_png_get_nb_channels(s->color_type);
++    channels = s->color_type & PNG_COLOR_MASK_PALETTE ? 3 : ff_png_get_nb_channels(s->color_type);
+ 
+-    if (bytestream2_get_bytes_left(gb) != channels)
++    if (bytestream2_get_bytes_left(gb) != channels) {
++        av_log(avctx, AV_LOG_ERROR, "Invalid sBIT size: %d, expected: %d\n",
++            bytestream2_get_bytes_left(gb), channels);
+         return AVERROR_INVALIDDATA;
++    }
+ 
+     for (int i = 0; i < channels; i++) {
+         int b = bytestream2_get_byteu(gb);
+         bits = FFMAX(b, bits);
+     }
+ 
+-    if (bits < 0 || bits > s->bit_depth) {
++    if (bits <= 0 || bits > (s->color_type & PNG_COLOR_MASK_PALETTE ? 8 : s->bit_depth)) {
+         av_log(avctx, AV_LOG_ERROR, "Invalid significant bits: %d\n", bits);
+         return AVERROR_INVALIDDATA;
+     }
+@@ -1569,20 +1573,20 @@ static int decode_frame_common(AVCodecCo
+             s->clli_max = bytestream2_get_be32u(&gb_chunk);
+             s->clli_avg = bytestream2_get_be32u(&gb_chunk);
+             break;
+-        case MKTAG('m', 'D', 'V', 'c'):
++        case MKTAG('m', 'D', 'C', 'v'):
+             if (bytestream2_get_bytes_left(&gb_chunk) != 24) {
+-                av_log(avctx, AV_LOG_WARNING, "Invalid mDVc chunk size: %d\n", bytestream2_get_bytes_left(&gb_chunk));
++                av_log(avctx, AV_LOG_WARNING, "Invalid mDCv chunk size: %d\n", bytestream2_get_bytes_left(&gb_chunk));
+                 break;
+             }
+-            s->have_mdvc = 1;
++            s->have_mdcv = 1;
+             for (int i = 0; i < 3; i++) {
+-                s->mdvc_primaries[i][0] = bytestream2_get_be16u(&gb_chunk);
+-                s->mdvc_primaries[i][1] = bytestream2_get_be16u(&gb_chunk);
++                s->mdcv_primaries[i][0] = bytestream2_get_be16u(&gb_chunk);
++                s->mdcv_primaries[i][1] = bytestream2_get_be16u(&gb_chunk);
+             }
+-            s->mdvc_white_point[0] = bytestream2_get_be16u(&gb_chunk);
+-            s->mdvc_white_point[1] = bytestream2_get_be16u(&gb_chunk);
+-            s->mdvc_max_lum = bytestream2_get_be32u(&gb_chunk);
+-            s->mdvc_min_lum = bytestream2_get_be32u(&gb_chunk);
++            s->mdcv_white_point[0] = bytestream2_get_be16u(&gb_chunk);
++            s->mdcv_white_point[1] = bytestream2_get_be16u(&gb_chunk);
++            s->mdcv_max_lum = bytestream2_get_be32u(&gb_chunk);
++            s->mdcv_min_lum = bytestream2_get_be32u(&gb_chunk);
+             break;
+         case MKTAG('I', 'E', 'N', 'D'):
+             if (!(s->pic_state & PNG_ALLIMAGE))
+Index: FFmpeg/libavcodec/pngenc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/pngenc.c
++++ FFmpeg/libavcodec/pngenc.c
+@@ -449,17 +449,17 @@ static int encode_headers(AVCodecContext
+ 
+     side_data = av_frame_get_side_data(pict, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
+     if (side_data) {
+-        AVMasteringDisplayMetadata *mdvc = (AVMasteringDisplayMetadata *) side_data->data;
+-        if (mdvc->has_luminance && mdvc->has_primaries) {
++        AVMasteringDisplayMetadata *mdcv = (AVMasteringDisplayMetadata *) side_data->data;
++        if (mdcv->has_luminance && mdcv->has_primaries) {
+             for (int i = 0; i < 3; i++) {
+-                AV_WB16(s->buf + 2*i, PNG_Q2D(mdvc->display_primaries[i][0], 50000));
+-                AV_WB16(s->buf + 2*i + 2, PNG_Q2D(mdvc->display_primaries[i][1], 50000));
++                AV_WB16(s->buf + 2*i, PNG_Q2D(mdcv->display_primaries[i][0], 50000));
++                AV_WB16(s->buf + 2*i + 2, PNG_Q2D(mdcv->display_primaries[i][1], 50000));
+             }
+-            AV_WB16(s->buf + 12, PNG_Q2D(mdvc->white_point[0], 50000));
+-            AV_WB16(s->buf + 14, PNG_Q2D(mdvc->white_point[1], 50000));
+-            AV_WB32(s->buf + 16, PNG_Q2D(mdvc->max_luminance, 10000));
+-            AV_WB32(s->buf + 20, PNG_Q2D(mdvc->min_luminance, 10000));
+-            png_write_chunk(&s->bytestream, MKTAG('m', 'D', 'V', 'c'), s->buf, 24);
++            AV_WB16(s->buf + 12, PNG_Q2D(mdcv->white_point[0], 50000));
++            AV_WB16(s->buf + 14, PNG_Q2D(mdcv->white_point[1], 50000));
++            AV_WB32(s->buf + 16, PNG_Q2D(mdcv->max_luminance, 10000));
++            AV_WB32(s->buf + 20, PNG_Q2D(mdcv->min_luminance, 10000));
++            png_write_chunk(&s->bytestream, MKTAG('m', 'D', 'C', 'v'), s->buf, 24);
+         }
+     }
+ 
+@@ -468,8 +468,9 @@ static int encode_headers(AVCodecContext
+     if (png_get_gama(pict->color_trc, s->buf))
+         png_write_chunk(&s->bytestream, MKTAG('g', 'A', 'M', 'A'), s->buf, 4);
+ 
+-    if (avctx->bits_per_raw_sample > 0 && avctx->bits_per_raw_sample < s->bit_depth) {
+-        int len = ff_png_get_nb_channels(s->color_type);
++    if (avctx->bits_per_raw_sample > 0 &&
++            avctx->bits_per_raw_sample < (s->color_type & PNG_COLOR_MASK_PALETTE ? 8 : s->bit_depth)) {
++        int len = s->color_type & PNG_COLOR_MASK_PALETTE ? 3 : ff_png_get_nb_channels(s->color_type);
+         memset(s->buf, avctx->bits_per_raw_sample, len);
+         png_write_chunk(&s->bytestream, MKTAG('s', 'B', 'I', 'T'), s->buf, len);
+     }
+Index: FFmpeg/libavcodec/pnmdec.c
+===================================================================
+--- FFmpeg.orig/libavcodec/pnmdec.c
++++ FFmpeg/libavcodec/pnmdec.c
+@@ -264,7 +264,7 @@ static int pnm_decode_frame(AVCodecConte
+         break;
+     case AV_PIX_FMT_GBRPF32:
+         if (!s->half) {
+-            if (avctx->width * avctx->height * 12 > s->bytestream_end - s->bytestream)
++            if (avctx->width * avctx->height * 12LL > s->bytestream_end - s->bytestream)
+                 return AVERROR_INVALIDDATA;
+             scale = 1.f / s->scale;
+             if (s->endian) {
+Index: FFmpeg/libavcodec/proresdec2.c
+===================================================================
+--- FFmpeg.orig/libavcodec/proresdec2.c
++++ FFmpeg/libavcodec/proresdec2.c
+@@ -510,7 +510,7 @@ static av_always_inline int decode_ac_co
+ 
+     for (pos = block_mask;;) {
+         bits_left = gb->size_in_bits - re_index;
+-        if (!bits_left || (bits_left < 32 && !SHOW_UBITS(re, gb, bits_left)))
++        if (bits_left <= 0 || (bits_left < 32 && !SHOW_UBITS(re, gb, bits_left)))
+             break;
+ 
+         DECODE_CODEWORD(run, run_to_cb[FFMIN(run,  15)], LAST_SKIP_BITS);
+Index: FFmpeg/libavcodec/proresenc_anatoliy.c
+===================================================================
+--- FFmpeg.orig/libavcodec/proresenc_anatoliy.c
++++ FFmpeg/libavcodec/proresenc_anatoliy.c
+@@ -856,7 +856,8 @@ static av_cold int prores_encode_init(AV
+             avctx->profile = AV_PROFILE_PRORES_4444;
+             av_log(avctx, AV_LOG_INFO,
+                    "encoding with ProRes 4444+ (ap4h) profile\n");
+-        }
++        } else
++            av_assert0(0);
+     } else if (avctx->profile < AV_PROFILE_PRORES_PROXY
+             || avctx->profile > AV_PROFILE_PRORES_XQ) {
+         av_log(
+Index: FFmpeg/libavcodec/proresenc_kostya.c
+===================================================================
+--- FFmpeg.orig/libavcodec/proresenc_kostya.c
++++ FFmpeg/libavcodec/proresenc_kostya.c
+@@ -342,7 +342,7 @@ static void get_slice_data(ProresContext
+ 
+ static void get_alpha_data(ProresContext *ctx, const uint16_t *src,
+                            ptrdiff_t linesize, int x, int y, int w, int h,
+-                           int16_t *blocks, int mbs_per_slice, int abits)
++                           uint16_t *blocks, int mbs_per_slice, int abits)
+ {
+     const int slice_width = 16 * mbs_per_slice;
+     int i, j, copy_w, copy_h;
+Index: FFmpeg/libavcodec/r210enc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/r210enc.c
++++ FFmpeg/libavcodec/r210enc.c
+@@ -35,7 +35,7 @@ static av_cold int encode_init(AVCodecCo
+ 
+     avctx->bits_per_coded_sample = 32;
+     if (avctx->width > 0)
+-        avctx->bit_rate = ff_guess_coded_bitrate(avctx) * aligned_width / avctx->width;
++        avctx->bit_rate = av_rescale(ff_guess_coded_bitrate(avctx), aligned_width, avctx->width);
+ 
+     return 0;
+ }
+Index: FFmpeg/libavcodec/riscv/lpc_init.c
+===================================================================
+--- FFmpeg.orig/libavcodec/riscv/lpc_init.c
++++ FFmpeg/libavcodec/riscv/lpc_init.c
+@@ -36,7 +36,7 @@ av_cold void ff_lpc_init_riscv(LPCContex
+     if ((flags & AV_CPU_FLAG_RVV_F64) && (flags & AV_CPU_FLAG_RVB_ADDR)) {
+         c->lpc_apply_welch_window = ff_lpc_apply_welch_window_rvv;
+ 
+-        if (ff_get_rv_vlenb() >= c->max_order)
++        if (ff_get_rv_vlenb() > c->max_order)
+             c->lpc_compute_autocorr = ff_lpc_compute_autocorr_rvv;
+     }
+ #endif
+Index: FFmpeg/libavcodec/riscv/lpc_rvv.S
+===================================================================
+--- FFmpeg.orig/libavcodec/riscv/lpc_rvv.S
++++ FFmpeg/libavcodec/riscv/lpc_rvv.S
+@@ -87,6 +87,7 @@ func ff_lpc_apply_welch_window_rvv, zve6
+ endfunc
+ 
+ func ff_lpc_compute_autocorr_rvv, zve64d
++        addi      a2, a2, 1
+         li        t0, 1
+         vsetvli   zero, a2, e64, m8, ta, ma
+         fcvt.d.l  ft0, t0
+Index: FFmpeg/libavcodec/rv34.c
+===================================================================
+--- FFmpeg.orig/libavcodec/rv34.c
++++ FFmpeg/libavcodec/rv34.c
+@@ -97,6 +97,8 @@ static av_cold void rv34_gen_vlc_ext(con
+     uint16_t cw[MAX_VLC_SIZE];
+     int maxbits;
+ 
++    av_assert1(size > 0);
++
+     for (int i = 0; i < size; i++)
+         counts[bits[i]]++;
+ 
+Index: FFmpeg/libavcodec/sbrdsp_template.c
+===================================================================
+--- FFmpeg.orig/libavcodec/sbrdsp_template.c
++++ FFmpeg/libavcodec/sbrdsp_template.c
+@@ -373,4 +373,10 @@ const attribute_visibility_hidden DECLAR
+ {Q31( 0.14130051758487f), Q31(-0.95090983575689f)}, {Q31(-0.47005496701697f), Q31(-0.37340549728647f)},
+ {Q31( 0.80705063769351f), Q31( 0.29653668284408f)}, {Q31(-0.38981478896926f), Q31( 0.89572605717087f)},
+ {Q31(-0.01053049862020f), Q31(-0.66959058036166f)}, {Q31(-0.91266367957293f), Q31(-0.11522938140034f)},
++#if ARCH_RISCV
++{Q31( 0.54840422910309f), Q31( 0.75221367176302f)}, {Q31( 0.40009252867955f), Q31(-0.98929400334421f)},
++{Q31(-0.99867974711855f), Q31(-0.88147068645358f)}, {Q31(-0.95531076805040f), Q31( 0.90908757154593f)},
++{Q31(-0.45725933317144f), Q31(-0.56716323646760f)}, {Q31(-0.72929675029275f), Q31(-0.98008272727324f)},
++{Q31( 0.75622801399036f), Q31( 0.20950329995549f)}, {Q31( 0.07069442601050f), Q31(-0.78247898470706f)},
++#endif
+ };
+Index: FFmpeg/libavcodec/scpr3.c
+===================================================================
+--- FFmpeg.orig/libavcodec/scpr3.c
++++ FFmpeg/libavcodec/scpr3.c
+@@ -465,6 +465,8 @@ static int decode_adaptive6(PixelModel3
+             return 0;
+         grow_dec(m);
+         c = add_dec(m, q, g, f);
++        if (c < 0)
++            return AVERROR_INVALIDDATA;
+     }
+ 
+     incr_cntdec(m, c);
+@@ -868,11 +870,11 @@ static int decode_unit3(SCPRContext *s,
+         sync_code3(gb, rc);
+         break;
+     case 6:
+-        if (!decode_adaptive6(m, code, value, &a, &b)) {
++        ret = decode_adaptive6(m, code, value, &a, &b);
++        if (!ret)
+             ret = update_model6_to_7(m);
+-            if (ret < 0)
+-                return AVERROR_INVALIDDATA;
+-        }
++        if (ret < 0)
++            return ret;
+         decode3(gb, rc, a, b);
+         sync_code3(gb, rc);
+         break;
+Index: FFmpeg/libavcodec/sga.c
+===================================================================
+--- FFmpeg.orig/libavcodec/sga.c
++++ FFmpeg/libavcodec/sga.c
+@@ -72,7 +72,7 @@ static int decode_palette(GetByteContext
+         return AVERROR_INVALIDDATA;
+ 
+     memset(pal, 0, 16 * sizeof(*pal));
+-    init_get_bits8(&gbit, gb->buffer, 18);
++    (void)init_get_bits8(&gbit, gb->buffer, 18);
+ 
+     for (int RGBIndex = 0; RGBIndex < 3; RGBIndex++) {
+         for (int index = 0; index < 16; index++) {
+Index: FFmpeg/libavcodec/snowenc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/snowenc.c
++++ FFmpeg/libavcodec/snowenc.c
+@@ -411,6 +411,7 @@ static int encode_q_branch(SnowEncContex
+     int my_context= av_log2(2*FFABS(left->my - top->my));
+     int s_context= 2*left->level + 2*top->level + tl->level + tr->level;
+     int ref, best_ref, ref_score, ref_mx, ref_my;
++    int range = MAX_MV >> (1 + qpel);
+ 
+     av_assert0(sizeof(s->block_state) >= 256);
+     if(s->keyframe){
+@@ -452,6 +453,11 @@ static int encode_q_branch(SnowEncContex
+     c->xmax = - (x+1)*block_w + (w<<(LOG2_MB_SIZE - s->block_max_depth)) + 16-3;
+     c->ymax = - (y+1)*block_w + (h<<(LOG2_MB_SIZE - s->block_max_depth)) + 16-3;
+ 
++    c->xmin = FFMAX(c->xmin,-range);
++    c->xmax = FFMIN(c->xmax, range);
++    c->ymin = FFMAX(c->ymin,-range);
++    c->ymax = FFMIN(c->ymax, range);
++
+     if(P_LEFT[0]     > (c->xmax<<shift)) P_LEFT[0]    = (c->xmax<<shift);
+     if(P_LEFT[1]     > (c->ymax<<shift)) P_LEFT[1]    = (c->ymax<<shift);
+     if(P_TOP[0]      > (c->xmax<<shift)) P_TOP[0]     = (c->xmax<<shift);
+Index: FFmpeg/libavcodec/targaenc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/targaenc.c
++++ FFmpeg/libavcodec/targaenc.c
+@@ -21,6 +21,7 @@
+ 
+ #include <string.h>
+ 
++#include "libavutil/avassert.h"
+ #include "libavutil/imgutils.h"
+ #include "libavutil/internal.h"
+ #include "libavutil/intreadwrite.h"
+@@ -89,10 +90,11 @@ static int targa_encode_frame(AVCodecCon
+     TargaContext *s = avctx->priv_data;
+     int bpp, picsize, datasize = -1, ret, i;
+     uint8_t *out;
++    int maxpal = 32*32;
+ 
+     picsize = av_image_get_buffer_size(avctx->pix_fmt,
+                                        avctx->width, avctx->height, 1);
+-    if ((ret = ff_alloc_packet(avctx, pkt, picsize + 45)) < 0)
++    if ((ret = ff_alloc_packet(avctx, pkt, picsize + 45 + maxpal)) < 0)
+         return ret;
+ 
+     /* zero out the header and only set applicable fields */
+@@ -125,6 +127,7 @@ static int targa_encode_frame(AVCodecCon
+             AV_WL24(pkt->data + 18 + 3 * i, *(uint32_t *)(p->data[1] + i * 4));
+             }
+         out += 32 * pal_bpp;        /* skip past the palette we just output */
++        av_assert0(32 * pal_bpp <= maxpal);
+         break;
+         }
+     case AV_PIX_FMT_GRAY8:
+Index: FFmpeg/libavcodec/tests/bitstream_template.c
+===================================================================
+--- FFmpeg.orig/libavcodec/tests/bitstream_template.c
++++ FFmpeg/libavcodec/tests/bitstream_template.c
+@@ -61,6 +61,7 @@ int main(int argc, char **argv)
+     uint64_t val, val1;
+     int32_t  sval, sval1;
+     unsigned count;
++    int ret;
+ 
+     /* generate random input, using a given or random seed */
+     if (argc > 1)
+@@ -74,7 +75,8 @@ int main(int argc, char **argv)
+     for (unsigned i = 0; i < SIZE; i++)
+         buf[i] = av_lfg_get(&lfg);
+ 
+-    bits_init8   (&bc, buf, SIZE);
++    ret = bits_init8   (&bc, buf, SIZE);
++    av_assert0(ret >= 0);
+     init_put_bits(&pb, dst, SIZE);
+ 
+     /* use a random sequence of bitreading operations to transfer data
+Index: FFmpeg/libavcodec/tests/dct.c
+===================================================================
+--- FFmpeg.orig/libavcodec/tests/dct.c
++++ FFmpeg/libavcodec/tests/dct.c
+@@ -226,8 +226,8 @@ static int dct_error(const struct algo *
+             v = abs(err);
+             if (v > err_inf)
+                 err_inf = v;
+-            err2_matrix[i] += v * v;
+-            err2 += v * v;
++            err2_matrix[i] += v * (int64_t)v;
++            err2 += v * (int64_t)v;
+             sysErr[i] += block[i] - block1[i];
+             blockSumErr += v;
+             if (abs(block[i]) > maxout)
+Index: FFmpeg/libavcodec/tests/jpeg2000dwt.c
+===================================================================
+--- FFmpeg.orig/libavcodec/tests/jpeg2000dwt.c
++++ FFmpeg/libavcodec/tests/jpeg2000dwt.c
+@@ -52,12 +52,12 @@ static int test_dwt(int *array, int *ref
+         return 1;
+     }
+     for (j = 0; j<MAX_W * MAX_W; j++) {
+-        if (FFABS(array[j] - ref[j]) > max_diff) {
++        if (FFABS(array[j] - (int64_t)ref[j]) > max_diff) {
+             fprintf(stderr, "missmatch at %d (%d != %d) decomp:%d border %d %d %d %d\n",
+                     j, array[j], ref[j],decomp_levels, border[0][0], border[0][1], border[1][0], border[1][1]);
+             return 2;
+         }
+-        err2 += (array[j] - ref[j]) * (array[j] - ref[j]);
++        err2 += (array[j] - ref[j]) * (int64_t)(array[j] - ref[j]);
+         array[j] = ref[j];
+     }
+     ff_dwt_destroy(s);
+Index: FFmpeg/libavcodec/tiff.c
+===================================================================
+--- FFmpeg.orig/libavcodec/tiff.c
++++ FFmpeg/libavcodec/tiff.c
+@@ -421,7 +421,8 @@ static void av_always_inline horizontal_
+             uint8_t shift = is_dng ? 0 : 16 - bpp;
+             GetBitContext gb;
+ 
+-            init_get_bits8(&gb, src, width);
++            int ret = init_get_bits8(&gb, src, width);
++            av_assert1(ret >= 0);
+             for (int i = 0; i < s->width; i++) {
+                 dst16[i] = get_bits(&gb, bpp) << shift;
+             }
+@@ -455,7 +456,8 @@ static void unpack_gray(TiffContext *s,
+     GetBitContext gb;
+     uint16_t *dst = (uint16_t *)(p->data[0] + lnum * p->linesize[0]);
+ 
+-    init_get_bits8(&gb, src, width);
++    int ret = init_get_bits8(&gb, src, width);
++    av_assert1(ret >= 0);
+ 
+     for (int i = 0; i < s->width; i++) {
+         dst[i] = get_bits(&gb, bpp);
+@@ -1295,9 +1297,13 @@ static int tiff_decode_tag(TiffContext *
+         s->is_thumbnail = (value != 0);
+         break;
+     case TIFF_WIDTH:
++        if (value > INT_MAX)
++            return AVERROR_INVALIDDATA;
+         s->width = value;
+         break;
+     case TIFF_HEIGHT:
++        if (value > INT_MAX)
++            return AVERROR_INVALIDDATA;
+         s->height = value;
+         break;
+     case TIFF_BPP:
+@@ -1429,12 +1435,18 @@ static int tiff_decode_tag(TiffContext *
+         s->tile_byte_counts_offset = off;
+         break;
+     case TIFF_TILE_LENGTH:
++        if (value > INT_MAX)
++            return AVERROR_INVALIDDATA;
+         s->tile_length = value;
+         break;
+     case TIFF_TILE_WIDTH:
++        if (value > INT_MAX)
++            return AVERROR_INVALIDDATA;
+         s->tile_width = value;
+         break;
+     case TIFF_PREDICTOR:
++        if (value > INT_MAX)
++            return AVERROR_INVALIDDATA;
+         s->predictor = value;
+         break;
+     case TIFF_SUB_IFDS:
+@@ -1579,12 +1591,18 @@ static int tiff_decode_tag(TiffContext *
+         }
+         break;
+     case TIFF_T4OPTIONS:
+-        if (s->compr == TIFF_G3)
++        if (s->compr == TIFF_G3) {
++            if (value > INT_MAX)
++                return AVERROR_INVALIDDATA;
+             s->fax_opts = value;
++        }
+         break;
+     case TIFF_T6OPTIONS:
+-        if (s->compr == TIFF_G4)
++        if (s->compr == TIFF_G4) {
++            if (value > INT_MAX)
++                return AVERROR_INVALIDDATA;
+             s->fax_opts = value;
++        }
+         break;
+ #define ADD_METADATA(count, name, sep)\
+     if ((ret = add_metadata(count, type, name, sep, s, frame)) < 0) {\
+Index: FFmpeg/libavcodec/utvideoenc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/utvideoenc.c
++++ FFmpeg/libavcodec/utvideoenc.c
+@@ -239,7 +239,7 @@ static av_cold int utvideo_encode_init(A
+      * - Compression mode (none/huff)
+      * And write the flags.
+      */
+-    c->flags  = (c->slices - 1) << 24;
++    c->flags  = (c->slices - 1U) << 24;
+     c->flags |= 0 << 11; // bit field to signal interlaced encoding mode
+     c->flags |= c->compression;
+ 
+Index: FFmpeg/libavcodec/vaapi_encode.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vaapi_encode.c
++++ FFmpeg/libavcodec/vaapi_encode.c
+@@ -3008,12 +3008,14 @@ av_cold int ff_vaapi_encode_close(AVCode
+     ff_refstruct_pool_uninit(&ctx->output_buffer_pool);
+ 
+     if (ctx->va_context != VA_INVALID_ID) {
+-        vaDestroyContext(ctx->hwctx->display, ctx->va_context);
++        if (ctx->hwctx)
++            vaDestroyContext(ctx->hwctx->display, ctx->va_context);
+         ctx->va_context = VA_INVALID_ID;
+     }
+ 
+     if (ctx->va_config != VA_INVALID_ID) {
+-        vaDestroyConfig(ctx->hwctx->display, ctx->va_config);
++        if (ctx->hwctx)
++            vaDestroyConfig(ctx->hwctx->display, ctx->va_config);
+         ctx->va_config = VA_INVALID_ID;
+     }
+ 
+Index: FFmpeg/libavcodec/vc1_loopfilter.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vc1_loopfilter.c
++++ FFmpeg/libavcodec/vc1_loopfilter.c
+@@ -1125,10 +1125,7 @@ static av_always_inline void vc1_b_h_int
+         dst = dest + (block_num & 2) * 4 * s->linesize + (block_num & 1) * 8;
+ 
+     if (!(flags & RIGHT_EDGE) || !(block_num & 5)) {
+-        if (block_num > 3)
+-            v->vc1dsp.vc1_h_loop_filter8(dst + 8, linesize, pq);
+-        else
+-            v->vc1dsp.vc1_h_loop_filter8(dst + 8, linesize, pq);
++        v->vc1dsp.vc1_h_loop_filter8(dst + 8, linesize, pq);
+     }
+ 
+     tt = ttblk[0] >> (block_num * 4) & 0xf;
+Index: FFmpeg/libavcodec/vc2enc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vc2enc.c
++++ FFmpeg/libavcodec/vc2enc.c
+@@ -185,7 +185,9 @@ typedef struct VC2EncContext {
+ static av_always_inline void put_vc2_ue_uint(PutBitContext *pb, uint32_t val)
+ {
+     int i;
+-    int pbits = 0, bits = 0, topbit = 1, maxval = 1;
++    int bits = 0;
++    unsigned topbit = 1, maxval = 1;
++    uint64_t pbits = 0;
+ 
+     if (!val++) {
+         put_bits(pb, 1, 1);
+@@ -202,12 +204,13 @@ static av_always_inline void put_vc2_ue_
+ 
+     for (i = 0; i < bits; i++) {
+         topbit >>= 1;
++        av_assert2(pbits <= UINT64_MAX>>3);
+         pbits <<= 2;
+         if (val & topbit)
+             pbits |= 0x1;
+     }
+ 
+-    put_bits(pb, bits*2 + 1, (pbits << 1) | 1);
++    put_bits64(pb, bits*2 + 1, (pbits << 1) | 1);
+ }
+ 
+ static av_always_inline int count_vc2_ue_uint(uint32_t val)
+Index: FFmpeg/libavcodec/vlc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vlc.c
++++ FFmpeg/libavcodec/vlc.c
+@@ -529,7 +529,7 @@ int ff_vlc_init_multi_from_lengths(VLC *
+ 
+     multi->table = av_malloc(sizeof(*multi->table) << nb_bits);
+     if (!multi->table)
+-        return AVERROR(ENOMEM);
++        goto fail;
+ 
+     j = code = 0;
+     for (int i = 0; i < nb_codes; i++, lens += lens_wrap) {
+Index: FFmpeg/libavcodec/vp8.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vp8.c
++++ FFmpeg/libavcodec/vp8.c
+@@ -263,8 +263,16 @@ int update_dimensions(VP8Context *s, int
+             return AVERROR(ENOMEM);
+         }
+ #if HAVE_THREADS
+-        pthread_mutex_init(&s->thread_data[i].lock, NULL);
+-        pthread_cond_init(&s->thread_data[i].cond, NULL);
++        ret = pthread_mutex_init(&s->thread_data[i].lock, NULL);
++        if (ret) {
++            free_buffers(s);
++            return AVERROR(ret);
++        }
++        ret = pthread_cond_init(&s->thread_data[i].cond, NULL);
++        if (ret) {
++            free_buffers(s);
++            return AVERROR(ret);
++        }
+ #endif
+     }
+ 
+Index: FFmpeg/libavcodec/vp9.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vp9.c
++++ FFmpeg/libavcodec/vp9.c
+@@ -717,6 +717,12 @@ static int decode_frame_header(AVCodecCo
+                 s->s.h.segmentation.feat[i].skip_enabled = get_bits1(&s->gb);
+             }
+         }
++    } else {
++        // Reset fields under segmentation switch if segmentation is disabled.
++        // This is necessary because some hwaccels don't ignore these fields
++        // if segmentation is disabled.
++        s->s.h.segmentation.temporal = 0;
++        s->s.h.segmentation.update_map = 0;
+     }
+ 
+     // set qmul[] based on Y/UV, AC/DC and segmentation Q idx deltas
+Index: FFmpeg/libavcodec/vvc/vvc_ctu.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vvc/vvc_ctu.c
++++ FFmpeg/libavcodec/vvc/vvc_ctu.c
+@@ -1867,8 +1867,6 @@ static int hls_coding_unit(VVCLocalConte
+         cu->lfnst_idx = lfnst_idx_decode(lc);
+         cu->mts_idx = mts_idx_decode(lc);
+         set_qp_c(lc);
+-        if (ret < 0)
+-            return ret;
+     } else {
+         ret = skipped_transform_tree_unit(lc);
+         if (ret < 0)
+Index: FFmpeg/libavcodec/vvc/vvc_mvs.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vvc/vvc_mvs.c
++++ FFmpeg/libavcodec/vvc/vvc_mvs.c
+@@ -407,12 +407,11 @@ void ff_vvc_store_sb_mvs(const VVCLocalC
+     const int sbw = cu->cb_width / mi->num_sb_x;
+     const int sbh = cu->cb_height / mi->num_sb_y;
+     SubblockParams params[2];
+-    MvField mvf;
++    MvField mvf = {0};
+ 
+     mvf.pred_flag = mi->pred_flag;
+     mvf.bcw_idx = mi->bcw_idx;
+     mvf.hpel_if_idx = mi->hpel_if_idx;
+-    mvf.ciip_flag = 0;
+     for (int i = 0; i < 2; i++) {
+         const PredFlag mask = i + 1;
+         if (mi->pred_flag & mask) {
+@@ -500,12 +499,11 @@ void ff_vvc_store_mvf(const VVCLocalCont
+ void ff_vvc_store_mv(const VVCLocalContext *lc, const MotionInfo *mi)
+ {
+     const CodingUnit *cu = lc->cu;
+-    MvField mvf;
++    MvField mvf = {0};
+ 
+     mvf.hpel_if_idx = mi->hpel_if_idx;
+     mvf.bcw_idx = mi->bcw_idx;
+     mvf.pred_flag = mi->pred_flag;
+-    mvf.ciip_flag = 0;
+ 
+     for (int i = 0; i < 2; i++) {
+         const PredFlag mask = i + 1;
+Index: FFmpeg/libavcodec/vvc/vvc_refs.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vvc/vvc_refs.c
++++ FFmpeg/libavcodec/vvc/vvc_refs.c
+@@ -295,7 +295,7 @@ void ff_vvc_bump_frame(VVCContext *s, VV
+ 
+ static VVCFrame *find_ref_idx(VVCContext *s, VVCFrameContext *fc, int poc, uint8_t use_msb)
+ {
+-    const int mask = use_msb ? ~0 : fc->ps.sps->max_pic_order_cnt_lsb - 1;
++    const unsigned mask = use_msb ? ~0 : fc->ps.sps->max_pic_order_cnt_lsb - 1;
+ 
+     for (int i = 0; i < FF_ARRAY_ELEMS(fc->DPB); i++) {
+         VVCFrame *ref = &fc->DPB[i];
+Index: FFmpeg/libavcodec/vvc/vvcdec.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vvc/vvcdec.c
++++ FFmpeg/libavcodec/vvc/vvcdec.c
+@@ -476,13 +476,14 @@ static int slices_realloc(VVCFrameContex
+     return 0;
+ }
+ 
+-static void ep_init_cabac_decoder(SliceContext *sc, const int index,
++static int ep_init_cabac_decoder(SliceContext *sc, const int index,
+     const H2645NAL *nal, GetBitContext *gb, const CodedBitstreamUnit *unit)
+ {
+     const H266RawSlice *slice     = unit->content_ref;
+     const H266RawSliceHeader *rsh = sc->sh.r;
+     EntryPoint *ep                = sc->eps + index;
+     int size;
++    int ret;
+ 
+     if (index < rsh->num_entry_points) {
+         int skipped = 0;
+@@ -499,8 +500,11 @@ static void ep_init_cabac_decoder(SliceC
+     } else {
+         size = get_bits_left(gb) / 8;
+     }
+-    ff_init_cabac_decoder (&ep->cc, gb->buffer + get_bits_count(gb) / 8, size);
++    ret = ff_init_cabac_decoder (&ep->cc, gb->buffer + get_bits_count(gb) / 8, size);
++    if (ret < 0)
++        return ret;
+     skip_bits(gb, size * 8);
++    return 0;
+ }
+ 
+ static int slice_init_entry_points(SliceContext *sc,
+@@ -536,7 +540,9 @@ static int slice_init_entry_points(Slice
+             fc->tab.slice_idx[rs] = sc->slice_idx;
+         }
+ 
+-        ep_init_cabac_decoder(sc, i, nal, &gb, unit);
++        ret = ep_init_cabac_decoder(sc, i, nal, &gb, unit);
++        if (ret < 0)
++            return ret;
+ 
+         if (i + 1 < sc->nb_eps)
+             ctu_addr = sh->entry_point_start_ctu[i];
+@@ -825,7 +831,6 @@ static int decode_nal_units(VVCContext *
+     const CodedBitstreamH266Context *h266 = s->cbc->priv_data;
+     CodedBitstreamFragment *frame         = &s->current_frame;
+     int ret = 0;
+-    int eos_at_start = 1;
+     s->last_eos = s->eos;
+     s->eos = 0;
+ 
+@@ -841,10 +846,7 @@ static int decode_nal_units(VVCContext *
+         const CodedBitstreamUnit *unit = frame->units + i;
+ 
+         if (unit->type == VVC_EOB_NUT || unit->type == VVC_EOS_NUT) {
+-            if (eos_at_start)
+-                s->last_eos = 1;
+-            else
+-                s->eos = 1;
++            s->last_eos = 1;
+         } else {
+             ret = decode_nal_unit(s, fc, nal, unit);
+             if (ret < 0) {
+Index: FFmpeg/libavcodec/wavpackenc.c
+===================================================================
+--- FFmpeg.orig/libavcodec/wavpackenc.c
++++ FFmpeg/libavcodec/wavpackenc.c
+@@ -1978,7 +1978,7 @@ static void encode_flush(WavPackEncodeCo
+                 put_bits(pb, 31, 0x7FFFFFFF);
+                 cbits -= 31;
+             } else {
+-                put_bits(pb, cbits, (1 << cbits) - 1);
++                put_bits(pb, cbits, (1U << cbits) - 1);
+                 cbits = 0;
+             }
+         } while (cbits);
+@@ -2007,7 +2007,7 @@ static void encode_flush(WavPackEncodeCo
+                     put_bits(pb, 31, 0x7FFFFFFF);
+                     cbits -= 31;
+                 } else {
+-                    put_bits(pb, cbits, (1 << cbits) - 1);
++                    put_bits(pb, cbits, (1U << cbits) - 1);
+                     cbits = 0;
+                 }
+             } while (cbits);
+Index: FFmpeg/libavcodec/xsubdec.c
+===================================================================
+--- FFmpeg.orig/libavcodec/xsubdec.c
++++ FFmpeg/libavcodec/xsubdec.c
+@@ -59,6 +59,7 @@ static int decode_frame(AVCodecContext *
+     int64_t packet_time = 0;
+     GetBitContext gb;
+     int has_alpha = avctx->codec_tag == MKTAG('D','X','S','A');
++    int64_t start_display_time, end_display_time;
+ 
+     // check that at least header fits
+     if (buf_size < 27 + 7 * 2 + 4 * (3 + has_alpha)) {
+@@ -73,8 +74,14 @@ static int decode_frame(AVCodecContext *
+     }
+     if (avpkt->pts != AV_NOPTS_VALUE)
+         packet_time = av_rescale_q(avpkt->pts, AV_TIME_BASE_Q, (AVRational){1, 1000});
+-    sub->start_display_time = parse_timecode(buf +  1, packet_time);
+-    sub->end_display_time   = parse_timecode(buf + 14, packet_time);
++
++    sub->start_display_time = start_display_time = parse_timecode(buf +  1, packet_time);
++    sub->end_display_time   = end_display_time   = parse_timecode(buf + 14, packet_time);
++    if (sub->start_display_time != start_display_time ||
++        sub->  end_display_time !=   end_display_time) {
++        av_log(avctx, AV_LOG_ERROR, "time code not representable in 32bit\n");
++        return -1;
++    }
+     buf += 27;
+ 
+     // read header
+Index: FFmpeg/libavdevice/avfoundation.m
+===================================================================
+--- FFmpeg.orig/libavdevice/avfoundation.m
++++ FFmpeg/libavdevice/avfoundation.m
+@@ -787,6 +787,9 @@ static NSArray* getDevicesWithMediaType(
+         #endif
+         #if (TARGET_OS_IPHONE && __IPHONE_OS_VERSION_MIN_REQUIRED >= 170000 || (TARGET_OS_OSX && __MAC_OS_X_VERSION_MIN_REQUIRED >= 140000))
+             [deviceTypes addObject: AVCaptureDeviceTypeContinuityCamera];
++            [deviceTypes addObject: AVCaptureDeviceTypeExternal];
++        #elif (TARGET_OS_OSX && __MAC_OS_X_VERSION_MIN_REQUIRED < 140000)
++            [deviceTypes addObject: AVCaptureDeviceTypeExternalUnknown];
+         #endif
+     } else if (mediaType == AVMediaTypeAudio) {
+         #if (TARGET_OS_IPHONE && __IPHONE_OS_VERSION_MIN_REQUIRED >= 170000 || (TARGET_OS_OSX && __MAC_OS_X_VERSION_MIN_REQUIRED >= 140000))
+Index: FFmpeg/libavdevice/dshow.c
+===================================================================
+--- FFmpeg.orig/libavdevice/dshow.c
++++ FFmpeg/libavdevice/dshow.c
+@@ -432,8 +432,8 @@ dshow_get_device_media_types(AVFormatCon
+             IEnumMediaTypes_Release(types);
+         if (p)
+             IKsPropertySet_Release(p);
+-        if (pin)
+-            IPin_Release(pin);
++
++        IPin_Release(pin);
+     }
+ 
+     IEnumPins_Release(pins);
+@@ -645,7 +645,7 @@ static int dshow_get_device_list(AVForma
+     }
+ 
+     ret = dshow_cycle_devices(avctx, devenum, VideoDevice, VideoSourceDevice, NULL, NULL, &device_list);
+-    if (ret < S_OK)
++    if (ret < S_OK && ret != AVERROR(EIO))
+         goto error;
+     ret = dshow_cycle_devices(avctx, devenum, AudioDevice, AudioSourceDevice, NULL, NULL, &device_list);
+ 
+@@ -1001,7 +1001,7 @@ dshow_cycle_formats(AVFormatContext *avc
+                     "  ch=%2u, bits=%2u, rate=%6lu\n",
+                     fx->nChannels, fx->wBitsPerSample, fx->nSamplesPerSec
+                 );
+-                continue;
++                goto next;
+             }
+             if (
+                 (requested_sample_rate && requested_sample_rate != fx->nSamplesPerSec) ||
+@@ -1370,10 +1370,10 @@ dshow_open_device(AVFormatContext *avctx
+             goto error;
+         }
+     }
+-        if (ctx->device_filter[otherDevType]) {
++    if (ctx->device_filter[otherDevType]) {
+         // avoid adding add two instances of the same device to the graph, one for video, one for audio
+         // a few devices don't support this (could also do this check earlier to avoid double crossbars, etc. but they seem OK)
+-        if (strcmp(device_filter_unique_name, ctx->device_unique_name[otherDevType]) == 0) {
++        if (!device_filter_unique_name || strcmp(device_filter_unique_name, ctx->device_unique_name[otherDevType]) == 0) {
+           av_log(avctx, AV_LOG_DEBUG, "reusing previous graph capture filter... %s\n", device_filter_unique_name);
+           IBaseFilter_Release(device_filter);
+           device_filter = ctx->device_filter[otherDevType];
+@@ -1465,7 +1465,7 @@ dshow_open_device(AVFormatContext *avctx
+         av_log(avctx, AV_LOG_ERROR, "Could not create CaptureGraphBuilder2\n");
+         goto error;
+     }
+-    ICaptureGraphBuilder2_SetFiltergraph(graph_builder2, graph);
++    r = ICaptureGraphBuilder2_SetFiltergraph(graph_builder2, graph);
+     if (r != S_OK) {
+         av_log(avctx, AV_LOG_ERROR, "Could not set graph for CaptureGraphBuilder2\n");
+         goto error;
+@@ -1546,7 +1546,10 @@ dshow_add_device(AVFormatContext *avctx,
+ 
+     ctx->capture_filter[devtype]->stream_index = st->index;
+ 
+-    ff_dshow_pin_ConnectionMediaType(ctx->capture_pin[devtype], &type);
++    if (ff_dshow_pin_ConnectionMediaType(ctx->capture_pin[devtype], &type) != S_OK) {
++        ret = AVERROR(EIO);
++        goto error;
++    }
+     fmt_info = dshow_get_format_info(&type);
+     if (!fmt_info) {
+         ret = AVERROR(EIO);
+Index: FFmpeg/libavdevice/dshow_capture.h
+===================================================================
+--- FFmpeg.orig/libavdevice/dshow_capture.h
++++ FFmpeg/libavdevice/dshow_capture.h
+@@ -124,14 +124,15 @@ void ff_dshow_##prefix##_Destroy(class *
+ class *ff_dshow_##prefix##_Create(__VA_ARGS__)                               \
+ {                                                                            \
+     class *this = CoTaskMemAlloc(sizeof(class));                             \
+-    void  *vtbl = CoTaskMemAlloc(sizeof(*this->vtbl));                       \
+     dshowdebug("ff_dshow_"AV_STRINGIFY(prefix)"_Create(%p)\n", this);        \
+-    if (!this || !vtbl)                                                      \
++    if (!this)                                                               \
+         goto fail;                                                           \
+     ZeroMemory(this, sizeof(class));                                         \
+-    ZeroMemory(vtbl, sizeof(*this->vtbl));                                   \
++    this->vtbl = CoTaskMemAlloc(sizeof(*this->vtbl));                        \
++    if (!this->vtbl)                                                         \
++        goto fail;                                                           \
++    ZeroMemory(this->vtbl, sizeof(*this->vtbl));                             \
+     this->ref  = 1;                                                          \
+-    this->vtbl = vtbl;                                                       \
+     if (!setup)                                                              \
+         goto fail;                                                           \
+     dshowdebug("created ff_dshow_"AV_STRINGIFY(prefix)" %p\n", this);        \
+Index: FFmpeg/libavdevice/dshow_filter.c
+===================================================================
+--- FFmpeg.orig/libavdevice/dshow_filter.c
++++ FFmpeg/libavdevice/dshow_filter.c
+@@ -135,7 +135,7 @@ long WINAPI ff_dshow_filter_JoinFilterGr
+ 
+     this->info.pGraph = graph;
+     if (name)
+-        wcscpy(this->info.achName, name);
++        wcscpy_s(this->info.achName, sizeof(this->info.achName) / sizeof(wchar_t), name);
+ 
+     return S_OK;
+ }
+Index: FFmpeg/libavdevice/pulse_audio_enc.c
+===================================================================
+--- FFmpeg.orig/libavdevice/pulse_audio_enc.c
++++ FFmpeg/libavdevice/pulse_audio_enc.c
+@@ -471,10 +471,11 @@ static av_cold int pulse_write_header(AV
+     s->nonblocking = (h->flags & AVFMT_FLAG_NONBLOCK);
+ 
+     if (s->buffer_duration) {
+-        int64_t bytes = s->buffer_duration;
+-        bytes *= st->codecpar->ch_layout.nb_channels * st->codecpar->sample_rate *
+-                 av_get_bytes_per_sample(st->codecpar->format);
+-        bytes /= 1000;
++        int64_t bytes = av_rescale(s->buffer_duration,
++                                   st->codecpar->ch_layout.nb_channels *
++                                    (int64_t)st->codecpar->sample_rate *
++                                    av_get_bytes_per_sample(st->codecpar->format),
++                                   1000);
+         buffer_attributes.tlength = FFMAX(s->buffer_size, av_clip64(bytes, 0, UINT32_MAX - 1));
+         av_log(s, AV_LOG_DEBUG,
+                "Buffer duration: %ums recalculated into %"PRId64" bytes buffer.\n",
+Index: FFmpeg/libavdevice/xcbgrab.c
+===================================================================
+--- FFmpeg.orig/libavdevice/xcbgrab.c
++++ FFmpeg/libavdevice/xcbgrab.c
+@@ -827,7 +827,10 @@ static av_cold int xcbgrab_read_header(A
+ 
+     if (!sscanf(s->url, "%[^+]+%d,%d", display_name, &c->x, &c->y)) {
+         *display_name = 0;
+-        sscanf(s->url, "+%d,%d", &c->x, &c->y);
++        if(sscanf(s->url, "+%d,%d", &c->x, &c->y) != 2) {
++            if (*s->url)
++                av_log(s, AV_LOG_WARNING, "Ambigous URL: %s\n", s->url);
++        }
+     }
+ 
+     c->conn = xcb_connect(display_name[0] ? display_name : NULL, &screen_num);
+Index: FFmpeg/libavfilter/af_aderivative.c
+===================================================================
+--- FFmpeg.orig/libavfilter/af_aderivative.c
++++ FFmpeg/libavfilter/af_aderivative.c
+@@ -126,6 +126,7 @@ static int filter_frame(AVFilterLink *in
+         s->prev = ff_get_audio_buffer(inlink, 1);
+         if (!s->prev) {
+             av_frame_free(&in);
++            av_frame_free(&out);
+             return AVERROR(ENOMEM);
+         }
+     }
+Index: FFmpeg/libavfilter/af_afftdn.c
+===================================================================
+--- FFmpeg.orig/libavfilter/af_afftdn.c
++++ FFmpeg/libavfilter/af_afftdn.c
+@@ -20,6 +20,7 @@
+ 
+ #include <float.h>
+ 
++#include "libavutil/avassert.h"
+ #include "libavutil/avstring.h"
+ #include "libavutil/channel_layout.h"
+ #include "libavutil/opt.h"
+@@ -375,6 +376,8 @@ static void process_frame(AVFilterContex
+         case AV_SAMPLE_FMT_DBLP:
+             noisy_data[i] = mag = hypot(fft_data_dbl[i].re, fft_data_dbl[i].im);
+             break;
++        default:
++            av_assert2(0);
+         }
+ 
+         power = mag * mag;
+@@ -969,6 +972,8 @@ static void sample_noise_block(AudioFFTD
+             mag2 = fft_out_dbl[n].re * fft_out_dbl[n].re +
+                    fft_out_dbl[n].im * fft_out_dbl[n].im;
+             break;
++        default:
++            av_assert2(0);
+         }
+ 
+         mag2 = fmax(mag2, s->sample_floor);
+Index: FFmpeg/libavfilter/af_afir.c
+===================================================================
+--- FFmpeg.orig/libavfilter/af_afir.c
++++ FFmpeg/libavfilter/af_afir.c
+@@ -25,6 +25,7 @@
+ 
+ #include <float.h>
+ 
++#include "libavutil/avassert.h"
+ #include "libavutil/cpu.h"
+ #include "libavutil/tx.h"
+ #include "libavutil/avstring.h"
+@@ -154,6 +155,8 @@ static int init_segment(AVFilterContext
+         iscale.d = 1.0 / sqrt(2.0 * part_size);
+         tx_type  = AV_TX_DOUBLE_RDFT;
+         break;
++    default:
++        av_assert1(0);
+     }
+ 
+     for (int ch = 0; ch < ctx->inputs[0]->ch_layout.nb_channels && part_size >= 1; ch++) {
+Index: FFmpeg/libavfilter/af_amerge.c
+===================================================================
+--- FFmpeg.orig/libavfilter/af_amerge.c
++++ FFmpeg/libavfilter/af_amerge.c
+@@ -245,8 +245,11 @@ static int try_push_frame(AVFilterContex
+                                     av_make_q(1, outlink->sample_rate),
+                                     outlink->time_base);
+ 
+-    if ((ret = av_channel_layout_copy(&outbuf->ch_layout, &outlink->ch_layout)) < 0)
++    if ((ret = av_channel_layout_copy(&outbuf->ch_layout, &outlink->ch_layout)) < 0) {
++        free_frames(s->nb_inputs, inbuf);
++        av_frame_free(&outbuf);
+         return ret;
++    }
+ 
+     while (nb_samples) {
+         /* Unroll the most common sample formats: speed +~350% for the loop,
+Index: FFmpeg/libavfilter/af_aresample.c
+===================================================================
+--- FFmpeg.orig/libavfilter/af_aresample.c
++++ FFmpeg/libavfilter/af_aresample.c
+@@ -195,8 +195,11 @@ static int filter_frame(AVFilterLink *in
+     av_frame_copy_props(outsamplesref, insamplesref);
+     outsamplesref->format                = outlink->format;
+     ret = av_channel_layout_copy(&outsamplesref->ch_layout, &outlink->ch_layout);
+-    if (ret < 0)
++    if (ret < 0) {
++        av_frame_free(&outsamplesref);
++        av_frame_free(&insamplesref);
+         return ret;
++    }
+     outsamplesref->sample_rate           = outlink->sample_rate;
+ 
+     if(insamplesref->pts != AV_NOPTS_VALUE) {
+Index: FFmpeg/libavfilter/af_channelsplit.c
+===================================================================
+--- FFmpeg.orig/libavfilter/af_channelsplit.c
++++ FFmpeg/libavfilter/af_channelsplit.c
+@@ -22,7 +22,7 @@
+  *
+  * Split an audio stream into per-channel streams.
+  */
+-
++#include "libavutil/avassert.h"
+ #include "libavutil/attributes.h"
+ #include "libavutil/channel_layout.h"
+ #include "libavutil/internal.h"
+@@ -156,6 +156,8 @@ static int filter_frame(AVFilterLink *ou
+     enum AVChannel channel = av_channel_layout_channel_from_index(&buf->ch_layout, s->map[i]);
+     int ret;
+ 
++    av_assert1(channel >= 0);
++
+     AVFrame *buf_out = av_frame_clone(buf);
+     if (!buf_out)
+         return AVERROR(ENOMEM);
+Index: FFmpeg/libavfilter/af_mcompand.c
+===================================================================
+--- FFmpeg.orig/libavfilter/af_mcompand.c
++++ FFmpeg/libavfilter/af_mcompand.c
+@@ -417,8 +417,8 @@ static int config_output(AVFilterLink *o
+         }
+ 
+         new_nb_items += sscanf(tstr2, "%lf", &s->bands[i].topfreq) == 1;
+-        if (s->bands[i].topfreq < 0 || s->bands[i].topfreq >= outlink->sample_rate / 2) {
+-            av_log(ctx, AV_LOG_ERROR, "crossover_frequency: %f, should be >=0 and lower than half of sample rate: %d.\n", s->bands[i].topfreq, outlink->sample_rate / 2);
++        if (s->bands[i].topfreq < 0 || s->bands[i].topfreq >= outlink->sample_rate / 2.0) {
++            av_log(ctx, AV_LOG_ERROR, "crossover_frequency: %f, should be >=0 and lower than half of sample rate: %f.\n", s->bands[i].topfreq, outlink->sample_rate / 2.0);
+             return AVERROR(EINVAL);
+         }
+ 
+Index: FFmpeg/libavfilter/af_pan.c
+===================================================================
+--- FFmpeg.orig/libavfilter/af_pan.c
++++ FFmpeg/libavfilter/af_pan.c
+@@ -118,6 +118,14 @@ static av_cold int init(AVFilterContext
+     if (ret < 0)
+         goto fail;
+ 
++    if (pan->nb_output_channels > MAX_CHANNELS) {
++        av_log(ctx, AV_LOG_ERROR,
++               "af_pan supports a maximum of %d channels. "
++               "Feel free to ask for a higher limit.\n", MAX_CHANNELS);
++        ret = AVERROR_PATCHWELCOME;
++        goto fail;
++    }
++
+     /* parse channel specifications */
+     while ((arg = arg0 = av_strtok(NULL, "|", &tokenizer))) {
+         int used_in_ch[MAX_CHANNELS] = {0};
+Index: FFmpeg/libavfilter/avf_showcwt.c
+===================================================================
+--- FFmpeg.orig/libavfilter/avf_showcwt.c
++++ FFmpeg/libavfilter/avf_showcwt.c
+@@ -1029,6 +1029,8 @@ static int config_output(AVFilterLink *o
+     s->auto_frame_rate = av_make_q(inlink->sample_rate, s->hop_size);
+     if (strcmp(s->rate_str, "auto")) {
+         ret = av_parse_video_rate(&s->frame_rate, s->rate_str);
++        if (ret < 0)
++            return ret;
+     } else {
+         s->frame_rate = s->auto_frame_rate;
+     }
+Index: FFmpeg/libavfilter/drawutils.c
+===================================================================
+--- FFmpeg.orig/libavfilter/drawutils.c
++++ FFmpeg/libavfilter/drawutils.c
+@@ -61,6 +61,7 @@ int ff_fill_rgba_map(uint8_t *rgba_map,
+ 
+             had0 |= pos == 0;
+             rgba_map[i] = pos;
++            depthb = db;
+         }
+ 
+         if (desc->nb_components == 3)
+Index: FFmpeg/libavfilter/scale_eval.c
+===================================================================
+--- FFmpeg.orig/libavfilter/scale_eval.c
++++ FFmpeg/libavfilter/scale_eval.c
+@@ -114,7 +114,7 @@ int ff_scale_adjust_dimensions(AVFilterL
+     int *ret_w, int *ret_h,
+     int force_original_aspect_ratio, int force_divisible_by)
+ {
+-    int w, h;
++    int64_t w, h;
+     int factor_w, factor_h;
+ 
+     w = *ret_w;
+@@ -149,9 +149,9 @@ int ff_scale_adjust_dimensions(AVFilterL
+      * unless force_divisible_by is defined as well */
+     if (force_original_aspect_ratio) {
+         // Including force_divisible_by here rounds to the nearest multiple of it.
+-        int tmp_w = av_rescale(h, inlink->w, inlink->h * (int64_t)force_divisible_by)
++        int64_t tmp_w = av_rescale(h, inlink->w, inlink->h * (int64_t)force_divisible_by)
+                     * force_divisible_by;
+-        int tmp_h = av_rescale(w, inlink->h, inlink->w * (int64_t)force_divisible_by)
++        int64_t tmp_h = av_rescale(w, inlink->h, inlink->w * (int64_t)force_divisible_by)
+                     * force_divisible_by;
+ 
+         if (force_original_aspect_ratio == 1) {
+@@ -173,6 +173,9 @@ int ff_scale_adjust_dimensions(AVFilterL
+         }
+     }
+ 
++    if ((int32_t)w != w || (int32_t)h != h)
++        return AVERROR(EINVAL);
++
+     *ret_w = w;
+     *ret_h = h;
+ 
+Index: FFmpeg/libavfilter/scale_eval.h
+===================================================================
+--- FFmpeg.orig/libavfilter/scale_eval.h
++++ FFmpeg/libavfilter/scale_eval.h
+@@ -41,7 +41,7 @@ int ff_scale_eval_dimensions(void *ctx,
+  * force_original_aspect_ratio is set. force_divisible_by is used only when
+  * force_original_aspect_ratio is set and must be at least 1.
+  *
+- * Returns 0.
++ * Returns negative error code on error or non negative on success
+  */
+ int ff_scale_adjust_dimensions(AVFilterLink *inlink,
+     int *ret_w, int *ret_h,
+Index: FFmpeg/libavfilter/vf_avgblur.c
+===================================================================
+--- FFmpeg.orig/libavfilter/vf_avgblur.c
++++ FFmpeg/libavfilter/vf_avgblur.c
+@@ -287,7 +287,7 @@ static int filter_frame(AVFilterLink *in
+         const int width = s->planewidth[plane];
+ 
+         if (!(s->planes & (1 << plane))) {
+-            if (out != in)
++            if (out->data[plane] != in->data[plane])
+                 av_image_copy_plane(out->data[plane], out->linesize[plane],
+                                     in->data[plane], in->linesize[plane],
+                                     width * ((s->depth + 7) / 8), height);
+Index: FFmpeg/libavfilter/vf_bm3d.c
+===================================================================
+--- FFmpeg.orig/libavfilter/vf_bm3d.c
++++ FFmpeg/libavfilter/vf_bm3d.c
+@@ -273,7 +273,7 @@ static void do_block_matching_multi(BM3D
+                                     int r_y, int r_x, int plane, int jobnr)
+ {
+     SliceContext *sc = &s->slices[jobnr];
+-    double MSE2SSE = s->group_size * s->block_size * s->block_size * src_range * src_range / (s->max * s->max);
++    double MSE2SSE = s->group_size * s->block_size * s->block_size * src_range * src_range / (double)(s->max * s->max);
+     double distMul = 1. / MSE2SSE;
+     double th_sse = th_mse * MSE2SSE;
+     int index = sc->nb_match_blocks;
+Index: FFmpeg/libavfilter/vf_convolution_opencl.c
+===================================================================
+--- FFmpeg.orig/libavfilter/vf_convolution_opencl.c
++++ FFmpeg/libavfilter/vf_convolution_opencl.c
+@@ -20,6 +20,7 @@
+ 
+ #include "config_components.h"
+ 
++#include "libavutil/avassert.h"
+ #include "libavutil/common.h"
+ #include "libavutil/imgutils.h"
+ #include "libavutil/mem.h"
+@@ -80,6 +81,8 @@ static int convolution_opencl_init(AVFil
+         kernel_name = "prewitt_global";
+     } else if (!strcmp(avctx->filter->name, "roberts_opencl")){
+         kernel_name = "roberts_global";
++    } else {
++        av_assert0(0);
+     }
+     ctx->kernel = clCreateKernel(ctx->ocf.program, kernel_name, &cle);
+     CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to create "
+Index: FFmpeg/libavfilter/vf_deshake_opencl.c
+===================================================================
+--- FFmpeg.orig/libavfilter/vf_deshake_opencl.c
++++ FFmpeg/libavfilter/vf_deshake_opencl.c
+@@ -703,7 +703,7 @@ static int minimize_error(
+             total_err += deshake_ctx->ransac_err[j];
+         }
+ 
+-        if (total_err < best_err) {
++        if (i == 0 || total_err < best_err) {
+             for (int mi = 0; mi < 6; ++mi) {
+                 best_model[mi] = model[mi];
+             }
+Index: FFmpeg/libavfilter/vf_elbg.c
+===================================================================
+--- FFmpeg.orig/libavfilter/vf_elbg.c
++++ FFmpeg/libavfilter/vf_elbg.c
+@@ -194,7 +194,7 @@ static int filter_frame(AVFilterLink *in
+         p0 = (uint8_t *)out->data[0];
+ 
+         for (i = 0; i < elbg->codebook_length; i++) {
+-            const int al =  elbg->use_alpha ? elbg->codebook[i*4+3] : 0xff;
++            const unsigned al =  elbg->use_alpha ? elbg->codebook[i*4+3] : 0xff;
+             pal[i] =  al                    << 24  |
+                      (elbg->codebook[i*4+2] << 16) |
+                      (elbg->codebook[i*4+1] <<  8) |
+Index: FFmpeg/libavfilter/vf_lut3d.c
+===================================================================
+--- FFmpeg.orig/libavfilter/vf_lut3d.c
++++ FFmpeg/libavfilter/vf_lut3d.c
+@@ -702,7 +702,8 @@ try_again:
+                                 else if (!strncmp(line + 7, "MAX ", 4)) vals = max;
+                                 if (!vals)
+                                     return AVERROR_INVALIDDATA;
+-                                av_sscanf(line + 11, "%f %f %f", vals, vals + 1, vals + 2);
++                                if (av_sscanf(line + 11, "%f %f %f", vals, vals + 1, vals + 2) != 3)
++                                    return AVERROR_INVALIDDATA;
+                                 av_log(ctx, AV_LOG_DEBUG, "min: %f %f %f | max: %f %f %f\n",
+                                        min[0], min[1], min[2], max[0], max[1], max[2]);
+                                 goto try_again;
+@@ -1733,12 +1734,14 @@ try_again:
+                         else if (!strncmp(line + 7, "MAX ", 4)) vals = max;
+                         if (!vals)
+                             return AVERROR_INVALIDDATA;
+-                        av_sscanf(line + 11, "%f %f %f", vals, vals + 1, vals + 2);
++                        if (av_sscanf(line + 11, "%f %f %f", vals, vals + 1, vals + 2) != 3)
++                            return AVERROR_INVALIDDATA;
+                         av_log(ctx, AV_LOG_DEBUG, "min: %f %f %f | max: %f %f %f\n",
+                                min[0], min[1], min[2], max[0], max[1], max[2]);
+                         goto try_again;
+                     } else if (!strncmp(line, "LUT_1D_INPUT_RANGE ", 19)) {
+-                        av_sscanf(line + 19, "%f %f", min, max);
++                        if (av_sscanf(line + 19, "%f %f", min, max) != 2)
++                            return AVERROR_INVALIDDATA;
+                         min[1] = min[2] = min[0];
+                         max[1] = max[2] = max[0];
+                         goto try_again;
+Index: FFmpeg/libavfilter/vf_premultiply.c
+===================================================================
+--- FFmpeg.orig/libavfilter/vf_premultiply.c
++++ FFmpeg/libavfilter/vf_premultiply.c
+@@ -36,8 +36,8 @@ typedef struct ThreadData {
+ 
+ typedef struct PreMultiplyContext {
+     const AVClass *class;
+-    int width[4], height[4];
+-    int linesize[4];
++    int width[AV_VIDEO_MAX_PLANES], height[AV_VIDEO_MAX_PLANES];
++    int linesize[AV_VIDEO_MAX_PLANES];
+     int nb_planes;
+     int planes;
+     int inverse;
+@@ -45,7 +45,7 @@ typedef struct PreMultiplyContext {
+     int half, depth, offset, max;
+     FFFrameSync fs;
+ 
+-    void (*premultiply[4])(const uint8_t *msrc, const uint8_t *asrc,
++    void (*premultiply[AV_VIDEO_MAX_PLANES])(const uint8_t *msrc, const uint8_t *asrc,
+                            uint8_t *dst,
+                            ptrdiff_t mlinesize, ptrdiff_t alinesize,
+                            ptrdiff_t dlinesize,
+Index: FFmpeg/libavfilter/vf_rotate.c
+===================================================================
+--- FFmpeg.orig/libavfilter/vf_rotate.c
++++ FFmpeg/libavfilter/vf_rotate.c
+@@ -288,7 +288,9 @@ static int config_props(AVFilterLink *ou
+     double res;
+     char *expr;
+ 
+-    ff_draw_init2(&rot->draw, inlink->format, inlink->colorspace, inlink->color_range, 0);
++    ret = ff_draw_init2(&rot->draw, inlink->format, inlink->colorspace, inlink->color_range, 0);
++    if (ret < 0)
++        return ret;
+     ff_draw_color(&rot->draw, &rot->color, rot->fillcolor);
+ 
+     rot->hsub = pixdesc->log2_chroma_w;
+Index: FFmpeg/libavfilter/vf_scale.c
+===================================================================
+--- FFmpeg.orig/libavfilter/vf_scale.c
++++ FFmpeg/libavfilter/vf_scale.c
+@@ -551,10 +551,13 @@ static int config_props(AVFilterLink *ou
+     outlink->w = scale->w;
+     outlink->h = scale->h;
+ 
+-    ff_scale_adjust_dimensions(inlink, &outlink->w, &outlink->h,
++    ret = ff_scale_adjust_dimensions(inlink, &outlink->w, &outlink->h,
+                                scale->force_original_aspect_ratio,
+                                scale->force_divisible_by);
+ 
++    if (ret < 0)
++        goto fail;
++
+     if (outlink->w > INT_MAX ||
+         outlink->h > INT_MAX ||
+         (outlink->h * inlink->w) > INT_MAX ||
+Index: FFmpeg/libavfilter/vf_tiltandshift.c
+===================================================================
+--- FFmpeg.orig/libavfilter/vf_tiltandshift.c
++++ FFmpeg/libavfilter/vf_tiltandshift.c
+@@ -177,14 +177,14 @@ static void copy_column(AVFilterLink *ou
+     const uint8_t *src[4];
+ 
+     dst[0] = dst_data[0] + ncol;
+-    dst[1] = dst_data[1] + (ncol >> s->desc->log2_chroma_h);
+-    dst[2] = dst_data[2] + (ncol >> s->desc->log2_chroma_h);
++    dst[1] = dst_data[1] + (ncol >> s->desc->log2_chroma_w);
++    dst[2] = dst_data[2] + (ncol >> s->desc->log2_chroma_w);
+ 
+     if (!tilt)
+         ncol = 0;
+     src[0] = src_data[0] + ncol;
+-    src[1] = src_data[1] + (ncol >> s->desc->log2_chroma_h);
+-    src[2] = src_data[2] + (ncol >> s->desc->log2_chroma_h);
++    src[1] = src_data[1] + (ncol >> s->desc->log2_chroma_w);
++    src[2] = src_data[2] + (ncol >> s->desc->log2_chroma_w);
+ 
+     av_image_copy(dst, dst_linesizes, src, src_linesizes, outlink->format, 1, outlink->h);
+ }
+@@ -239,8 +239,10 @@ static int output_frame(AVFilterLink *ou
+ 
+     // set correct timestamps and props as long as there is proper input
+     ret = av_frame_copy_props(dst, s->input);
+-    if (ret < 0)
++    if (ret < 0) {
++        av_frame_free(&dst);
+         return ret;
++    }
+ 
+     // discard frame at the top of the list since it has been fully processed
+     list_remove_head(s);
+Index: FFmpeg/libavfilter/vf_xfade.c
+===================================================================
+--- FFmpeg.orig/libavfilter/vf_xfade.c
++++ FFmpeg/libavfilter/vf_xfade.c
+@@ -2288,8 +2288,11 @@ static int xfade_activate(AVFilterContex
+         // Check if we are not yet transitioning, in which case
+         // just request and forward the input frame.
+         if (s->start_pts > s->pts) {
++            int ret;
+             s->passthrough = 1;
+-            ff_inlink_consume_frame(in_a, &s->xf[0]);
++            ret = ff_inlink_consume_frame(in_a, &s->xf[0]);
++            if (ret < 0)
++                return ret;
+             return ff_filter_frame(outlink, s->xf[0]);
+         }
+         s->passthrough = 0;
+@@ -2297,8 +2300,14 @@ static int xfade_activate(AVFilterContex
+         // We are transitioning, so we need a frame from second input
+         if (ff_inlink_check_available_frame(in_b)) {
+             int ret;
+-            ff_inlink_consume_frame(avctx->inputs[0], &s->xf[0]);
+-            ff_inlink_consume_frame(avctx->inputs[1], &s->xf[1]);
++            ret = ff_inlink_consume_frame(avctx->inputs[0], &s->xf[0]);
++            if (ret < 0)
++                return ret;
++            ret = ff_inlink_consume_frame(avctx->inputs[1], &s->xf[1]);
++            if (ret < 0) {
++                av_frame_free(&s->xf[0]);
++                return ret;
++            }
+ 
+             // Calculate PTS offset to first input
+             if (s->inputs_offset_pts == AV_NOPTS_VALUE)
+Index: FFmpeg/libavformat/ac4dec.c
+===================================================================
+--- FFmpeg.orig/libavformat/ac4dec.c
++++ FFmpeg/libavformat/ac4dec.c
+@@ -43,6 +43,8 @@ static int ac4_probe(const AVProbeData *
+             size += 4;
+             if (buf[1] == 0x41)
+                 size += 2;
++            if (left < size)
++                break;
+             max_frames++;
+             left -= size;
+             buf += size;
+Index: FFmpeg/libavformat/ape.c
+===================================================================
+--- FFmpeg.orig/libavformat/ape.c
++++ FFmpeg/libavformat/ape.c
+@@ -291,7 +291,7 @@ static int ape_read_header(AVFormatConte
+         final_size -= final_size & 3;
+     }
+     if (file_size <= 0 || final_size <= 0)
+-        final_size = ape->finalframeblocks * 8;
++        final_size = ape->finalframeblocks * 8LL;
+     ape->frames[ape->totalframes - 1].size = final_size;
+ 
+     for (i = 0; i < ape->totalframes; i++) {
+Index: FFmpeg/libavformat/argo_asf.c
+===================================================================
+--- FFmpeg.orig/libavformat/argo_asf.c
++++ FFmpeg/libavformat/argo_asf.c
+@@ -259,7 +259,7 @@ static int argo_asf_seek(AVFormatContext
+         return -1;
+ 
+     offset = asf->fhdr.chunk_offset + ASF_CHUNK_HEADER_SIZE +
+-             (block * st->codecpar->block_align);
++             block * (int64_t)st->codecpar->block_align;
+ 
+     if ((offset = avio_seek(s->pb, offset, SEEK_SET)) < 0)
+         return offset;
+Index: FFmpeg/libavformat/asfdec_f.c
+===================================================================
+--- FFmpeg.orig/libavformat/asfdec_f.c
++++ FFmpeg/libavformat/asfdec_f.c
+@@ -674,7 +674,7 @@ static int asf_read_marker(AVFormatConte
+ 
+         avio_rl64(pb);             // offset, 8 bytes
+         pres_time = avio_rl64(pb); // presentation time
+-        pres_time = av_sat_sub64(pres_time, asf->hdr.preroll * 10000);
++        pres_time = av_sat_sub64(pres_time, asf->hdr.preroll * 10000LL);
+         avio_rl16(pb);             // entry length
+         avio_rl32(pb);             // send time
+         avio_rl32(pb);             // flags
+Index: FFmpeg/libavformat/asfdec_o.c
+===================================================================
+--- FFmpeg.orig/libavformat/asfdec_o.c
++++ FFmpeg/libavformat/asfdec_o.c
+@@ -866,6 +866,9 @@ static int asf_read_simple_index(AVForma
+     int64_t offset;
+     uint64_t size = avio_rl64(pb);
+ 
++    if (size < 24)
++        return AVERROR_INVALIDDATA;
++
+     // simple index objects should be ordered by stream number, this loop tries to find
+     // the first not indexed video stream
+     for (i = 0; i < asf->nb_streams; i++) {
+Index: FFmpeg/libavformat/bintext.c
+===================================================================
+--- FFmpeg.orig/libavformat/bintext.c
++++ FFmpeg/libavformat/bintext.c
+@@ -93,9 +93,12 @@ static int next_tag_read(AVFormatContext
+     AVIOContext *pb = avctx->pb;
+     char buf[36];
+     int len;
+-    uint64_t start_pos = avio_size(pb) - 256;
++    int64_t start_pos = avio_size(pb);
+ 
+-    avio_seek(pb, start_pos, SEEK_SET);
++    if (start_pos < 256)
++        return AVERROR_INVALIDDATA;
++
++    avio_seek(pb, start_pos - 256, SEEK_SET);
+     if (avio_read(pb, buf, sizeof(next_magic)) != sizeof(next_magic))
+         return -1;
+     if (memcmp(buf, next_magic, sizeof(next_magic)))
+@@ -245,7 +248,10 @@ static int xbin_read_header(AVFormatCont
+         return AVERROR(EIO);
+ 
+     if (pb->seekable & AVIO_SEEKABLE_NORMAL) {
+-        bin->fsize = avio_size(pb) - 9 - st->codecpar->extradata_size;
++        int64_t fsize =  avio_size(pb);
++        if (fsize < 9 + st->codecpar->extradata_size)
++            return 0;
++        bin->fsize = fsize - 9 - st->codecpar->extradata_size;
+         ff_sauce_read(s, &bin->fsize, NULL, 0);
+         avio_seek(pb, 9 + st->codecpar->extradata_size, SEEK_SET);
+     }
+@@ -285,7 +291,10 @@ static int adf_read_header(AVFormatConte
+ 
+     if (pb->seekable & AVIO_SEEKABLE_NORMAL) {
+         int got_width = 0;
+-        bin->fsize = avio_size(pb) - 1 - 192 - 4096;
++        int64_t fsize =  avio_size(pb);
++        if (fsize < 1 + 192 + 4096)
++            return 0;
++        bin->fsize = fsize - 1 - 192 - 4096;
+         st->codecpar->width = 80<<3;
+         ff_sauce_read(s, &bin->fsize, &got_width, 0);
+         if (st->codecpar->width < 8)
+@@ -318,6 +327,7 @@ static int idf_read_header(AVFormatConte
+     AVIOContext *pb = s->pb;
+     AVStream *st;
+     int got_width = 0, ret;
++    int64_t fsize;
+ 
+     if (!(pb->seekable & AVIO_SEEKABLE_NORMAL))
+         return AVERROR(EIO);
+@@ -332,14 +342,18 @@ static int idf_read_header(AVFormatConte
+     st->codecpar->extradata[0] = 16;
+     st->codecpar->extradata[1] = BINTEXT_PALETTE|BINTEXT_FONT;
+ 
+-    avio_seek(pb, avio_size(pb) - 4096 - 48, SEEK_SET);
++    fsize = avio_size(pb);
++    if (fsize < 12 + 4096 + 48)
++        return AVERROR_INVALIDDATA;
++    bin->fsize = fsize - 12 - 4096 - 48;
++
++    avio_seek(pb, bin->fsize + 12, SEEK_SET);
+ 
+     if (avio_read(pb, st->codecpar->extradata + 2 + 48, 4096) < 0)
+         return AVERROR(EIO);
+     if (avio_read(pb, st->codecpar->extradata + 2, 48) < 0)
+         return AVERROR(EIO);
+ 
+-    bin->fsize = avio_size(pb) - 12 - 4096 - 48;
+     ff_sauce_read(s, &bin->fsize, &got_width, 0);
+     if (st->codecpar->width < 8)
+         return AVERROR_INVALIDDATA;
+Index: FFmpeg/libavformat/demux.c
+===================================================================
+--- FFmpeg.orig/libavformat/demux.c
++++ FFmpeg/libavformat/demux.c
+@@ -2499,7 +2499,7 @@ static int extract_extradata(FFFormatCon
+ int avformat_find_stream_info(AVFormatContext *ic, AVDictionary **options)
+ {
+     FFFormatContext *const si = ffformatcontext(ic);
+-    int count = 0, ret = 0;
++    int count = 0, ret = 0, err;
+     int64_t read_size;
+     AVPacket *pkt1 = si->pkt;
+     int64_t old_offset  = avio_tell(ic->pb);
+@@ -3010,9 +3010,11 @@ int avformat_find_stream_info(AVFormatCo
+         }
+     }
+ 
+-    ret = compute_chapters_end(ic);
+-    if (ret < 0)
++    err = compute_chapters_end(ic);
++    if (err < 0) {
++        ret = err;
+         goto find_stream_info_err;
++    }
+ 
+     /* update the stream parameters from the internal codec contexts */
+     for (unsigned i = 0; i < ic->nb_streams; i++) {
+Index: FFmpeg/libavformat/fwse.c
+===================================================================
+--- FFmpeg.orig/libavformat/fwse.c
++++ FFmpeg/libavformat/fwse.c
+@@ -67,7 +67,7 @@ static int fwse_read_header(AVFormatCont
+     av_channel_layout_default(&par->ch_layout, channels);
+     st->duration = avio_rl32(pb);
+     par->sample_rate = avio_rl32(pb);
+-    if (par->sample_rate <= 0 || par->sample_rate > INT_MAX)
++    if (par->sample_rate <= 0)
+         return AVERROR_INVALIDDATA;
+ 
+     par->block_align = 1;
+Index: FFmpeg/libavformat/hlsenc.c
+===================================================================
+--- FFmpeg.orig/libavformat/hlsenc.c
++++ FFmpeg/libavformat/hlsenc.c
+@@ -2615,8 +2615,10 @@ static int hls_write_packet(AVFormatCont
+                            " will retry with a new http session.\n");
+                     ff_format_io_close(s, &vs->out);
+                     ret = hlsenc_io_open(s, &vs->out, filename, &options);
+-                    reflush_dynbuf(vs, &range_length);
+-                    ret = hlsenc_io_close(s, &vs->out, filename);
++                    if (ret >= 0) {
++                        reflush_dynbuf(vs, &range_length);
++                        ret = hlsenc_io_close(s, &vs->out, filename);
++                    }
+                 }
+                 av_dict_free(&options);
+                 av_freep(&vs->temp_buffer);
+@@ -2627,6 +2629,9 @@ static int hls_write_packet(AVFormatCont
+                 hls_rename_temp_file(s, oc);
+         }
+ 
++        if (ret < 0)
++            return ret;
++
+         old_filename = av_strdup(oc->url);
+         if (!old_filename) {
+             return AVERROR(ENOMEM);
+Index: FFmpeg/libavformat/hnm.c
+===================================================================
+--- FFmpeg.orig/libavformat/hnm.c
++++ FFmpeg/libavformat/hnm.c
+@@ -114,6 +114,8 @@ static int hnm_read_packet(AVFormatConte
+     if (hnm->superchunk_remaining == 0) {
+         /* parse next superchunk */
+         superchunk_size = avio_rl24(pb);
++        if (superchunk_size < 4)
++            return AVERROR_INVALIDDATA;
+         avio_skip(pb, 1);
+ 
+         hnm->superchunk_remaining = superchunk_size - 4;
+@@ -124,7 +126,7 @@ static int hnm_read_packet(AVFormatConte
+     chunk_id = avio_rl16(pb);
+     avio_skip(pb, 2);
+ 
+-    if (chunk_size > hnm->superchunk_remaining || !chunk_size) {
++    if (chunk_size > hnm->superchunk_remaining || chunk_size < 8) {
+         av_log(s, AV_LOG_ERROR,
+                "invalid chunk size: %"PRIu32", offset: %"PRId64"\n",
+                chunk_size, avio_tell(pb));
+Index: FFmpeg/libavformat/iamf.h
+===================================================================
+--- FFmpeg.orig/libavformat/iamf.h
++++ FFmpeg/libavformat/iamf.h
+@@ -68,7 +68,7 @@ typedef struct IAMFCodecConfig {
+     enum AVCodecID codec_id;
+     uint32_t codec_tag;
+     unsigned nb_samples;
+-    int seek_preroll;
++    int audio_roll_distance;
+     int sample_rate;
+     int extradata_size;
+     uint8_t *extradata;
+Index: FFmpeg/libavformat/iamf_parse.c
+===================================================================
+--- FFmpeg.orig/libavformat/iamf_parse.c
++++ FFmpeg/libavformat/iamf_parse.c
+@@ -38,7 +38,7 @@ static int opus_decoder_config(IAMFCodec
+ {
+     int left = len - avio_tell(pb);
+ 
+-    if (left < 11)
++    if (left < 11 || codec_config->audio_roll_distance >= 0)
+         return AVERROR_INVALIDDATA;
+ 
+     codec_config->extradata = av_malloc(left + 8);
+@@ -64,6 +64,9 @@ static int aac_decoder_config(IAMFCodecC
+     int object_type_id, codec_id, stream_type;
+     int ret, tag, left;
+ 
++    if (codec_config->audio_roll_distance >= 0)
++        return AVERROR_INVALIDDATA;
++
+     tag = avio_r8(pb);
+     if (tag != MP4DecConfigDescrTag)
+         return AVERROR_INVALIDDATA;
+@@ -92,13 +95,16 @@ static int aac_decoder_config(IAMFCodecC
+     if (left <= 0)
+         return AVERROR_INVALIDDATA;
+ 
+-    codec_config->extradata = av_malloc(left);
++    // We pad extradata here because avpriv_mpeg4audio_get_config2() needs it.
++    codec_config->extradata = av_malloc((size_t)left + AV_INPUT_BUFFER_PADDING_SIZE);
+     if (!codec_config->extradata)
+         return AVERROR(ENOMEM);
+ 
+     codec_config->extradata_size = avio_read(pb, codec_config->extradata, left);
+     if (codec_config->extradata_size < left)
+         return AVERROR_INVALIDDATA;
++    memset(codec_config->extradata + codec_config->extradata_size, 0,
++           AV_INPUT_BUFFER_PADDING_SIZE);
+ 
+     ret = avpriv_mpeg4audio_get_config2(&cfg, codec_config->extradata,
+                                         codec_config->extradata_size, 1, logctx);
+@@ -115,6 +121,9 @@ static int flac_decoder_config(IAMFCodec
+ {
+     int left;
+ 
++    if (codec_config->audio_roll_distance)
++        return AVERROR_INVALIDDATA;
++
+     avio_skip(pb, 4); // METADATA_BLOCK_HEADER
+ 
+     left = len - avio_tell(pb);
+@@ -143,7 +152,7 @@ static int ipcm_decoder_config(IAMFCodec
+     };
+     int sample_format = avio_r8(pb); // 0 = BE, 1 = LE
+     int sample_size = (avio_r8(pb) / 8 - 2); // 16, 24, 32
+-    if (sample_format > 1 || sample_size > 2)
++    if (sample_format > 1 || sample_size > 2U || codec_config->audio_roll_distance)
+         return AVERROR_INVALIDDATA;
+ 
+     codec_config->codec_id = sample_fmt[sample_format][sample_size];
+@@ -163,7 +172,7 @@ static int codec_config_obu(void *s, IAM
+     uint8_t *buf;
+     enum AVCodecID avcodec_id;
+     unsigned codec_config_id, nb_samples, codec_id;
+-    int16_t seek_preroll;
++    int16_t audio_roll_distance;
+     int ret;
+ 
+     buf = av_malloc(len);
+@@ -183,7 +192,7 @@ static int codec_config_obu(void *s, IAM
+     codec_config_id = ffio_read_leb(pbc);
+     codec_id = avio_rb32(pbc);
+     nb_samples = ffio_read_leb(pbc);
+-    seek_preroll = avio_rb16(pbc);
++    audio_roll_distance = avio_rb16(pbc);
+ 
+     switch(codec_id) {
+     case MKBETAG('O','p','u','s'):
+@@ -222,7 +231,7 @@ static int codec_config_obu(void *s, IAM
+     codec_config->codec_config_id = codec_config_id;
+     codec_config->codec_id = avcodec_id;
+     codec_config->nb_samples = nb_samples;
+-    codec_config->seek_preroll = seek_preroll;
++    codec_config->audio_roll_distance = audio_roll_distance;
+ 
+     switch(codec_id) {
+     case MKBETAG('O','p','u','s'):
+@@ -243,6 +252,12 @@ static int codec_config_obu(void *s, IAM
+     if (ret < 0)
+         goto fail;
+ 
++    if ((codec_config->nb_samples > INT_MAX) ||
++        (-codec_config->audio_roll_distance > INT_MAX / codec_config->nb_samples)) {
++        ret = AVERROR_INVALIDDATA;
++        goto fail;
++    }
++
+     c->codec_configs[c->nb_codec_configs++] = codec_config;
+ 
+     len -= avio_tell(pbc);
+@@ -269,6 +284,9 @@ static int update_extradata(AVCodecParam
+     switch(codecpar->codec_id) {
+     case AV_CODEC_ID_OPUS:
+         AV_WB8(codecpar->extradata + 9, codecpar->ch_layout.nb_channels);
++        AV_WL16(codecpar->extradata + 10, AV_RB16(codecpar->extradata + 10)); // Byte swap pre-skip
++        AV_WL32(codecpar->extradata + 12, AV_RB32(codecpar->extradata + 12)); // Byte swap sample rate
++        AV_WL16(codecpar->extradata + 16, AV_RB16(codecpar->extradata + 16)); // Byte swap Output Gain
+         break;
+     case AV_CODEC_ID_AAC: {
+         uint8_t buf[5];
+@@ -330,7 +348,7 @@ static int scalable_channel_layout_confi
+     nb_layers = avio_r8(pb) >> 5; // get_bits(&gb, 3);
+     // skip_bits(&gb, 5); //reserved
+ 
+-    if (nb_layers > 6)
++    if (nb_layers > 6 || nb_layers == 0)
+         return AVERROR_INVALIDDATA;
+ 
+     audio_element->layers = av_calloc(nb_layers, sizeof(*audio_element->layers));
+@@ -355,6 +373,9 @@ static int scalable_channel_layout_confi
+         substream_count = avio_r8(pb);
+         coupled_substream_count = avio_r8(pb);
+ 
++        if (substream_count + k > audio_element->nb_substreams)
++            return AVERROR_INVALIDDATA;
++
+         audio_element->layers[i].substream_count         = substream_count;
+         audio_element->layers[i].coupled_substream_count = coupled_substream_count;
+         if (output_gain_is_present_flag) {
+@@ -588,7 +609,7 @@ static int audio_element_obu(void *s, IA
+     FFIOContext b;
+     AVIOContext *pbc;
+     uint8_t *buf;
+-    unsigned audio_element_id, codec_config_id, num_parameters;
++    unsigned audio_element_id, nb_substreams, codec_config_id, num_parameters;
+     int audio_element_type, ret;
+ 
+     buf = av_malloc(len);
+@@ -643,14 +664,15 @@ static int audio_element_obu(void *s, IA
+         goto fail;
+     }
+ 
+-    audio_element->nb_substreams = ffio_read_leb(pbc);
++    nb_substreams = ffio_read_leb(pbc);
+     audio_element->codec_config_id = codec_config_id;
+     audio_element->audio_element_id = audio_element_id;
+-    audio_element->substreams = av_calloc(audio_element->nb_substreams, sizeof(*audio_element->substreams));
++    audio_element->substreams = av_calloc(nb_substreams, sizeof(*audio_element->substreams));
+     if (!audio_element->substreams) {
+         ret = AVERROR(ENOMEM);
+         goto fail;
+     }
++    audio_element->nb_substreams = nb_substreams;
+ 
+     element = audio_element->element = av_iamf_audio_element_alloc();
+     if (!element) {
+@@ -676,7 +698,7 @@ static int audio_element_obu(void *s, IA
+         substream->codecpar->codec_id   = codec_config->codec_id;
+         substream->codecpar->frame_size = codec_config->nb_samples;
+         substream->codecpar->sample_rate = codec_config->sample_rate;
+-        substream->codecpar->seek_preroll = codec_config->seek_preroll;
++        substream->codecpar->seek_preroll = -codec_config->audio_roll_distance * codec_config->nb_samples;
+ 
+         switch(substream->codecpar->codec_id) {
+         case AV_CODEC_ID_AAC:
+@@ -1077,8 +1099,6 @@ int ff_iamfdec_read_descriptors(IAMFCont
+         case IAMF_OBU_IA_MIX_PRESENTATION:
+             ret = mix_presentation_obu(log_ctx, c, pb, obu_size);
+             break;
+-        case IAMF_OBU_IA_TEMPORAL_DELIMITER:
+-            break;
+         default: {
+             int64_t offset = avio_skip(pb, obu_size);
+             if (offset < 0)
+Index: FFmpeg/libavformat/iamf_writer.c
+===================================================================
+--- FFmpeg.orig/libavformat/iamf_writer.c
++++ FFmpeg/libavformat/iamf_writer.c
+@@ -39,11 +39,15 @@ static int update_extradata(IAMFCodecCon
+ 
+     switch(codec_config->codec_id) {
+     case AV_CODEC_ID_OPUS:
+-        if (codec_config->extradata_size < 19)
++        if (codec_config->extradata_size != 19)
+             return AVERROR_INVALIDDATA;
+         codec_config->extradata_size -= 8;
+-        memmove(codec_config->extradata, codec_config->extradata + 8, codec_config->extradata_size);
+-        AV_WB8(codec_config->extradata + 1, 2); // set channels to stereo
++        AV_WB8(codec_config->extradata  + 0, AV_RL8(codec_config->extradata + 8)); // version
++        AV_WB8(codec_config->extradata  + 1, 2); // set channels to stereo
++        AV_WB16(codec_config->extradata + 2, AV_RL16(codec_config->extradata + 10)); // Byte swap pre-skip
++        AV_WB32(codec_config->extradata + 4, AV_RL32(codec_config->extradata + 12)); // Byte swap sample rate
++        AV_WB16(codec_config->extradata + 8, 0); // set Output Gain to 0
++        AV_WB8(codec_config->extradata + 10, AV_RL8(codec_config->extradata + 18)); // Mapping family
+         break;
+     case AV_CODEC_ID_FLAC: {
+         uint8_t buf[13];
+@@ -72,6 +76,34 @@ static int update_extradata(IAMFCodecCon
+     return 0;
+ }
+ 
++static int populate_audio_roll_distance(IAMFCodecConfig *codec_config)
++{
++    switch (codec_config->codec_id) {
++    case AV_CODEC_ID_OPUS:
++        if (!codec_config->nb_samples)
++            return AVERROR(EINVAL);
++        // ceil(3840 / nb_samples)
++        codec_config->audio_roll_distance = -(1 + ((3840 - 1) / codec_config->nb_samples));
++        break;
++    case AV_CODEC_ID_AAC:
++        codec_config->audio_roll_distance = -1;
++        break;
++    case AV_CODEC_ID_FLAC:
++    case AV_CODEC_ID_PCM_S16BE:
++    case AV_CODEC_ID_PCM_S24BE:
++    case AV_CODEC_ID_PCM_S32BE:
++    case AV_CODEC_ID_PCM_S16LE:
++    case AV_CODEC_ID_PCM_S24LE:
++    case AV_CODEC_ID_PCM_S32LE:
++        codec_config->audio_roll_distance = 0;
++        break;
++    default:
++        return AVERROR(EINVAL);
++    }
++
++    return 0;
++}
++
+ static int fill_codec_config(IAMFContext *iamf, const AVStreamGroup *stg,
+                              IAMFCodecConfig *codec_config)
+ {
+@@ -83,7 +115,7 @@ static int fill_codec_config(IAMFContext
+     codec_config->sample_rate = st->codecpar->sample_rate;
+     codec_config->codec_tag = st->codecpar->codec_tag;
+     codec_config->nb_samples = st->codecpar->frame_size;
+-    codec_config->seek_preroll = st->codecpar->seek_preroll;
++    populate_audio_roll_distance(codec_config);
+     if (st->codecpar->extradata_size) {
+         codec_config->extradata = av_memdup(st->codecpar->extradata, st->codecpar->extradata_size);
+         if (!codec_config->extradata)
+@@ -427,7 +459,7 @@ static int iamf_write_codec_config(const
+     avio_wl32(dyn_bc, codec_config->codec_tag);
+ 
+     ffio_write_leb(dyn_bc, codec_config->nb_samples);
+-    avio_wb16(dyn_bc, codec_config->seek_preroll);
++    avio_wb16(dyn_bc, codec_config->audio_roll_distance);
+ 
+     switch(codec_config->codec_id) {
+     case AV_CODEC_ID_OPUS:
+@@ -441,32 +473,32 @@ static int iamf_write_codec_config(const
+         avio_write(dyn_bc, codec_config->extradata, codec_config->extradata_size);
+         break;
+     case AV_CODEC_ID_PCM_S16LE:
+-        avio_w8(dyn_bc, 0);
++        avio_w8(dyn_bc, 1);
+         avio_w8(dyn_bc, 16);
+         avio_wb32(dyn_bc, codec_config->sample_rate);
+         break;
+     case AV_CODEC_ID_PCM_S24LE:
+-        avio_w8(dyn_bc, 0);
++        avio_w8(dyn_bc, 1);
+         avio_w8(dyn_bc, 24);
+         avio_wb32(dyn_bc, codec_config->sample_rate);
+         break;
+     case AV_CODEC_ID_PCM_S32LE:
+-        avio_w8(dyn_bc, 0);
++        avio_w8(dyn_bc, 1);
+         avio_w8(dyn_bc, 32);
+         avio_wb32(dyn_bc, codec_config->sample_rate);
+         break;
+     case AV_CODEC_ID_PCM_S16BE:
+-        avio_w8(dyn_bc, 1);
++        avio_w8(dyn_bc, 0);
+         avio_w8(dyn_bc, 16);
+         avio_wb32(dyn_bc, codec_config->sample_rate);
+         break;
+     case AV_CODEC_ID_PCM_S24BE:
+-        avio_w8(dyn_bc, 1);
++        avio_w8(dyn_bc, 0);
+         avio_w8(dyn_bc, 24);
+         avio_wb32(dyn_bc, codec_config->sample_rate);
+         break;
+     case AV_CODEC_ID_PCM_S32BE:
+-        avio_w8(dyn_bc, 1);
++        avio_w8(dyn_bc, 0);
+         avio_w8(dyn_bc, 32);
+         avio_wb32(dyn_bc, codec_config->sample_rate);
+         break;
+Index: FFmpeg/libavformat/imfdec.c
+===================================================================
+--- FFmpeg.orig/libavformat/imfdec.c
++++ FFmpeg/libavformat/imfdec.c
+@@ -695,12 +695,9 @@ static int imf_read_header(AVFormatConte
+ static IMFVirtualTrackPlaybackCtx *get_next_track_with_minimum_timestamp(AVFormatContext *s)
+ {
+     IMFContext *c = s->priv_data;
+-    IMFVirtualTrackPlaybackCtx *track;
++    IMFVirtualTrackPlaybackCtx *track = NULL;
+     AVRational minimum_timestamp = av_make_q(INT32_MAX, 1);
+ 
+-    if (!c->track_count)
+-        return NULL;
+-
+     for (uint32_t i = c->track_count; i > 0; i--) {
+         av_log(s, AV_LOG_TRACE, "Compare track %d timestamp " AVRATIONAL_FORMAT
+                " to minimum " AVRATIONAL_FORMAT
+Index: FFmpeg/libavformat/img2dec.c
+===================================================================
+--- FFmpeg.orig/libavformat/img2dec.c
++++ FFmpeg/libavformat/img2dec.c
+@@ -25,6 +25,7 @@
+ #define _DEFAULT_SOURCE
+ #define _BSD_SOURCE
+ #include <sys/stat.h>
++#include "libavutil/avassert.h"
+ #include "libavutil/avstring.h"
+ #include "libavutil/log.h"
+ #include "libavutil/opt.h"
+@@ -504,6 +505,7 @@ int ff_img_read_packet(AVFormatContext *
+     pkt->flags       |= AV_PKT_FLAG_KEY;
+     if (s->ts_from_file) {
+         struct stat img_stat;
++        av_assert0(!s->is_pipe); // The ts_from_file option is not supported by piped input demuxers
+         if (stat(filename, &img_stat)) {
+             res = AVERROR(EIO);
+             goto fail;
+@@ -794,13 +796,14 @@ static int jpeg_probe(const AVProbeData
+                 return 0;
+             state = EOI;
+             break;
+-        case DQT:
+         case APP0:
+-            if (AV_RL32(&b[i + 4]) == MKTAG('J','F','I','F'))
++            if (c == APP0 && AV_RL32(&b[i + 4]) == MKTAG('J','F','I','F'))
+                 got_header = 1;
++            /* fallthrough */
+         case APP1:
+-            if (AV_RL32(&b[i + 4]) == MKTAG('E','x','i','f'))
++            if (c == APP1 && AV_RL32(&b[i + 4]) == MKTAG('E','x','i','f'))
+                 got_header = 1;
++            /* fallthrough */
+         case APP2:
+         case APP3:
+         case APP4:
+@@ -815,6 +818,7 @@ static int jpeg_probe(const AVProbeData
+         case APP13:
+         case APP14:
+         case APP15:
++        case DQT: /* fallthrough */
+         case COM:
+             i += AV_RB16(&b[i + 2]) + 1;
+             break;
+Index: FFmpeg/libavformat/libzmq.c
+===================================================================
+--- FFmpeg.orig/libavformat/libzmq.c
++++ FFmpeg/libavformat/libzmq.c
+@@ -94,7 +94,10 @@ static int zmq_proto_open(URLContext *h,
+         return AVERROR_EXTERNAL;
+     }
+ 
+-    av_strstart(uri, "zmq:", &uri);
++    if (av_strstart(uri, "zmq:", &uri)) {
++        av_log(h, AV_LOG_ERROR, "URL %s lacks prefix\n", uri);
++        return AVERROR(EINVAL);
++    }
+ 
+     /*publish during write*/
+     if (h->flags & AVIO_FLAG_WRITE) {
+Index: FFmpeg/libavformat/matroskadec.c
+===================================================================
+--- FFmpeg.orig/libavformat/matroskadec.c
++++ FFmpeg/libavformat/matroskadec.c
+@@ -4207,7 +4207,7 @@ static int matroska_parse_cluster(Matros
+     MatroskaBlock     *block = &cluster->block;
+     int res;
+ 
+-    av_assert0(matroska->num_levels <= 2);
++    av_assert0(matroska->num_levels <= 2U);
+ 
+     if (matroska->num_levels == 1) {
+         res = ebml_parse(matroska, matroska_segment, NULL);
+Index: FFmpeg/libavformat/mm.c
+===================================================================
+--- FFmpeg.orig/libavformat/mm.c
++++ FFmpeg/libavformat/mm.c
+@@ -95,7 +95,7 @@ static int read_header(AVFormatContext *
+     type = avio_rl16(pb);
+     length = avio_rl32(pb);
+ 
+-    if (type != MM_TYPE_HEADER)
++    if (type != MM_TYPE_HEADER || length < 10)
+         return AVERROR_INVALIDDATA;
+ 
+     /* read header */
+Index: FFmpeg/libavformat/mov.c
+===================================================================
+--- FFmpeg.orig/libavformat/mov.c
++++ FFmpeg/libavformat/mov.c
+@@ -332,7 +332,8 @@ static int mov_read_udta_string(MOVConte
+     char *str = NULL;
+     const char *key = NULL;
+     uint16_t langcode = 0;
+-    uint32_t data_type = 0, str_size, str_size_alloc;
++    uint32_t data_type = 0, str_size_alloc;
++    uint64_t str_size;
+     int (*parse)(MOVContext*, AVIOContext*, unsigned, const char*) = NULL;
+     int raw = 0;
+     int num = 0;
+@@ -896,6 +897,11 @@ static int mov_read_iacb(MOVContext *c,
+     st = c->fc->streams[c->fc->nb_streams - 1];
+     sc = st->priv_data;
+ 
++    if (st->codecpar->extradata) {
++        av_log(c->fc, AV_LOG_WARNING, "ignoring iacb\n");
++        return 0;
++    }
++
+     sc->iamf = av_mallocz(sizeof(*sc->iamf));
+     if (!sc->iamf)
+         return AVERROR(ENOMEM);
+@@ -3056,6 +3062,11 @@ static int mov_read_stsc(MOVContext *c,
+     MOVStreamContext *sc;
+     unsigned int i, entries;
+ 
++    if (c->trak_index < 0) {
++        av_log(c->fc, AV_LOG_WARNING, "STSC outside TRAK\n");
++        return 0;
++    }
++
+     if (c->fc->nb_streams < 1)
+         return 0;
+     st = c->fc->streams[c->fc->nb_streams-1];
+@@ -3152,6 +3163,11 @@ static int mov_read_stps(MOVContext *c,
+     MOVStreamContext *sc;
+     unsigned i, entries;
+ 
++    if (c->trak_index < 0) {
++        av_log(c->fc, AV_LOG_WARNING, "STPS outside TRAK\n");
++        return 0;
++    }
++
+     if (c->fc->nb_streams < 1)
+         return 0;
+     st = c->fc->streams[c->fc->nb_streams-1];
+@@ -3189,6 +3205,11 @@ static int mov_read_stss(MOVContext *c,
+     MOVStreamContext *sc;
+     unsigned int i, entries;
+ 
++    if (c->trak_index < 0) {
++        av_log(c->fc, AV_LOG_WARNING, "STSS outside TRAK\n");
++        return 0;
++    }
++
+     if (c->fc->nb_streams < 1)
+         return 0;
+     st = c->fc->streams[c->fc->nb_streams-1];
+@@ -3241,6 +3262,11 @@ static int mov_read_stsz(MOVContext *c,
+     unsigned char* buf;
+     int ret;
+ 
++    if (c->trak_index < 0) {
++        av_log(c->fc, AV_LOG_WARNING, "STSZ outside TRAK\n");
++        return 0;
++    }
++
+     if (c->fc->nb_streams < 1)
+         return 0;
+     st = c->fc->streams[c->fc->nb_streams-1];
+@@ -3330,6 +3356,11 @@ static int mov_read_stts(MOVContext *c,
+     int64_t current_dts = 0;
+     int64_t corrected_dts = 0;
+ 
++    if (c->trak_index < 0) {
++        av_log(c->fc, AV_LOG_WARNING, "STTS outside TRAK\n");
++        return 0;
++    }
++
+     if (c->fc->nb_streams < 1)
+         return 0;
+     st = c->fc->streams[c->fc->nb_streams-1];
+@@ -3383,15 +3414,15 @@ static int mov_read_stts(MOVContext *c,
+             sc->stts_data[i].duration = 1;
+             corrected_dts += (delta_magnitude < 0 ? (int64_t)delta_magnitude : 1) * sample_count;
+         } else {
+-            corrected_dts += sample_duration * sample_count;
++            corrected_dts += sample_duration * (int64_t)sample_count;
+         }
+ 
+-        current_dts += sc->stts_data[i].duration * sample_count;
++        current_dts += sc->stts_data[i].duration * (int64_t)sample_count;
+ 
+         if (current_dts > corrected_dts) {
+             int64_t drift = (current_dts - corrected_dts)/FFMAX(sample_count, 1);
+             uint32_t correction = (sc->stts_data[i].duration > drift) ? drift : sc->stts_data[i].duration - 1;
+-            current_dts -= correction * sample_count;
++            current_dts -= correction * (uint64_t)sample_count;
+             sc->stts_data[i].duration -= correction;
+         }
+ 
+@@ -3486,6 +3517,11 @@ static int mov_read_ctts(MOVContext *c,
+     MOVStreamContext *sc;
+     unsigned int i, entries, ctts_count = 0;
+ 
++    if (c->trak_index < 0) {
++        av_log(c->fc, AV_LOG_WARNING, "CTTS outside TRAK\n");
++        return 0;
++    }
++
+     if (c->fc->nb_streams < 1)
+         return 0;
+     st = c->fc->streams[c->fc->nb_streams-1];
+@@ -3683,6 +3719,10 @@ static int get_edit_list_entry(MOVContex
+     }
+     *edit_list_duration = av_rescale(*edit_list_duration, msc->time_scale,
+                                      global_timescale);
++
++    if (*edit_list_duration + (uint64_t)*edit_list_media_time > INT64_MAX)
++        *edit_list_duration = 0;
++
+     return 1;
+ }
+ 
+@@ -8010,7 +8050,7 @@ static int mov_read_SAND(MOVContext *c,
+     return 0;
+ }
+ 
+-static int rb_size(AVIOContext *pb, uint64_t* value, int size)
++static int rb_size(AVIOContext *pb, int64_t *value, int size)
+ {
+     if (size == 0)
+         *value = 0;
+@@ -8020,9 +8060,11 @@ static int rb_size(AVIOContext *pb, uint
+         *value = avio_rb16(pb);
+     else if (size == 4)
+         *value = avio_rb32(pb);
+-    else if (size == 8)
++    else if (size == 8) {
+         *value = avio_rb64(pb);
+-    else
++        if (*value < 0)
++            return -1;
++    } else
+         return -1;
+     return size;
+ }
+@@ -8102,7 +8144,8 @@ static int mov_read_iloc(MOVContext *c,
+         }
+         for (int j = 0; j < extent_count; j++) {
+             if (rb_size(pb, &extent_offset, offset_size) < 0 ||
+-                rb_size(pb, &extent_length, length_size) < 0)
++                rb_size(pb, &extent_length, length_size) < 0 ||
++                base_offset > INT64_MAX - extent_offset)
+                 return AVERROR_INVALIDDATA;
+             if (offset_type == 1)
+                 c->heif_item[i].is_idat_relative = 1;
+@@ -8129,6 +8172,8 @@ static int mov_read_infe(MOVContext *c,
+     version = avio_r8(pb);
+     avio_rb24(pb);  // flags.
+     size -= 4;
++    if (size < 0)
++        return AVERROR_INVALIDDATA;
+ 
+     if (version < 2) {
+         avpriv_report_missing_feature(c->fc, "infe version < 2");
+@@ -8140,6 +8185,8 @@ static int mov_read_infe(MOVContext *c,
+     avio_rb16(pb); // item_protection_index
+     item_type = avio_rl32(pb);
+     size -= 8;
++    if (size < 1)
++        return AVERROR_INVALIDDATA;
+ 
+     av_bprint_init(&item_name, 0, AV_BPRINT_SIZE_UNLIMITED);
+     ret = ff_read_string_to_bprint_overwrite(pb, &item_name, size);
+@@ -8199,6 +8246,8 @@ static int mov_read_iinf(MOVContext *c,
+     for (i = 0; i < entry_count; i++) {
+         MOVAtom infe;
+ 
++        if (avio_feof(pb))
++            return AVERROR_INVALIDDATA;
+         infe.size = avio_rb32(pb) - 8;
+         infe.type = avio_rl32(pb);
+         ret = mov_read_infe(c, pb, infe, i);
+@@ -8438,6 +8487,11 @@ static int mov_read_iprp(MOVContext *c,
+         int item_id = version ? avio_rb32(pb) : avio_rb16(pb);
+         int assoc_count = avio_r8(pb);
+ 
++        if (avio_feof(pb)) {
++            ret = AVERROR_INVALIDDATA;
++            goto fail;
++        }
++
+         for (int j = 0; j < assoc_count; j++) {
+             MOVAtoms *ref;
+             int index = avio_r8(pb) & 0x7f;
+@@ -9550,6 +9604,9 @@ static int mov_read_header(AVFormatConte
+             st->codecpar->width  = item->width;
+             st->codecpar->height = item->height;
+ 
++            if (sc->sample_count != 1 || sc->chunk_count != 1)
++                return AVERROR_INVALIDDATA;
++
+             sc->sample_sizes[0]  = item->extent_length;
+             sc->chunk_offsets[0] = item->extent_offset + offset;
+ 
+Index: FFmpeg/libavformat/movenc.c
+===================================================================
+--- FFmpeg.orig/libavformat/movenc.c
++++ FFmpeg/libavformat/movenc.c
+@@ -1341,7 +1341,8 @@ static int mov_write_audio_tag(AVFormatC
+                 avio_wb16(pb, 16);
+             avio_wb16(pb, track->audio_vbr ? -2 : 0); /* compression ID */
+         } else { /* reserved for mp4/3gp */
+-            avio_wb16(pb, track->par->ch_layout.nb_channels);
++            avio_wb16(pb, track->tag == MKTAG('i', 'a', 'm', 'f') ?
++                      0 : track->par->ch_layout.nb_channels);
+             if (track->par->codec_id == AV_CODEC_ID_FLAC ||
+                 track->par->codec_id == AV_CODEC_ID_ALAC) {
+                 avio_wb16(pb, track->par->bits_per_raw_sample);
+@@ -1352,7 +1353,9 @@ static int mov_write_audio_tag(AVFormatC
+         }
+ 
+         avio_wb16(pb, 0); /* packet size (= 0) */
+-        if (track->par->codec_id == AV_CODEC_ID_OPUS)
++        if (track->tag == MKTAG('i','a','m','f'))
++            avio_wb16(pb, 0); /* samplerate must be 0 for IAMF */
++        else if (track->par->codec_id == AV_CODEC_ID_OPUS)
+             avio_wb16(pb, 48000);
+         else if (track->par->codec_id == AV_CODEC_ID_TRUEHD)
+             avio_wb32(pb, track->par->sample_rate);
+@@ -4873,7 +4876,8 @@ static int mov_write_isml_manifest(AVIOC
+             param_write_int(pb, "AudioTag", ff_codec_get_tag(ff_codec_wav_tags,
+                                                              track->par->codec_id));
+             param_write_int(pb, "Channels", track->par->ch_layout.nb_channels);
+-            param_write_int(pb, "SamplingRate", track->par->sample_rate);
++            param_write_int(pb, "SamplingRate", track->tag == MKTAG('i','a','m','f') ?
++                                            0 : track->par->sample_rate);
+             param_write_int(pb, "BitsPerSample", 16);
+             param_write_int(pb, "PacketSize", track->par->block_align ?
+                                               track->par->block_align : 4);
+Index: FFmpeg/libavformat/mp3dec.c
+===================================================================
+--- FFmpeg.orig/libavformat/mp3dec.c
++++ FFmpeg/libavformat/mp3dec.c
+@@ -137,9 +137,10 @@ static void read_xing_toc(AVFormatContex
+     int fill_index = (mp3->usetoc || fast_seek) && duration > 0;
+ 
+     if (!filesize &&
+-        !(filesize = avio_size(s->pb))) {
++        (filesize = avio_size(s->pb)) <= 0) {
+         av_log(s, AV_LOG_WARNING, "Cannot determine file size, skipping TOC table.\n");
+         fill_index = 0;
++        filesize = 0;
+     }
+ 
+     for (i = 0; i < XING_TOC_COUNT; i++) {
+@@ -584,7 +585,7 @@ static int mp3_seek(AVFormatContext *s,
+     if (best_pos < 0)
+         return best_pos;
+ 
+-    if (mp3->is_cbr && ie == &ie1 && mp3->frames) {
++    if (mp3->is_cbr && ie == &ie1 && mp3->frames && mp3->header_filesize > 0) {
+         int frame_duration = av_rescale(st->duration, 1, mp3->frames);
+         ie1.timestamp = frame_duration * av_rescale(best_pos - si->data_offset, mp3->frames, mp3->header_filesize);
+     }
+Index: FFmpeg/libavformat/mpeg.c
+===================================================================
+--- FFmpeg.orig/libavformat/mpeg.c
++++ FFmpeg/libavformat/mpeg.c
+@@ -75,6 +75,9 @@ static int mpegps_probe(const AVProbeDat
+             int pes  = endpes <= i && check_pes(p->buf + i, p->buf + p->buf_size);
+             int pack = check_pack_header(p->buf + i);
+ 
++            if (len > INT_MAX - i)
++                break;
++
+             if (code == SYSTEM_HEADER_START_CODE)
+                 sys++;
+             else if (code == PACK_START_CODE && pack)
+Index: FFmpeg/libavformat/mxfdec.c
+===================================================================
+--- FFmpeg.orig/libavformat/mxfdec.c
++++ FFmpeg/libavformat/mxfdec.c
+@@ -3030,6 +3030,7 @@ static int mxf_parse_structural_metadata
+             if (container_ul->desc)
+                 av_dict_set(&st->metadata, "data_type", container_ul->desc, 0);
+             if (mxf->eia608_extract &&
++                container_ul->desc &&
+                 !strcmp(container_ul->desc, "vbi_vanc_smpte_436M")) {
+                 st->codecpar->codec_type = AVMEDIA_TYPE_SUBTITLE;
+                 st->codecpar->codec_id = AV_CODEC_ID_EIA_608;
+@@ -3818,8 +3819,7 @@ static int mxf_get_next_track_edit_unit(
+ 
+     a = -1;
+     b = track->original_duration;
+-
+-    while (b - a > 1) {
++    while (b - 1 > a) {
+         m = (a + b) >> 1;
+         if (mxf_edit_unit_absolute_offset(mxf, t, m, track->edit_rate, NULL, &offset, NULL, 0) < 0)
+             return -1;
+Index: FFmpeg/libavformat/mxfenc.c
+===================================================================
+--- FFmpeg.orig/libavformat/mxfenc.c
++++ FFmpeg/libavformat/mxfenc.c
+@@ -2606,9 +2606,6 @@ static int mxf_parse_ffv1_frame(AVFormat
+         v = get_ffv1_unsigned_symbol(&c, state);
+         av_assert0(v >= 2);
+         if (v > 4) {
+-            return 0;
+-        }
+-        if (v > 4) {
+             av_log(s, AV_LOG_ERROR, "unsupported ffv1 version %d\n", v);
+             return 0;
+         }
+Index: FFmpeg/libavformat/nsvdec.c
+===================================================================
+--- FFmpeg.orig/libavformat/nsvdec.c
++++ FFmpeg/libavformat/nsvdec.c
+@@ -616,7 +616,7 @@ null_chunk_retry:
+         pkt = &nsv->ahead[NSV_ST_AUDIO];
+         /* read raw audio specific header on the first audio chunk... */
+         /* on ALL audio chunks ?? seems so! */
+-        if (asize && st[NSV_ST_AUDIO]->codecpar->codec_tag == MKTAG('P', 'C', 'M', ' ')/* && fill_header*/) {
++        if (asize >= 4 && st[NSV_ST_AUDIO]->codecpar->codec_tag == MKTAG('P', 'C', 'M', ' ')/* && fill_header*/) {
+             uint8_t bps;
+             uint8_t channels;
+             uint16_t samplerate;
+Index: FFmpeg/libavformat/rdt.c
+===================================================================
+--- FFmpeg.orig/libavformat/rdt.c
++++ FFmpeg/libavformat/rdt.c
+@@ -205,6 +205,8 @@ ff_rdt_parse_header(const uint8_t *buf,
+             return -1; /* not followed by a data packet */
+ 
+         pkt_len = AV_RB16(buf+3);
++        if (pkt_len > len)
++            return AVERROR_INVALIDDATA;
+         buf += pkt_len;
+         len -= pkt_len;
+         consumed += pkt_len;
+Index: FFmpeg/libavformat/rmdec.c
+===================================================================
+--- FFmpeg.orig/libavformat/rmdec.c
++++ FFmpeg/libavformat/rmdec.c
+@@ -267,9 +267,9 @@ static int rm_read_audio_stream_info(AVF
+         case DEINT_ID_INT4:
+             if (ast->coded_framesize > ast->audio_framesize ||
+                 sub_packet_h <= 1 ||
+-                ast->coded_framesize * (uint64_t)sub_packet_h > (2 + (sub_packet_h & 1)) * ast->audio_framesize)
++                ast->coded_framesize * (uint64_t)sub_packet_h > (2LL + (sub_packet_h & 1)) * ast->audio_framesize)
+                 return AVERROR_INVALIDDATA;
+-            if (ast->coded_framesize * (uint64_t)sub_packet_h != 2*ast->audio_framesize) {
++            if (ast->coded_framesize * (uint64_t)sub_packet_h != 2LL*ast->audio_framesize) {
+                 avpriv_request_sample(s, "mismatching interleaver parameters");
+                 return AVERROR_INVALIDDATA;
+             }
+Index: FFmpeg/libavformat/rtmppkt.c
+===================================================================
+--- FFmpeg.orig/libavformat/rtmppkt.c
++++ FFmpeg/libavformat/rtmppkt.c
+@@ -441,7 +441,6 @@ static int amf_tag_skip(GetByteContext *
+ {
+     AMFDataType type;
+     unsigned nb   = -1;
+-    int parse_key = 1;
+ 
+     if (bytestream2_get_bytes_left(gb) < 1)
+         return -1;
+@@ -466,13 +465,12 @@ static int amf_tag_skip(GetByteContext *
+         bytestream2_skip(gb, 10);
+         return 0;
+     case AMF_DATA_TYPE_ARRAY:
+-        parse_key = 0;
+     case AMF_DATA_TYPE_MIXEDARRAY:
+         nb = bytestream2_get_be32(gb);
+     case AMF_DATA_TYPE_OBJECT:
+-        while (nb-- > 0 || type != AMF_DATA_TYPE_ARRAY) {
++        while (type != AMF_DATA_TYPE_ARRAY || nb-- > 0) {
+             int t;
+-            if (parse_key) {
++            if (type != AMF_DATA_TYPE_ARRAY) {
+                 int size = bytestream2_get_be16(gb);
+                 if (!size) {
+                     bytestream2_get_byte(gb);
+Index: FFmpeg/libavformat/rtmpproto.c
+===================================================================
+--- FFmpeg.orig/libavformat/rtmpproto.c
++++ FFmpeg/libavformat/rtmpproto.c
+@@ -2667,7 +2667,7 @@ static int rtmp_open(URLContext *s, cons
+     }
+     if (!strcmp(proto, "rtmpt") || !strcmp(proto, "rtmpts")) {
+         if (!strcmp(proto, "rtmpts"))
+-            av_dict_set(opts, "ffrtmphttp_tls", "1", 1);
++            av_dict_set(opts, "ffrtmphttp_tls", "1", AV_DICT_MATCH_CASE);
+ 
+         /* open the http tunneling connection */
+         ff_url_join(buf, sizeof(buf), "ffrtmphttp", NULL, hostname, port, NULL);
+Index: FFmpeg/libavformat/rtpenc_rfc4175.c
+===================================================================
+--- FFmpeg.orig/libavformat/rtpenc_rfc4175.c
++++ FFmpeg/libavformat/rtpenc_rfc4175.c
+@@ -116,7 +116,7 @@ void ff_rtp_send_raw_rfc4175(AVFormatCon
+             int l_field;
+             int l_line;
+             int l_off;
+-            int copy_offset;
++            int64_t copy_offset;
+ 
+             length    = (headers[0] << 8) | headers[1];
+             l_field   = (headers[2] & 0x80) >> 7;
+@@ -127,7 +127,7 @@ void ff_rtp_send_raw_rfc4175(AVFormatCon
+ 
+             if (interlaced)
+                 l_line = 2 * l_line + l_field;
+-            copy_offset = (l_line * width + l_off) * pgroup / xinc;
++            copy_offset = (l_line * (int64_t)width + l_off) * pgroup / xinc;
+             if (copy_offset + length > size)
+                 break;
+             memcpy (dest, buf + copy_offset, length);
+Index: FFmpeg/libavformat/rtpenc_vc2hq.c
+===================================================================
+--- FFmpeg.orig/libavformat/rtpenc_vc2hq.c
++++ FFmpeg/libavformat/rtpenc_vc2hq.c
+@@ -45,7 +45,7 @@ static void send_packet(AVFormatContext
+     ff_rtp_send_data(ctx, rtp_ctx->buf, RTP_VC2HQ_PL_HEADER_SIZE + info_hdr_size + size, rtp_m);
+ }
+ 
+-static void send_picture(AVFormatContext *ctx, const uint8_t *buf, int size, int interlaced)
++static int send_picture(AVFormatContext *ctx, const uint8_t *buf, int size, int interlaced)
+ {
+     RTPMuxContext *rtp_ctx = ctx->priv_data;
+     GetBitContext gc;
+@@ -54,6 +54,9 @@ static void send_picture(AVFormatContext
+     uint16_t frag_len;
+     char *info_hdr = &rtp_ctx->buf[4];
+ 
++    if (size < DIRAC_PIC_NR_SIZE)
++        return AVERROR(EINVAL);
++
+     pic_nr = AV_RB32(&buf[0]);
+     buf += DIRAC_PIC_NR_SIZE;
+     size -= DIRAC_PIC_NR_SIZE;
+@@ -97,6 +100,7 @@ static void send_picture(AVFormatContext
+         send_packet(ctx, DIRAC_RTP_PCODE_HQ_PIC_FRAGMENT, 16, buf, frag_len, interlaced, second_field, size > 0 ? 0 : 1);
+         buf += frag_len;
+     }
++    return 0;
+ }
+ 
+ void ff_rtp_send_vc2hq(AVFormatContext *ctx, const uint8_t *frame_buf, int frame_size, int interlaced)
+@@ -110,16 +114,21 @@ void ff_rtp_send_vc2hq(AVFormatContext *
+         parse_code = unit[4];
+         unit_size = AV_RB32(&unit[5]);
+ 
++        if (unit_size > end - unit)
++            break;
++
+         switch (parse_code) {
+         /* sequence header */
+         /* end of sequence */
+         case DIRAC_PCODE_SEQ_HEADER:
+         case DIRAC_PCODE_END_SEQ:
+-            send_packet(ctx, parse_code, 0, unit + DIRAC_DATA_UNIT_HEADER_SIZE, unit_size - DIRAC_DATA_UNIT_HEADER_SIZE, 0, 0, 0);
++            if (unit_size >= DIRAC_DATA_UNIT_HEADER_SIZE)
++                send_packet(ctx, parse_code, 0, unit + DIRAC_DATA_UNIT_HEADER_SIZE, unit_size - DIRAC_DATA_UNIT_HEADER_SIZE, 0, 0, 0);
+             break;
+         /* HQ picture */
+         case DIRAC_PCODE_PICTURE_HQ:
+-            send_picture(ctx, unit + DIRAC_DATA_UNIT_HEADER_SIZE, unit_size - DIRAC_DATA_UNIT_HEADER_SIZE, interlaced);
++            if (unit_size >= DIRAC_DATA_UNIT_HEADER_SIZE)
++                send_picture(ctx, unit + DIRAC_DATA_UNIT_HEADER_SIZE, unit_size - DIRAC_DATA_UNIT_HEADER_SIZE, interlaced);
+             break;
+         /* parse codes without specification */
+         case DIRAC_PCODE_AUX:
+Index: FFmpeg/libavformat/rtsp.c
+===================================================================
+--- FFmpeg.orig/libavformat/rtsp.c
++++ FFmpeg/libavformat/rtsp.c
+@@ -1428,7 +1428,7 @@ retry:
+     cur_auth_type = rt->auth_state.auth_type;
+     if ((ret = rtsp_send_cmd_with_content_async(s, method, url, header,
+                                                 send_content,
+-                                                send_content_length)))
++                                                send_content_length)) < 0)
+         return ret;
+ 
+     if ((ret = ff_rtsp_read_reply(s, reply, content_ptr, 0, method) ) < 0)
+@@ -1461,6 +1461,8 @@ int ff_rtsp_make_setup_request(AVFormatC
+     char cmd[MAX_URL_SIZE];
+     const char *trans_pref;
+ 
++    memset(&reply1, 0, sizeof(reply1));
++
+     if (rt->transport == RTSP_TRANSPORT_RDT)
+         trans_pref = "x-pn-tng";
+     else if (rt->transport == RTSP_TRANSPORT_RAW)
+@@ -1575,7 +1577,11 @@ int ff_rtsp_make_setup_request(AVFormatC
+         else if (lower_transport == RTSP_LOWER_TRANSPORT_UDP_MULTICAST) {
+             snprintf(transport, sizeof(transport) - 1,
+                      "%s/UDP;multicast", trans_pref);
++        } else {
++            err = AVERROR(EINVAL);
++            goto fail; // transport would be uninitialized
+         }
++
+         if (s->oformat) {
+             av_strlcat(transport, ";mode=record", sizeof(transport));
+         } else if (rt->server_type == RTSP_SERVER_REAL ||
+Index: FFmpeg/libavformat/sapdec.c
+===================================================================
+--- FFmpeg.orig/libavformat/sapdec.c
++++ FFmpeg/libavformat/sapdec.c
+@@ -197,6 +197,9 @@ static int sap_fetch_packet(AVFormatCont
+     struct pollfd p = {fd, POLLIN, 0};
+     uint8_t recvbuf[RTP_MAX_PACKET_LENGTH];
+ 
++    if (fd < 0)
++        return fd;
++
+     if (sap->eof)
+         return AVERROR_EOF;
+ 
+Index: FFmpeg/libavformat/sauce.c
+===================================================================
+--- FFmpeg.orig/libavformat/sauce.c
++++ FFmpeg/libavformat/sauce.c
+@@ -34,7 +34,12 @@ int ff_sauce_read(AVFormatContext *avctx
+     AVIOContext *pb = avctx->pb;
+     char buf[36];
+     int datatype, filetype, t1, t2, nb_comments;
+-    uint64_t start_pos = avio_size(pb) - 128;
++    int64_t start_pos = avio_size(pb);
++
++    if (start_pos < 128)
++        return AVERROR_INVALIDDATA;
++
++    start_pos -= 128;
+ 
+     avio_seek(pb, start_pos, SEEK_SET);
+     if (avio_read(pb, buf, 7) != 7)
+Index: FFmpeg/libavformat/sdp.c
+===================================================================
+--- FFmpeg.orig/libavformat/sdp.c
++++ FFmpeg/libavformat/sdp.c
+@@ -202,6 +202,8 @@ static int extradata2psets(AVFormatConte
+             continue;
+         }
+         if (p != (psets + strlen(pset_string))) {
++            if (p - psets >= MAX_PSET_SIZE)
++                goto fail_in_loop;
+             *p = ',';
+             p++;
+         }
+@@ -212,6 +214,7 @@ static int extradata2psets(AVFormatConte
+         if (!av_base64_encode(p, MAX_PSET_SIZE - (p - psets), r, r1 - r)) {
+             av_log(s, AV_LOG_ERROR, "Cannot Base64-encode %"PTRDIFF_SPECIFIER" %"PTRDIFF_SPECIFIER"!\n",
+                    MAX_PSET_SIZE - (p - psets), r1 - r);
++fail_in_loop:
+             av_free(psets);
+             av_free(tmpbuf);
+ 
+Index: FFmpeg/libavformat/siff.c
+===================================================================
+--- FFmpeg.orig/libavformat/siff.c
++++ FFmpeg/libavformat/siff.c
+@@ -199,7 +199,10 @@ static int siff_read_packet(AVFormatCont
+         if (c->cur_frame >= c->frames)
+             return AVERROR_EOF;
+         if (c->curstrm == -1) {
+-            c->pktsize = avio_rl32(s->pb) - 4;
++            unsigned pktsize = avio_rl32(s->pb);
++            if (pktsize < 4)
++                return AVERROR_INVALIDDATA;
++            c->pktsize = pktsize - 4;
+             c->flags   = avio_rl16(s->pb);
+             if (c->flags & VB_HAS_AUDIO && !c->has_audio)
+                 return AVERROR_INVALIDDATA;
+Index: FFmpeg/libavformat/subfile.c
+===================================================================
+--- FFmpeg.orig/libavformat/subfile.c
++++ FFmpeg/libavformat/subfile.c
+@@ -18,6 +18,7 @@
+  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+  */
+ 
++#include "libavutil/avassert.h"
+ #include "libavutil/avstring.h"
+ #include "libavutil/opt.h"
+ #include "url.h"
+@@ -123,9 +124,9 @@ static int64_t subfile_seek(URLContext *
+             return end;
+     }
+ 
+-    if (whence == AVSEEK_SIZE)
+-        return end - c->start;
+     switch (whence) {
++    case AVSEEK_SIZE:
++        return end - c->start;
+     case SEEK_SET:
+         new_pos = c->start + pos;
+         break;
+@@ -135,6 +136,8 @@ static int64_t subfile_seek(URLContext *
+     case SEEK_END:
+         new_pos = end + pos;
+         break;
++    default:
++        av_assert0(0);
+     }
+     if (new_pos < c->start)
+         return AVERROR(EINVAL);
+Index: FFmpeg/libavformat/tls_schannel.c
+===================================================================
+--- FFmpeg.orig/libavformat/tls_schannel.c
++++ FFmpeg/libavformat/tls_schannel.c
+@@ -388,7 +388,7 @@ static int tls_read(URLContext *h, uint8
+     SECURITY_STATUS sspi_ret = SEC_E_OK;
+     SecBuffer inbuf[4];
+     SecBufferDesc inbuf_desc;
+-    int size, ret;
++    int size, ret = 0;
+     int min_enc_buf_size = len + SCHANNEL_FREE_BUFFER_SIZE;
+ 
+     /* If we have some left-over data from previous network activity,
+Index: FFmpeg/libavformat/tty.c
+===================================================================
+--- FFmpeg.orig/libavformat/tty.c
++++ FFmpeg/libavformat/tty.c
+@@ -123,13 +123,16 @@ static int read_header(AVFormatContext *
+     s->chars_per_frame = FFMAX(av_q2d(st->time_base)*s->chars_per_frame, 1);
+ 
+     if (avctx->pb->seekable & AVIO_SEEKABLE_NORMAL) {
+-        s->fsize = avio_size(avctx->pb);
+-        st->duration = (s->fsize + s->chars_per_frame - 1) / s->chars_per_frame;
++        int64_t fsize = avio_size(avctx->pb);
++        if (fsize > 0) {
++            s->fsize = fsize;
++            st->duration = (s->fsize + s->chars_per_frame - 1) / s->chars_per_frame;
+ 
+-        if (ff_sauce_read(avctx, &s->fsize, 0, 0) < 0)
+-            efi_read(avctx, s->fsize - 51);
++            if (ff_sauce_read(avctx, &s->fsize, 0, 0) < 0)
++                efi_read(avctx, s->fsize - 51);
+ 
+-        avio_seek(avctx->pb, 0, SEEK_SET);
++            avio_seek(avctx->pb, 0, SEEK_SET);
++        }
+     }
+ 
+ fail:
+Index: FFmpeg/libavformat/ty.c
+===================================================================
+--- FFmpeg.orig/libavformat/ty.c
++++ FFmpeg/libavformat/ty.c
+@@ -48,7 +48,7 @@ static const uint8_t ty_AC3AudioPacket[]
+ #define CHUNK_PEEK_COUNT  3      /* number of chunks to probe */
+ 
+ typedef struct TyRecHdr {
+-    int64_t   rec_size;
++    int32_t   rec_size;
+     uint8_t   ex[2];
+     uint8_t   rec_type;
+     uint8_t   subrec_type;
+Index: FFmpeg/libavformat/usmdec.c
+===================================================================
+--- FFmpeg.orig/libavformat/usmdec.c
++++ FFmpeg/libavformat/usmdec.c
+@@ -119,7 +119,7 @@ static int parse_utf(AVFormatContext *s,
+     for (int i = 0; i < nb_items; i++) {
+         GetByteContext *xgb;
+         uint8_t key[256];
+-        int64_t value;
++        int64_t value = -1;
+         int n = 0;
+ 
+         type = bytestream2_get_byte(&gb);
+Index: FFmpeg/libavformat/webpenc.c
+===================================================================
+--- FFmpeg.orig/libavformat/webpenc.c
++++ FFmpeg/libavformat/webpenc.c
+@@ -190,7 +190,7 @@ static int webp_write_trailer(AVFormatCo
+ 
+         if (!ret) {
+             filesize = avio_tell(s->pb);
+-            if (avio_seek(s->pb, 4, SEEK_SET) == 4) {
++            if (filesize >= 8 && avio_seek(s->pb, 4, SEEK_SET) == 4) {
+                 avio_wl32(s->pb, filesize - 8);
+                 // Note: without the following, avio only writes 8 bytes to the file.
+                 avio_seek(s->pb, filesize, SEEK_SET);
+Index: FFmpeg/libavformat/xmv.c
+===================================================================
+--- FFmpeg.orig/libavformat/xmv.c
++++ FFmpeg/libavformat/xmv.c
+@@ -220,6 +220,8 @@ static int xmv_read_header(AVFormatConte
+     /* Initialize the packet context */
+ 
+     xmv->next_packet_offset = avio_tell(pb);
++    if (this_packet_size < xmv->next_packet_offset)
++        return AVERROR_INVALIDDATA;
+     xmv->next_packet_size   = this_packet_size - xmv->next_packet_offset;
+     xmv->stream_count       = xmv->audio_track_count + 1;
+ 
+Index: FFmpeg/libavutil/aarch64/cpu.c
+===================================================================
+--- FFmpeg.orig/libavutil/aarch64/cpu.c
++++ FFmpeg/libavutil/aarch64/cpu.c
+@@ -64,6 +64,44 @@ static int detect_flags(void)
+     return flags;
+ }
+ 
++#elif defined(__OpenBSD__)
++#include <machine/armreg.h>
++#include <machine/cpu.h>
++#include <sys/types.h>
++#include <sys/sysctl.h>
++
++static int detect_flags(void)
++{
++    int flags = 0;
++
++#ifdef CPU_ID_AA64ISAR0
++    int mib[2];
++    uint64_t isar0;
++    uint64_t isar1;
++    size_t len;
++
++    mib[0] = CTL_MACHDEP;
++    mib[1] = CPU_ID_AA64ISAR0;
++    len = sizeof(isar0);
++    if (sysctl(mib, 2, &isar0, &len, NULL, 0) != -1) {
++        if (ID_AA64ISAR0_DP(isar0) >= ID_AA64ISAR0_DP_IMPL)
++            flags |= AV_CPU_FLAG_DOTPROD;
++    }
++
++    mib[0] = CTL_MACHDEP;
++    mib[1] = CPU_ID_AA64ISAR1;
++    len = sizeof(isar1);
++    if (sysctl(mib, 2, &isar1, &len, NULL, 0) != -1) {
++#ifdef ID_AA64ISAR1_I8MM_IMPL
++        if (ID_AA64ISAR1_I8MM(isar1) >= ID_AA64ISAR1_I8MM_IMPL)
++            flags |= AV_CPU_FLAG_I8MM;
++#endif
++    }
++#endif
++
++    return flags;
++}
++
+ #elif defined(_WIN32)
+ #include <windows.h>
+ 
+Index: FFmpeg/libavutil/buffer.c
+===================================================================
+--- FFmpeg.orig/libavutil/buffer.c
++++ FFmpeg/libavutil/buffer.c
+@@ -264,7 +264,10 @@ AVBufferPool *av_buffer_pool_init2(size_
+     if (!pool)
+         return NULL;
+ 
+-    ff_mutex_init(&pool->mutex, NULL);
++    if (ff_mutex_init(&pool->mutex, NULL)) {
++        av_free(pool);
++        return NULL;
++    }
+ 
+     pool->size      = size;
+     pool->opaque    = opaque;
+@@ -283,7 +286,10 @@ AVBufferPool *av_buffer_pool_init(size_t
+     if (!pool)
+         return NULL;
+ 
+-    ff_mutex_init(&pool->mutex, NULL);
++    if (ff_mutex_init(&pool->mutex, NULL)) {
++        av_free(pool);
++        return NULL;
++    }
+ 
+     pool->size     = size;
+     pool->alloc    = alloc ? alloc : av_buffer_alloc;
+Index: FFmpeg/libavutil/frame.c
+===================================================================
+--- FFmpeg.orig/libavutil/frame.c
++++ FFmpeg/libavutil/frame.c
+@@ -1018,7 +1018,7 @@ int av_frame_apply_cropping(AVFrame *fra
+         if (log2_crop_align < min_log2_align)
+             return AVERROR_BUG;
+ 
+-        if (min_log2_align < 5) {
++        if (min_log2_align < 5 && log2_crop_align != INT_MAX) {
+             frame->crop_left &= ~((1 << (5 + log2_crop_align - min_log2_align)) - 1);
+             calc_cropping_offsets(offsets, frame, desc);
+         }
+Index: FFmpeg/libavutil/hwcontext_d3d11va.c
+===================================================================
+--- FFmpeg.orig/libavutil/hwcontext_d3d11va.c
++++ FFmpeg/libavutil/hwcontext_d3d11va.c
+@@ -189,6 +189,7 @@ static AVBufferRef *wrap_texture_buf(AVH
+                                                    sizeof(*frames_hwctx->texture_infos));
+         if (!frames_hwctx->texture_infos) {
+             ID3D11Texture2D_Release(tex);
++            av_free(desc);
+             return NULL;
+         }
+         s->nb_surfaces = s->nb_surfaces_used + 1;
+@@ -201,7 +202,7 @@ static AVBufferRef *wrap_texture_buf(AVH
+     desc->texture = tex;
+     desc->index   = index;
+ 
+-    buf = av_buffer_create((uint8_t *)desc, sizeof(desc), free_texture, tex, 0);
++    buf = av_buffer_create((uint8_t *)desc, sizeof(*desc), free_texture, tex, 0);
+     if (!buf) {
+         ID3D11Texture2D_Release(tex);
+         av_free(desc);
+Index: FFmpeg/libavutil/hwcontext_dxva2.c
+===================================================================
+--- FFmpeg.orig/libavutil/hwcontext_dxva2.c
++++ FFmpeg/libavutil/hwcontext_dxva2.c
+@@ -146,7 +146,7 @@ static AVBufferRef *dxva2_pool_alloc(voi
+     if (s->nb_surfaces_used < hwctx->nb_surfaces) {
+         s->nb_surfaces_used++;
+         return av_buffer_create((uint8_t*)s->surfaces_internal[s->nb_surfaces_used - 1],
+-                                sizeof(*hwctx->surfaces), dxva2_pool_release_dummy, 0, 0);
++                                sizeof(**hwctx->surfaces), dxva2_pool_release_dummy, 0, 0);
+     }
+ 
+     return NULL;
+Index: FFmpeg/libavutil/hwcontext_vaapi.c
+===================================================================
+--- FFmpeg.orig/libavutil/hwcontext_vaapi.c
++++ FFmpeg/libavutil/hwcontext_vaapi.c
+@@ -1235,7 +1235,7 @@ static int vaapi_map_from_drm(AVHWFrames
+ 
+     if (!use_prime2 || vas != VA_STATUS_SUCCESS) {
+         int k;
+-        unsigned long buffer_handle;
++        uintptr_t buffer_handle;
+         VASurfaceAttribExternalBuffers buffer_desc;
+         VASurfaceAttrib buffer_attrs[2] = {
+             {
+Index: FFmpeg/libavutil/imgutils.c
+===================================================================
+--- FFmpeg.orig/libavutil/imgutils.c
++++ FFmpeg/libavutil/imgutils.c
+@@ -298,7 +298,7 @@ int av_image_check_size2(unsigned int w,
+         stride = 8LL*w;
+     stride += 128*8;
+ 
+-    if ((int)w<=0 || (int)h<=0 || stride >= INT_MAX || stride*(uint64_t)(h+128) >= INT_MAX) {
++    if (w==0 || h==0 || w > INT32_MAX || h > INT32_MAX || stride >= INT_MAX || stride*(h + 128ULL) >= INT_MAX) {
+         av_log(&imgutils, AV_LOG_ERROR, "Picture size %ux%u is invalid\n", w, h);
+         return AVERROR(EINVAL);
+     }
+Index: FFmpeg/libavutil/slicethread.c
+===================================================================
+--- FFmpeg.orig/libavutil/slicethread.c
++++ FFmpeg/libavutil/slicethread.c
+@@ -102,6 +102,7 @@ int avpriv_slicethread_create(AVSliceThr
+ {
+     AVSliceThread *ctx;
+     int nb_workers, i;
++    int ret;
+ 
+     av_assert0(nb_threads >= 0);
+     if (!nb_threads) {
+@@ -135,16 +136,37 @@ int avpriv_slicethread_create(AVSliceThr
+ 
+     atomic_init(&ctx->first_job, 0);
+     atomic_init(&ctx->current_job, 0);
+-    pthread_mutex_init(&ctx->done_mutex, NULL);
+-    pthread_cond_init(&ctx->done_cond, NULL);
++    ret = pthread_mutex_init(&ctx->done_mutex, NULL);
++    if (ret) {
++        av_freep(&ctx->workers);
++        av_freep(pctx);
++        return AVERROR(ret);
++    }
++    ret = pthread_cond_init(&ctx->done_cond, NULL);
++    if (ret) {
++        ctx->nb_threads = main_func ? 0 : 1;
++        avpriv_slicethread_free(pctx);
++        return AVERROR(ret);
++    }
+     ctx->done        = 0;
+ 
+     for (i = 0; i < nb_workers; i++) {
+         WorkerContext *w = &ctx->workers[i];
+         int ret;
+         w->ctx = ctx;
+-        pthread_mutex_init(&w->mutex, NULL);
+-        pthread_cond_init(&w->cond, NULL);
++        ret = pthread_mutex_init(&w->mutex, NULL);
++        if (ret) {
++            ctx->nb_threads = main_func ? i : i + 1;
++            avpriv_slicethread_free(pctx);
++            return AVERROR(ret);
++        }
++        ret = pthread_cond_init(&w->cond, NULL);
++        if (ret) {
++            pthread_mutex_destroy(&w->mutex);
++            ctx->nb_threads = main_func ? i : i + 1;
++            avpriv_slicethread_free(pctx);
++            return AVERROR(ret);
++        }
+         pthread_mutex_lock(&w->mutex);
+         w->done = 0;
+ 
+Index: FFmpeg/libavutil/tests/dict.c
+===================================================================
+--- FFmpeg.orig/libavutil/tests/dict.c
++++ FFmpeg/libavutil/tests/dict.c
+@@ -148,12 +148,15 @@ int main(void)
+ 
+     //valgrind sensible test
+     printf("\nTesting av_dict_set() with existing AVDictionaryEntry.key as key\n");
+-    av_dict_set(&dict, "key", "old", 0);
++    if (av_dict_set(&dict, "key", "old", 0) < 0)
++        return 1;
+     e = av_dict_get(dict, "key", NULL, 0);
+-    av_dict_set(&dict, e->key, "new val OK", 0);
++    if (av_dict_set(&dict, e->key, "new val OK", 0) < 0)
++        return 1;
+     e = av_dict_get(dict, "key", NULL, 0);
+     printf("%s\n", e->value);
+-    av_dict_set(&dict, e->key, e->value, 0);
++    if (av_dict_set(&dict, e->key, e->value, 0) < 0)
++        return 1;
+     e = av_dict_get(dict, "key", NULL, 0);
+     printf("%s\n", e->value);
+     av_dict_free(&dict);
+Index: FFmpeg/libavutil/tests/opt.c
+===================================================================
+--- FFmpeg.orig/libavutil/tests/opt.c
++++ FFmpeg/libavutil/tests/opt.c
+@@ -264,6 +264,7 @@ int main(void)
+     {
+         TestContext test_ctx = { 0 };
+         char *buf;
++        int ret;
+         test_ctx.class = &test_class;
+ 
+         av_log_set_level(AV_LOG_QUIET);
+@@ -274,8 +275,10 @@ int main(void)
+             av_opt_free(&test_ctx);
+             memset(&test_ctx, 0, sizeof(test_ctx));
+             test_ctx.class = &test_class;
+-            av_set_options_string(&test_ctx, buf, "=", ",");
++            ret = av_set_options_string(&test_ctx, buf, "=", ",");
+             av_free(buf);
++            if (ret < 0)
++                printf("Error ret '%d'\n", ret);
+             if (av_opt_serialize(&test_ctx, 0, 0, &buf, '=', ',') >= 0) {
+                 printf("%s\n", buf);
+                 av_free(buf);
+Index: FFmpeg/libavutil/timecode.c
+===================================================================
+--- FFmpeg.orig/libavutil/timecode.c
++++ FFmpeg/libavutil/timecode.c
+@@ -100,11 +100,12 @@ uint32_t av_timecode_get_smpte(AVRationa
+     return tc;
+ }
+ 
+-char *av_timecode_make_string(const AVTimecode *tc, char *buf, int framenum)
++char *av_timecode_make_string(const AVTimecode *tc, char *buf, int framenum_arg)
+ {
+     int fps = tc->fps;
+     int drop = tc->flags & AV_TIMECODE_FLAG_DROPFRAME;
+     int hh, mm, ss, ff, ff_len, neg = 0;
++    int64_t framenum = framenum_arg;
+ 
+     framenum += tc->start;
+     if (drop)
+Index: FFmpeg/libavutil/timestamp.c
+===================================================================
+--- FFmpeg.orig/libavutil/timestamp.c
++++ FFmpeg/libavutil/timestamp.c
+@@ -24,7 +24,7 @@ char *av_ts_make_time_string2(char *buf,
+         snprintf(buf, AV_TS_MAX_STRING_SIZE, "NOPTS");
+     } else {
+         double val = av_q2d(tb) * ts;
+-        double log = floor(log10(fabs(val)));
++        double log = (fpclassify(val) == FP_ZERO ? -INFINITY : floor(log10(fabs(val))));
+         int precision = (isfinite(log) && log < 0) ? -log + 5 : 6;
+         int last = snprintf(buf, AV_TS_MAX_STRING_SIZE, "%.*f", precision, val);
+         last = FFMIN(last, AV_TS_MAX_STRING_SIZE - 1) - 1;
+Index: FFmpeg/libavutil/wchar_filename.h
+===================================================================
+--- FFmpeg.orig/libavutil/wchar_filename.h
++++ FFmpeg/libavutil/wchar_filename.h
+@@ -57,7 +57,7 @@ static inline int wchartocp(unsigned int
+         errno = EINVAL;
+         return -1;
+     }
+-    *filename = (char*)av_malloc_array(num_chars, sizeof *filename);
++    *filename = av_malloc_array(num_chars, sizeof **filename);
+     if (!*filename) {
+         errno = ENOMEM;
+         return -1;
+Index: FFmpeg/libswscale/output.c
+===================================================================
+--- FFmpeg.orig/libswscale/output.c
++++ FFmpeg/libswscale/output.c
+@@ -1059,8 +1059,8 @@ yuv2rgba64_X_c_template(SwsContext *c, c
+ 
+     for (i = 0; i < ((dstW + 1) >> 1); i++) {
+         int j;
+-        int Y1 = -0x40000000;
+-        int Y2 = -0x40000000;
++        unsigned Y1 = -0x40000000;
++        unsigned Y2 = -0x40000000;
+         int U  = -(128 << 23); // 19
+         int V  = -(128 << 23);
+         int R, G, B;
+@@ -1088,9 +1088,9 @@ yuv2rgba64_X_c_template(SwsContext *c, c
+         }
+ 
+         // 8 bits: 12+15=27; 16 bits: 12+19=31
+-        Y1 >>= 14; // 10
++        Y1 = (int)Y1 >> 14; // 10
+         Y1 += 0x10000;
+-        Y2 >>= 14;
++        Y2 = (int)Y2 >> 14;
+         Y2 += 0x10000;
+         U  >>= 14;
+         V  >>= 14;
+@@ -1109,20 +1109,20 @@ yuv2rgba64_X_c_template(SwsContext *c, c
+         B =                            U * c->yuv2rgb_u2b_coeff;
+ 
+         // 8 bits: 30 - 22 = 8 bits, 16 bits: 30 bits - 14 = 16 bits
+-        output_pixel(&dest[0], av_clip_uintp2(((R_B + Y1) >> 14) + (1<<15), 16));
+-        output_pixel(&dest[1], av_clip_uintp2(((  G + Y1) >> 14) + (1<<15), 16));
+-        output_pixel(&dest[2], av_clip_uintp2(((B_R + Y1) >> 14) + (1<<15), 16));
++        output_pixel(&dest[0], av_clip_uintp2(((int)(R_B + Y1) >> 14) + (1<<15), 16));
++        output_pixel(&dest[1], av_clip_uintp2(((int)(  G + Y1) >> 14) + (1<<15), 16));
++        output_pixel(&dest[2], av_clip_uintp2(((int)(B_R + Y1) >> 14) + (1<<15), 16));
+         if (eightbytes) {
+             output_pixel(&dest[3], av_clip_uintp2(A1      , 30) >> 14);
+-            output_pixel(&dest[4], av_clip_uintp2(((R_B + Y2) >> 14) + (1<<15), 16));
+-            output_pixel(&dest[5], av_clip_uintp2(((  G + Y2) >> 14) + (1<<15), 16));
+-            output_pixel(&dest[6], av_clip_uintp2(((B_R + Y2) >> 14) + (1<<15), 16));
++            output_pixel(&dest[4], av_clip_uintp2(((int)(R_B + Y2) >> 14) + (1<<15), 16));
++            output_pixel(&dest[5], av_clip_uintp2(((int)(  G + Y2) >> 14) + (1<<15), 16));
++            output_pixel(&dest[6], av_clip_uintp2(((int)(B_R + Y2) >> 14) + (1<<15), 16));
+             output_pixel(&dest[7], av_clip_uintp2(A2      , 30) >> 14);
+             dest += 8;
+         } else {
+-            output_pixel(&dest[3], av_clip_uintp2(((R_B + Y2) >> 14) + (1<<15), 16));
+-            output_pixel(&dest[4], av_clip_uintp2(((  G + Y2) >> 14) + (1<<15), 16));
+-            output_pixel(&dest[5], av_clip_uintp2(((B_R + Y2) >> 14) + (1<<15), 16));
++            output_pixel(&dest[3], av_clip_uintp2(((int)(R_B + Y2) >> 14) + (1<<15), 16));
++            output_pixel(&dest[4], av_clip_uintp2(((int)(  G + Y2) >> 14) + (1<<15), 16));
++            output_pixel(&dest[5], av_clip_uintp2(((int)(B_R + Y2) >> 14) + (1<<15), 16));
+             dest += 6;
+         }
+     }
+@@ -1221,8 +1221,8 @@ yuv2rgba64_1_c_template(SwsContext *c, c
+             Y2 += (1 << 13) - (1 << 29);
+ 
+             if (hasAlpha) {
+-                A1 = abuf0[i * 2    ] << 11;
+-                A2 = abuf0[i * 2 + 1] << 11;
++                A1 = abuf0[i * 2    ] * (1 << 11);
++                A2 = abuf0[i * 2 + 1] * (1 << 11);
+ 
+                 A1 += 1 << 13;
+                 A2 += 1 << 13;
+@@ -1267,8 +1267,8 @@ yuv2rgba64_1_c_template(SwsContext *c, c
+             Y2 += (1 << 13) - (1 << 29);
+ 
+             if (hasAlpha) {
+-                A1 = abuf0[i * 2    ] << 11;
+-                A2 = abuf0[i * 2 + 1] << 11;
++                A1 = abuf0[i * 2    ] * (1 << 11);
++                A2 = abuf0[i * 2 + 1] * (1 << 11);
+ 
+                 A1 += 1 << 13;
+                 A2 += 1 << 13;
+@@ -1439,7 +1439,7 @@ yuv2rgba64_full_1_c_template(SwsContext
+             Y += (1 << 13) - (1 << 29);
+ 
+             if (hasAlpha) {
+-                A = abuf0[i] << 11;
++                A = abuf0[i] * (1 << 11);
+ 
+                 A += 1 << 13;
+             }
+@@ -1472,7 +1472,7 @@ yuv2rgba64_full_1_c_template(SwsContext
+             Y += (1 << 13) - (1 << 29);
+ 
+             if (hasAlpha) {
+-                A = abuf0[i] << 11;
++                A = abuf0[i] * (1 << 11);
+ 
+                 A += 1 << 13;
+             }
+@@ -1925,9 +1925,9 @@ static av_always_inline void yuv2rgb_wri
+     Y -= c->yuv2rgb_y_offset;
+     Y *= c->yuv2rgb_y_coeff;
+     Y += 1 << 21;
+-    R = (unsigned)Y + V*c->yuv2rgb_v2r_coeff;
+-    G = (unsigned)Y + V*c->yuv2rgb_v2g_coeff + U*c->yuv2rgb_u2g_coeff;
+-    B = (unsigned)Y +                          U*c->yuv2rgb_u2b_coeff;
++    R = (unsigned)Y + V*(unsigned)c->yuv2rgb_v2r_coeff;
++    G = (unsigned)Y + V*(unsigned)c->yuv2rgb_v2g_coeff + U*(unsigned)c->yuv2rgb_u2g_coeff;
++    B = (unsigned)Y +                                    U*(unsigned)c->yuv2rgb_u2b_coeff;
+     if ((R | G | B) & 0xC0000000) {
+         R = av_clip_uintp2(R, 30);
+         G = av_clip_uintp2(G, 30);
+Index: FFmpeg/libswscale/swscale.c
+===================================================================
+--- FFmpeg.orig/libswscale/swscale.c
++++ FFmpeg/libswscale/swscale.c
+@@ -1172,7 +1172,7 @@ int sws_receive_slice(struct SwsContext
+     }
+ 
+     for (int i = 0; i < FF_ARRAY_ELEMS(dst); i++) {
+-        ptrdiff_t offset = c->frame_dst->linesize[i] * (slice_start >> c->chrDstVSubSample);
++        ptrdiff_t offset = c->frame_dst->linesize[i] * (ptrdiff_t)(slice_start >> c->chrDstVSubSample);
+         dst[i] = FF_PTR_ADD(c->frame_dst->data[i], offset);
+     }
+ 
+@@ -1233,7 +1233,7 @@ void ff_sws_slice_worker(void *priv, int
+         for (int i = 0; i < FF_ARRAY_ELEMS(dst) && parent->frame_dst->data[i]; i++) {
+             const int vshift = (i == 1 || i == 2) ? c->chrDstVSubSample : 0;
+             const ptrdiff_t offset = parent->frame_dst->linesize[i] *
+-                ((slice_start + parent->dst_slice_start) >> vshift);
++                (ptrdiff_t)((slice_start + parent->dst_slice_start) >> vshift);
+ 
+             dst[i] = parent->frame_dst->data[i] + offset;
+         }
+Index: FFmpeg/libswscale/x86/swscale.c
+===================================================================
+--- FFmpeg.orig/libswscale/x86/swscale.c
++++ FFmpeg/libswscale/x86/swscale.c
+@@ -649,7 +649,7 @@ switch(c->dstBpc){ \
+     }
+ 
+ 
+-#define INPUT_PLANER_RGB_A_FUNC_CASE(fmt, name, opt)                  \
++#define INPUT_PLANER_RGB_A_FUNC_CASE_NOBREAK(fmt, name, opt)          \
+         case fmt:                                                     \
+             c->readAlpPlanar = ff_planar_##name##_to_a_##opt;
+ 
+@@ -672,15 +672,15 @@ switch(c->dstBpc){ \
+             break;
+ 
+ #define INPUT_PLANER_RGBAXX_YUVA_FUNC_CASE(rgb_fmt, rgba_fmt, name, opt) \
+-        INPUT_PLANER_RGB_A_FUNC_CASE(rgba_fmt##LE,  name##le, opt)       \
++        INPUT_PLANER_RGB_A_FUNC_CASE_NOBREAK(rgba_fmt##LE,  name##le, opt)       \
+         INPUT_PLANER_RGB_YUV_FUNC_CASE(rgb_fmt##LE, name##le, opt)       \
+-        INPUT_PLANER_RGB_A_FUNC_CASE(rgba_fmt##BE,  name##be, opt)       \
++        INPUT_PLANER_RGB_A_FUNC_CASE_NOBREAK(rgba_fmt##BE,  name##be, opt)       \
+         INPUT_PLANER_RGB_YUV_FUNC_CASE(rgb_fmt##BE, name##be, opt)
+ 
+ #define INPUT_PLANER_RGBAXX_UVA_FUNC_CASE(rgb_fmt, rgba_fmt, name, opt) \
+-        INPUT_PLANER_RGB_A_FUNC_CASE(rgba_fmt##LE, name##le, opt)       \
++        INPUT_PLANER_RGB_A_FUNC_CASE_NOBREAK(rgba_fmt##LE, name##le, opt)       \
+         INPUT_PLANER_RGB_UV_FUNC_CASE(rgb_fmt##LE, name##le, opt)       \
+-        INPUT_PLANER_RGB_A_FUNC_CASE(rgba_fmt##BE, name##be, opt)       \
++        INPUT_PLANER_RGB_A_FUNC_CASE_NOBREAK(rgba_fmt##BE, name##be, opt)       \
+         INPUT_PLANER_RGB_UV_FUNC_CASE(rgb_fmt##BE, name##be, opt)
+ 
+ #define INPUT_PLANER_RGBAXX_YUV_FUNC_CASE(rgb_fmt, rgba_fmt, name, opt)           \
+@@ -696,7 +696,7 @@ switch(c->dstBpc){ \
+         INPUT_PLANER_RGB_UV_FUNC_CASE(rgb_fmt##BE, name##be, opt)
+ 
+ #define INPUT_PLANER_RGB_YUVA_ALL_CASES(opt)                                                     \
+-        INPUT_PLANER_RGB_A_FUNC_CASE(      AV_PIX_FMT_GBRAP,                           rgb, opt) \
++        INPUT_PLANER_RGB_A_FUNC_CASE_NOBREAK(AV_PIX_FMT_GBRAP,                         rgb, opt) \
+         INPUT_PLANER_RGB_YUV_FUNC_CASE(    AV_PIX_FMT_GBRP,                            rgb, opt) \
+         INPUT_PLANER_RGBXX_YUV_FUNC_CASE(  AV_PIX_FMT_GBRP9,                          rgb9, opt) \
+         INPUT_PLANER_RGBAXX_YUVA_FUNC_CASE(AV_PIX_FMT_GBRP10,  AV_PIX_FMT_GBRAP10,   rgb10, opt) \
+@@ -708,7 +708,7 @@ switch(c->dstBpc){ \
+ 
+     if (EXTERNAL_SSE2(cpu_flags)) {
+         switch (c->srcFormat) {
+-        INPUT_PLANER_RGB_A_FUNC_CASE(      AV_PIX_FMT_GBRAP,                           rgb, sse2);
++        INPUT_PLANER_RGB_A_FUNC_CASE_NOBREAK(AV_PIX_FMT_GBRAP,                         rgb, sse2);
+         INPUT_PLANER_RGB_UV_FUNC_CASE(     AV_PIX_FMT_GBRP,                            rgb, sse2);
+         INPUT_PLANER_RGBXX_UV_FUNC_CASE(   AV_PIX_FMT_GBRP9,                          rgb9, sse2);
+         INPUT_PLANER_RGBAXX_UVA_FUNC_CASE( AV_PIX_FMT_GBRP10,  AV_PIX_FMT_GBRAP10,   rgb10, sse2);
+Index: FFmpeg/libswscale/yuv2rgb.c
+===================================================================
+--- FFmpeg.orig/libswscale/yuv2rgb.c
++++ FFmpeg/libswscale/yuv2rgb.c
+@@ -831,7 +831,7 @@ av_cold int ff_yuv2rgb_c_init_tables(Sws
+     cbu  = (cbu * contrast * saturation) >> 32;
+     cgu  = (cgu * contrast * saturation) >> 32;
+     cgv  = (cgv * contrast * saturation) >> 32;
+-    oy  -= 256 * brightness;
++    oy  -= 256LL * brightness;
+ 
+     c->uOffset = 0x0400040004000400LL;
+     c->vOffset = 0x0400040004000400LL;
+Index: FFmpeg/tests/ref/fate/mov-mp4-iamf-5_1_4
+===================================================================
+--- FFmpeg.orig/tests/ref/fate/mov-mp4-iamf-5_1_4
++++ FFmpeg/tests/ref/fate/mov-mp4-iamf-5_1_4
+@@ -1,4 +1,4 @@
+-5585ed23481b6f28437b3707a1ed632d *tests/data/fate/mov-mp4-iamf-5_1_4.mp4
++0316d0a483480ccd582fd20f06c77420 *tests/data/fate/mov-mp4-iamf-5_1_4.mp4
+ 86340 tests/data/fate/mov-mp4-iamf-5_1_4.mp4
+ #extradata 0:       34, 0xafa70d5e
+ #extradata 1:       34, 0xafa70d5e
+Index: FFmpeg/tests/ref/fate/mov-mp4-iamf-7_1_4
+===================================================================
+--- FFmpeg.orig/tests/ref/fate/mov-mp4-iamf-7_1_4
++++ FFmpeg/tests/ref/fate/mov-mp4-iamf-7_1_4
+@@ -1,4 +1,4 @@
+-690d2b7a15b5489c59a9148fcd7975be *tests/data/fate/mov-mp4-iamf-7_1_4.mp4
++d9ef5d14bbd37c5a06c1494cacdb8f29 *tests/data/fate/mov-mp4-iamf-7_1_4.mp4
+ 100588 tests/data/fate/mov-mp4-iamf-7_1_4.mp4
+ #extradata 0:       34, 0xafa70d5e
+ #extradata 1:       34, 0xafa70d5e
+Index: FFmpeg/tests/ref/fate/mov-mp4-iamf-ambisonic_1
+===================================================================
+--- FFmpeg.orig/tests/ref/fate/mov-mp4-iamf-ambisonic_1
++++ FFmpeg/tests/ref/fate/mov-mp4-iamf-ambisonic_1
+@@ -1,4 +1,4 @@
+-2b3517591f7bf20e0f74f3ec1381af1e *tests/data/fate/mov-mp4-iamf-ambisonic_1.mp4
++b0f4accdb8f1f3dfe594a6cbd6c00603 *tests/data/fate/mov-mp4-iamf-ambisonic_1.mp4
+ 57743 tests/data/fate/mov-mp4-iamf-ambisonic_1.mp4
+ #extradata 0:       34, 0xad120cfe
+ #extradata 1:       34, 0xad120cfe
+Index: FFmpeg/tests/ref/fate/mov-mp4-iamf-stereo
+===================================================================
+--- FFmpeg.orig/tests/ref/fate/mov-mp4-iamf-stereo
++++ FFmpeg/tests/ref/fate/mov-mp4-iamf-stereo
+@@ -1,4 +1,4 @@
+-88c2b547f069f2d4a11d24f7f922251a *tests/data/fate/mov-mp4-iamf-stereo.mp4
++87c17d1a9fd07e16c369d386d39c3249 *tests/data/fate/mov-mp4-iamf-stereo.mp4
+ 15163 tests/data/fate/mov-mp4-iamf-stereo.mp4
+ #extradata 0:       34, 0xafa70d5e
+ #tb 0: 1/44100
+Index: FFmpeg/tools/coverity.c
+===================================================================
+--- FFmpeg.orig/tools/coverity.c
++++ FFmpeg/tools/coverity.c
+@@ -31,6 +31,17 @@
+ 
+ #define NULL (void *)0
+ 
++typedef long long int64_t;
++
++enum AVRounding {
++    AV_ROUND_ZERO     = 0,
++    AV_ROUND_INF      = 1,
++    AV_ROUND_DOWN     = 2,
++    AV_ROUND_UP       = 3,
++    AV_ROUND_NEAR_INF = 5,
++    AV_ROUND_PASS_MINMAX = 8192,
++};
++
+ // Based on https://scan.coverity.com/models
+ void *av_malloc(size_t size) {
+     int has_memory;
+@@ -77,3 +88,10 @@ void *av_free(void *ptr) {
+     __coverity_mark_as_afm_freed__(ptr, "av_free");
+ }
+ 
++
++int64_t av_rescale_rnd(int64_t a, int64_t b, int64_t c, enum AVRounding rnd) {
++    __coverity_negative_sink__(b);
++    __coverity_negative_sink__(c);
++
++    return (double)a * (double)b / (double)c;
++}
+Index: FFmpeg/tools/decode_simple.c
+===================================================================
+--- FFmpeg.orig/tools/decode_simple.c
++++ FFmpeg/tools/decode_simple.c
+@@ -94,8 +94,9 @@ int ds_run(DecodeContext *dc)
+             goto finish;
+     }
+ 
+-    avcodec_send_packet(dc->decoder, NULL);
+-    ret = decode_read(dc, 1);
++    ret = avcodec_send_packet(dc->decoder, NULL);
++    if (ret >= 0)
++        ret = decode_read(dc, 1);
+     if (ret < 0) {
+         fprintf(stderr, "Error flushing: %d\n", ret);
+         return ret;
+Index: FFmpeg/tools/enc_recon_frame_test.c
+===================================================================
+--- FFmpeg.orig/tools/enc_recon_frame_test.c
++++ FFmpeg/tools/enc_recon_frame_test.c
+@@ -28,6 +28,7 @@
+ #include "decode_simple.h"
+ 
+ #include "libavutil/adler32.h"
++#include "libavutil/avassert.h"
+ #include "libavutil/common.h"
+ #include "libavutil/error.h"
+ #include "libavutil/frame.h"
+@@ -88,6 +89,8 @@ static int frame_hash(FrameChecksum **pc
+         int linesize = av_image_get_linesize(frame->format, frame->width, p);
+         uint32_t checksum = 0;
+ 
++        av_assert0(linesize >= 0);
++
+         for (int j = 0; j < frame->height >> shift_v[p]; j++) {
+             checksum = av_adler32_update(checksum, data, linesize);
+             data += frame->linesize[p];
+Index: FFmpeg/tools/target_dec_fuzzer.c
+===================================================================
+--- FFmpeg.orig/tools/target_dec_fuzzer.c
++++ FFmpeg/tools/target_dec_fuzzer.c
+@@ -248,7 +248,7 @@ int LLVMFuzzerTestOneInput(const uint8_t
+     case AV_CODEC_ID_IFF_ILBM:    maxpixels  /= 4096;  break;
+     case AV_CODEC_ID_INDEO4:      maxpixels  /= 128;   break;
+     case AV_CODEC_ID_INTERPLAY_ACM: maxsamples /= 16384;  break;
+-    case AV_CODEC_ID_JPEG2000:    maxpixels  /= 4096;  break;
++    case AV_CODEC_ID_JPEG2000:    maxpixels  /= 16384; break;
+     case AV_CODEC_ID_LAGARITH:    maxpixels  /= 1024;  break;
+     case AV_CODEC_ID_LOCO:        maxpixels  /= 1024;  break;
+     case AV_CODEC_ID_VORBIS:      maxsamples /= 1024;  break;
+@@ -261,6 +261,7 @@ int LLVMFuzzerTestOneInput(const uint8_t
+     case AV_CODEC_ID_MSS2:        maxpixels  /= 16384; break;
+     case AV_CODEC_ID_MSZH:        maxpixels  /= 128;   break;
+     case AV_CODEC_ID_MTS2:        maxpixels  /= 4096;  break;
++    case AV_CODEC_ID_MV30:        maxpixels  /= 128;   break;
+     case AV_CODEC_ID_MVC2:        maxpixels  /= 128;   break;
+     case AV_CODEC_ID_MVHA:        maxpixels  /= 16384; break;
+     case AV_CODEC_ID_MVDV:        maxpixels  /= 1024;  break;
