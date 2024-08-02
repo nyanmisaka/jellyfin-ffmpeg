@@ -453,7 +453,7 @@ Index: FFmpeg/libavutil/hwcontext_videotoolbox.c
 -        av_log(log_ctx, AV_LOG_WARNING, "Color transfer function %s is not supported.\n", av_color_transfer_name(src->color_trc));
 +    if (colortrc)
 +        CVBufferSetAttachment(pixbuf, kCVImageBufferTransferFunctionKey,
-+            colorpri, kCVAttachmentMode_ShouldPropagate);
++            colortrc, kCVAttachmentMode_ShouldPropagate);
 +    else {
 +        CVBufferRemoveAttachment(pixbuf, kCVImageBufferTransferFunctionKey);
 +        if (src->color_trc != AVCOL_TRC_UNSPECIFIED)
