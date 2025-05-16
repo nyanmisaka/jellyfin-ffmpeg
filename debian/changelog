@@ -1,3 +1,10 @@
+jellyfin-ffmpeg (7.1.1-4) unstable; urgency=medium
+
+  * Add OpenCL based YADIF & BWDIF deinterlacing filters
+  * Tune the default async_depth for AMF encoders
+
+ -- nyanmisaka <nst799610810@gmail.com>  Fri, 16 May 2025 20:33:46 +0800
+
 jellyfin-ffmpeg (7.1.1-3) unstable; urgency=medium
 
   * avfilter/tonemap_opencl: reduce compute and memory load of 3dlut
