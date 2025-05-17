@@ -3112,15 +3112,14 @@ static int opencl_map_from_d3d11(AVHWFramesContext *dst_fc, AVFrame *dst,
                    "supported on AMD and Intel for D3D11 to OpenCL mapping.\n");
             return AVERROR(EINVAL);
         }
-    } else if (device_priv->d3d11_map_nv) {
+    } else {
         if (src_fc->sw_format != AV_PIX_FMT_BGRA &&
             src_fc->sw_format != AV_PIX_FMT_X2BGR10) {
-            av_log(dst_fc, AV_LOG_ERROR, "Only BGRA and X2BGR10 textures are "
-                   "supported on NVIDIA for D3D11 to OpenCL mapping.\n");
+            av_log(dst_fc, AV_LOG_ERROR, "Only BGRA and X2BGR10 textures "
+                   "are supported for D3D11 to OpenCL mapping.\n");
             return AVERROR(EINVAL);
         }
-    } else
-        return AVERROR(ENOSYS);
+    }
 
     if (src_fc->initial_pool_size == 0) {
         av_log(dst_fc, AV_LOG_DEBUG, "Non fixed-size pools input for "
