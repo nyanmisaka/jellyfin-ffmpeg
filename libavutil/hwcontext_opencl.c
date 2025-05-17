@@ -912,11 +912,6 @@ static int opencl_device_init(AVHWDeviceContext *hwdev)
                 priv->d3d11_map_amd = 1;
             } else if (opencl_check_extension(hwdev, intel_ext)) {
                 priv->d3d11_map_intel = 1;
-            } else {
-                av_log(hwdev, AV_LOG_VERBOSE, "One of the %s or %s "
-                       "extensions are required for D3D11 to OpenCL "
-                       "mapping.\n", amd_ext, intel_ext);
-                fail = 1;
             }
         }
 
