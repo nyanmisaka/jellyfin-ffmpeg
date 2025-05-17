@@ -25,4 +25,11 @@
 int ff_cuda_load_module(void *avctx, AVCUDADeviceContext *hwctx, CUmodule *cu_module,
                         const unsigned char *data, const unsigned int length);
 
+/**
+ * Adds a PTX data to a pending linker invocation and applies any decompression, if necessary.
+ */
+int ff_cuda_link_add_data(void *avctx, AVCUDADeviceContext *hwctx,
+                          CUlinkState state, const char* name,
+                          const unsigned char *data, const unsigned int length);
+
 #endif /* AVFILTER_CUDA_LOAD_HELPER_H */

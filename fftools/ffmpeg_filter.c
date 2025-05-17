@@ -1543,8 +1543,21 @@ static int configure_output_video_filter(FilterGraphPriv *fgp, AVFilterGraph *gr
                ofp->format != AV_PIX_FMT_NONE || !ofp->formats);
     av_bprint_init(&bprint, 0, AV_BPRINT_SIZE_UNLIMITED);
     choose_pix_fmts(ofp, &bprint);
-    choose_color_spaces(ofp, &bprint);
-    choose_color_ranges(ofp, &bprint);
+    /* SW filter cannot handle color conversions between HW pixel formats. */
+    {
+        int bprint_color_options = 1;
+        if (ofp->format != AV_PIX_FMT_NONE) {
+            const AVPixFmtDescriptor *ofp_fmt_desc;
+
+            ofp_fmt_desc = av_pix_fmt_desc_get(ofp->format);
+            if (ofp_fmt_desc->flags & AV_PIX_FMT_FLAG_HWACCEL)
+                bprint_color_options = 0;
+        }
+        if (bprint_color_options) {
+            choose_color_spaces(ofp, &bprint);
+            choose_color_ranges(ofp, &bprint);
+        }
+    }
     if (!av_bprint_is_complete(&bprint))
         return AVERROR(ENOMEM);
 
@@ -1998,6 +2011,10 @@ static int configure_filtergraph(FilterGraph *fg, FilterGraphThread *fgt)
             if (ifp->type_src == AVMEDIA_TYPE_SUBTITLE) {
                 sub2video_frame(&ifp->ifilter, tmp, !fgt->graph);
             } else {
+                if (ifp->type_src == AVMEDIA_TYPE_VIDEO) {
+                    if (ifp->displaymatrix_applied)
+                        av_frame_remove_side_data(tmp, AV_FRAME_DATA_DISPLAYMATRIX);
+                }
                 ret = av_buffersrc_add_frame(ifp->filter, tmp);
             }
             av_frame_free(&tmp);
@@ -2371,9 +2388,20 @@ static int close_output(OutputFilterPriv *ofp, FilterGraphThread *fgt)
     if (!fgt->got_frame) {
         AVFrame *frame = fgt->frame;
         FrameData *fd;
+        const AVPixFmtDescriptor *ofp_fmt_desc;
 
         frame->time_base   = ofp->tb_out;
         frame->format      = ofp->format;
+
+        ofp_fmt_desc = av_pix_fmt_desc_get(ofp->format);
+        // a dummy frame with HW pixel format requires a valid hw_frames_ctx
+        if (ofp_fmt_desc->flags & AV_PIX_FMT_FLAG_HWACCEL) {
+            AVFilterContext *sink = ofp->filter;
+            AVBufferRef *hwfc = av_buffersink_get_hw_frames_ctx(sink);
+            ret = av_buffer_replace(&frame->hw_frames_ctx, hwfc);
+            if (ret < 0)
+                return ret;
+        }
 
         frame->width               = ofp->width;
         frame->height              = ofp->height;
@@ -2651,7 +2679,8 @@ static void sub2video_heartbeat(InputFilter *ifilter, int64_t pts, AVRational tb
            or if we need to initialize the system, update the
            overlayed subpicture and its start/end times */
         sub2video_update(ifp, pts2 + 1, NULL);
-    else
+
+    if (av_buffersrc_get_nb_failed_requests(ifp->filter))
         sub2video_push_ref(ifp, pts2);
 }
 

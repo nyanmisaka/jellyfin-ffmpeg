@@ -579,6 +579,8 @@ struct AVFilterLink {
     enum AVColorSpace colorspace;   ///< agreed upon YUV color space
     enum AVColorRange color_range;  ///< agreed upon YUV color range
 
+    int fixed_pool_size;        ///< fixed size of the frame pool for reverse hw mapping
+
     /* These parameters apply only to audio */
     int sample_rate;            ///< samples per second
     AVChannelLayout ch_layout;  ///< channel layout of current buffer (see libavutil/channel_layout.h)

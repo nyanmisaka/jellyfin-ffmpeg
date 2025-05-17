@@ -412,6 +412,7 @@ static const AVOption avcodec_options[] = {
     {"mastering_display_metadata",  .default_val.i64 = AV_PKT_DATA_MASTERING_DISPLAY_METADATA,  .type = AV_OPT_TYPE_CONST, .flags = A|D, .unit = "side_data_pkt" },
     {"content_light_level",         .default_val.i64 = AV_PKT_DATA_CONTENT_LIGHT_LEVEL,         .type = AV_OPT_TYPE_CONST, .flags = A|D, .unit = "side_data_pkt" },
     {"icc_profile",                 .default_val.i64 = AV_PKT_DATA_ICC_PROFILE,                 .type = AV_OPT_TYPE_CONST, .flags = A|D, .unit = "side_data_pkt" },
+{"low_priority", "attempt to run decode pipeline at a lower priority than is used for realtime decoding", 0, AV_OPT_TYPE_CONST, {.i64 = AV_HWACCEL_FLAG_LOW_PRIORITY }, INT_MIN, INT_MAX, V | D, .unit = "hwaccel_flags"},
 {NULL},
 };
 

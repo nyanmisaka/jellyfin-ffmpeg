@@ -29,6 +29,19 @@ using subsample_function_t = T (*)(cudaTextureObject_t tex, int xo, int yo,
                                    int src_width, int src_height,
                                    int bit_depth, float param);
 
+// --- DITHERING ---
+
+static inline __device__ float get_dithered_y(float y, float d, float dither_size, float dither_quantization, float factor)
+{
+    return floor(y / factor * dither_quantization + d + 0.5f / (dither_size * dither_size)) * 1.0f / dither_quantization * factor;
+}
+
+static inline __device__ float read_dither(cudaTextureObject_t dither_tex, float dither_size, int x, int y)
+{
+    float dither_size_recip = 1.0f / dither_size;
+    return tex2D<float>(dither_tex, (float)x * dither_size_recip, (float)y * dither_size_recip);
+}
+
 // --- CONVERSION LOGIC ---
 
 static const ushort mask_10bit = 0xFFC0;
@@ -64,7 +77,9 @@ static inline __device__ ushort conv_16to10(ushort in)
              subsample_function_t<in_T_uv> subsample_func_uv>                                  \
     __device__ static inline void N(cudaTextureObject_t src_tex[4], T *dst[4], int xo, int yo, \
                                     int dst_width, int dst_height, int dst_pitch,              \
-                                    int src_width, int src_height, float param)
+                                    int src_width, int src_height, float param,                \
+                                    cudaTextureObject_t dither_tex,                            \
+                                    float dither_size, float dither_quantization)
 
 #define SUB_F(m, plane) \
     subsample_func_##m(src_tex[plane], xo, yo, \
@@ -477,7 +492,10 @@ struct Convert_p010le_yuv420p
 
     DEF_F(Convert, out_T)
     {
-        DEFAULT_DST(0) = conv_10to8(SUB_F(y, 0));
+        in_T res = SUB_F(y, 0);
+        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
+                                   dither_size, dither_quantization, (float)mask_10bit);
+        DEFAULT_DST(0) = conv_10to8(res);
     }
 
     DEF_F(Convert_uv, out_T_uv)
@@ -498,7 +516,10 @@ struct Convert_p010le_nv12
 
     DEF_F(Convert, out_T)
     {
-        DEFAULT_DST(0) = conv_10to8(SUB_F(y, 0));
+        in_T res = SUB_F(y, 0);
+        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
+                                   dither_size, dither_quantization, (float)mask_10bit);
+        DEFAULT_DST(0) = conv_10to8(res);
     }
 
     DEF_F(Convert_uv, out_T_uv)
@@ -521,7 +542,10 @@ struct Convert_p010le_yuv444p
 
     DEF_F(Convert, out_T)
     {
-        DEFAULT_DST(0) = conv_10to8(SUB_F(y, 0));
+        in_T res = SUB_F(y, 0);
+        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
+                                   dither_size, dither_quantization, (float)mask_10bit);
+        DEFAULT_DST(0) = conv_10to8(res);
     }
 
     DEF_F(Convert_uv, out_T_uv)
@@ -607,7 +631,10 @@ struct Convert_p016le_yuv420p
 
     DEF_F(Convert, out_T)
     {
-        DEFAULT_DST(0) = conv_16to8(SUB_F(y, 0));
+        in_T res = SUB_F(y, 0);
+        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
+                                   dither_size, dither_quantization, (float)mask_16bit);
+        DEFAULT_DST(0) = conv_16to8(res);
     }
 
     DEF_F(Convert_uv, out_T_uv)
@@ -628,7 +655,10 @@ struct Convert_p016le_nv12
 
     DEF_F(Convert, out_T)
     {
-        DEFAULT_DST(0) = conv_16to8(SUB_F(y, 0));
+        in_T res = SUB_F(y, 0);
+        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
+                                   dither_size, dither_quantization, (float)mask_16bit);
+        DEFAULT_DST(0) = conv_16to8(res);
     }
 
     DEF_F(Convert_uv, out_T_uv)
@@ -651,7 +681,10 @@ struct Convert_p016le_yuv444p
 
     DEF_F(Convert, out_T)
     {
-        DEFAULT_DST(0) = conv_16to8(SUB_F(y, 0));
+        in_T res = SUB_F(y, 0);
+        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
+                                   dither_size, dither_quantization, (float)mask_16bit);
+        DEFAULT_DST(0) = conv_16to8(res);
     }
 
     DEF_F(Convert_uv, out_T_uv)
@@ -672,7 +705,10 @@ struct Convert_p016le_p010le
 
     DEF_F(Convert, out_T)
     {
-        DEFAULT_DST(0) = conv_16to10(SUB_F(y, 0));
+        in_T res = SUB_F(y, 0);
+        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
+                                   dither_size, dither_quantization, (float)mask_16bit);
+        DEFAULT_DST(0) = conv_16to10(res);
     }
 
     DEF_F(Convert_uv, out_T_uv)
@@ -737,7 +773,10 @@ struct Convert_yuv444p16le_yuv420p
 
     DEF_F(Convert, out_T)
     {
-        DEFAULT_DST(0) = conv_16to8(SUB_F(y, 0));
+        in_T res = SUB_F(y, 0);
+        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
+                                   dither_size, dither_quantization, (float)mask_16bit);
+        DEFAULT_DST(0) = conv_16to8(res);
     }
 
     DEF_F(Convert_uv, out_T_uv)
@@ -757,7 +796,10 @@ struct Convert_yuv444p16le_nv12
 
     DEF_F(Convert, out_T)
     {
-        DEFAULT_DST(0) = conv_16to8(SUB_F(y, 0));
+        in_T res = SUB_F(y, 0);
+        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
+                                   dither_size, dither_quantization, (float)mask_16bit);
+        DEFAULT_DST(0) = conv_16to8(res);
     }
 
     DEF_F(Convert_uv, out_T_uv)
@@ -779,7 +821,10 @@ struct Convert_yuv444p16le_yuv444p
 
     DEF_F(Convert, out_T)
     {
-        DEFAULT_DST(0) = conv_16to8(SUB_F(y, 0));
+        in_T res = SUB_F(y, 0);
+        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
+                                   dither_size, dither_quantization, (float)mask_16bit);
+        DEFAULT_DST(0) = conv_16to8(res);
     }
 
     DEF_F(Convert_uv, out_T_uv)
@@ -799,7 +844,10 @@ struct Convert_yuv444p16le_p010le
 
     DEF_F(Convert, out_T)
     {
-        DEFAULT_DST(0) = conv_16to10(SUB_F(y, 0));
+        in_T res = SUB_F(y, 0);
+        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
+                                   dither_size, dither_quantization, (float)mask_16bit);
+        DEFAULT_DST(0) = conv_16to10(res);
     }
 
     DEF_F(Convert_uv, out_T_uv)
@@ -1114,8 +1162,8 @@ __device__ static inline T Subsample_Bicubic(cudaTextureObject_t tex,
 {
     float hscale = (float)src_width / (float)dst_width;
     float vscale = (float)src_height / (float)dst_height;
-    float xi = (xo + 0.5f) * hscale - 0.5f;
-    float yi = (yo + 0.5f) * vscale - 0.5f;
+    float xi = xo * hscale + 0.5f * hscale - 0.5f; // avoid (x - v + v = x)
+    float yi = yo * hscale + 0.5f * vscale - 0.5f;
     float px = floor(xi);
     float py = floor(yi);
     float fx = xi - px;
@@ -1147,7 +1195,9 @@ __device__ static inline T Subsample_Bicubic(cudaTextureObject_t tex,
     cudaTextureObject_t src_tex_2, cudaTextureObject_t src_tex_3, \
     T *dst_0, T *dst_1, T *dst_2, T *dst_3,                       \
     int dst_width, int dst_height, int dst_pitch,                 \
-    int src_width, int src_height, float param
+    int src_width, int src_height, float param,                   \
+    cudaTextureObject_t dither_tex,                               \
+    float dither_size, float dither_quantization
 
 #define SUBSAMPLE(Convert, T) \
     cudaTextureObject_t src_tex[4] =                    \
@@ -1159,7 +1209,9 @@ __device__ static inline T Subsample_Bicubic(cudaTextureObject_t tex,
     Convert(                                            \
         src_tex, dst, xo, yo,                           \
         dst_width, dst_height, dst_pitch,               \
-        src_width, src_height, param);
+        src_width, src_height, param,                   \
+        dither_tex,                                     \
+        dither_size, dither_quantization);
 
 extern "C" {
 

@@ -49,6 +49,8 @@
 static const enum AVPixelFormat supported_main_formats[] = {
     AV_PIX_FMT_NV12,
     AV_PIX_FMT_YUV420P,
+    AV_PIX_FMT_P010,
+    AV_PIX_FMT_P016,
     AV_PIX_FMT_NONE,
 };
 
@@ -104,12 +106,14 @@ typedef struct OverlayCUDAContext {
     enum AVPixelFormat in_format_overlay;
     enum AVPixelFormat in_format_main;
 
+    const AVPixFmtDescriptor *in_desc_main;
+
     AVBufferRef *hw_device_ctx;
     AVCUDADeviceContext *hwctx;
 
-    CUcontext cu_ctx;
     CUmodule cu_module;
-    CUfunction cu_func;
+    CUfunction cu_func_uchar;
+    CUfunction cu_func_ushort;
     CUstream cu_stream;
 
     FFFrameSync fs;
@@ -117,6 +121,7 @@ typedef struct OverlayCUDAContext {
     int eval_mode;
     int x_position;
     int y_position;
+    int alpha_format;
 
     double var_values[VAR_VARS_NB];
     char *x_expr, *y_expr;
@@ -184,7 +189,10 @@ static int set_expr(AVExpr **pexpr, const char *expr, const char *option, void *
 static int formats_match(const enum AVPixelFormat format_main, const enum AVPixelFormat format_overlay) {
     switch(format_main) {
     case AV_PIX_FMT_NV12:
-        return format_overlay == AV_PIX_FMT_NV12;
+    case AV_PIX_FMT_P010:
+    case AV_PIX_FMT_P016:
+        return format_overlay == AV_PIX_FMT_NV12 ||
+               format_overlay == AV_PIX_FMT_YUVA420P;
     case AV_PIX_FMT_YUV420P:
         return format_overlay == AV_PIX_FMT_YUV420P ||
                format_overlay == AV_PIX_FMT_YUVA420P;
@@ -199,26 +207,34 @@ static int formats_match(const enum AVPixelFormat format_main, const enum AVPixe
 static int overlay_cuda_call_kernel(
     OverlayCUDAContext *ctx,
     int x_position, int y_position,
-    uint8_t* main_data, int main_linesize,
+    CUdeviceptr main_data, int main_linesize,
     int main_width, int main_height,
-    uint8_t* overlay_data, int overlay_linesize,
+    int main_adj_x, int main_offset,
+    int main_depth, int main_shift,
+    CUdeviceptr overlay_data, int overlay_linesize,
     int overlay_width, int overlay_height,
-    uint8_t* alpha_data, int alpha_linesize,
-    int alpha_adj_x, int alpha_adj_y) {
+    CUdeviceptr alpha_data, int alpha_linesize,
+    int alpha_adj_x, int alpha_adj_y,
+    int need_unpremul, int overlay_full) {
 
     CudaFunctions *cu = ctx->hwctx->internal->cuda_dl;
 
     void* kernel_args[] = {
         &x_position, &y_position,
         &main_data, &main_linesize,
+        &main_adj_x, &main_offset,
+        &main_depth, &main_shift,
         &overlay_data, &overlay_linesize,
         &overlay_width, &overlay_height,
         &alpha_data, &alpha_linesize,
         &alpha_adj_x, &alpha_adj_y,
+        &need_unpremul, &overlay_full,
     };
 
+#define DEPTH_BYTES(depth) (((depth) + 7) / 8)
+
     return CHECK_CU(cu->cuLaunchKernel(
-        ctx->cu_func,
+        DEPTH_BYTES(main_depth) == 1 ? ctx->cu_func_uchar : ctx->cu_func_ushort,
         DIV_UP(main_width, BLOCK_X), DIV_UP(main_height, BLOCK_Y), 1,
         BLOCK_X, BLOCK_Y, 1,
         0, ctx->cu_stream, kernel_args, NULL));
@@ -241,8 +257,6 @@ static int overlay_cuda_blend(FFFrameSync *fs)
     CUcontext dummy, cuda_ctx = ctx->hwctx->cuda_ctx;
 
     AVFrame *input_main, *input_overlay;
-
-    ctx->cu_ctx = cuda_ctx;
 
     // read main and overlay frames from inputs
     ret = ff_framesync_dualinput_get(fs, &input_main, &input_overlay);
@@ -300,11 +314,15 @@ FF_ENABLE_DEPRECATION_WARNINGS
 
     overlay_cuda_call_kernel(ctx,
         ctx->x_position, ctx->y_position,
-        input_main->data[0], input_main->linesize[0],
+        (CUdeviceptr)input_main->data[0], input_main->linesize[0],
         input_main->width, input_main->height,
-        input_overlay->data[0], input_overlay->linesize[0],
+        1, 0,
+        ctx->in_desc_main->comp[0].depth, ctx->in_desc_main->comp[0].shift,
+        (CUdeviceptr)input_overlay->data[0], input_overlay->linesize[0],
         input_overlay->width, input_overlay->height,
-        input_overlay->data[3], input_overlay->linesize[3], 1, 1);
+        (CUdeviceptr)input_overlay->data[3], input_overlay->linesize[3], 1, 1,
+        (ctx->alpha_format == 1 && ctx->in_format_overlay == AV_PIX_FMT_YUVA420P),
+        (input_overlay->color_range == AVCOL_RANGE_JPEG));
 
     // overlay rest planes depending on pixel format
 
@@ -312,29 +330,46 @@ FF_ENABLE_DEPRECATION_WARNINGS
     case AV_PIX_FMT_NV12:
         overlay_cuda_call_kernel(ctx,
             ctx->x_position, ctx->y_position / 2,
-            input_main->data[1], input_main->linesize[1],
+            (CUdeviceptr)input_main->data[1], input_main->linesize[1],
             input_main->width, input_main->height / 2,
-            input_overlay->data[1], input_overlay->linesize[1],
+            1, 0,
+            ctx->in_desc_main->comp[1].depth, ctx->in_desc_main->comp[1].shift,
+            (CUdeviceptr)input_overlay->data[1], input_overlay->linesize[1],
             input_overlay->width, input_overlay->height / 2,
-            0, 0, 0, 0);
+            0, 0, 0, 0, 0, 0);
         break;
     case AV_PIX_FMT_YUV420P:
     case AV_PIX_FMT_YUVA420P:
-        overlay_cuda_call_kernel(ctx,
-            ctx->x_position / 2 , ctx->y_position / 2,
-            input_main->data[1], input_main->linesize[1],
-            input_main->width / 2, input_main->height / 2,
-            input_overlay->data[1], input_overlay->linesize[1],
-            input_overlay->width / 2, input_overlay->height / 2,
-            input_overlay->data[3], input_overlay->linesize[3], 2, 2);
+        {
+            int is_main_semi = ctx->in_format_main == AV_PIX_FMT_NV12 ||
+                               ctx->in_format_main == AV_PIX_FMT_P010 ||
+                               ctx->in_format_main == AV_PIX_FMT_P016;
+            int main_adj_x = is_main_semi ? 2 : 1;
+            int plane_v = is_main_semi ? 1 : 2;
+            overlay_cuda_call_kernel(ctx,
+                ctx->x_position / 2, ctx->y_position / 2,
+                (CUdeviceptr)input_main->data[1], input_main->linesize[1],
+                input_main->width / 2, input_main->height / 2,
+                main_adj_x, 0,
+                ctx->in_desc_main->comp[1].depth, ctx->in_desc_main->comp[1].shift,
+                (CUdeviceptr)input_overlay->data[1], input_overlay->linesize[1],
+                input_overlay->width / 2, input_overlay->height / 2,
+                (CUdeviceptr)input_overlay->data[3], input_overlay->linesize[3], 2, 2,
+                (ctx->alpha_format == 1 && ctx->in_format_overlay == AV_PIX_FMT_YUVA420P),
+                (input_overlay->color_range == AVCOL_RANGE_JPEG));
 
-        overlay_cuda_call_kernel(ctx,
-            ctx->x_position / 2 , ctx->y_position / 2,
-            input_main->data[2], input_main->linesize[2],
-            input_main->width / 2, input_main->height / 2,
-            input_overlay->data[2], input_overlay->linesize[2],
-            input_overlay->width / 2, input_overlay->height / 2,
-            input_overlay->data[3], input_overlay->linesize[3], 2, 2);
+            overlay_cuda_call_kernel(ctx,
+                ctx->x_position / 2 , ctx->y_position / 2,
+                (CUdeviceptr)input_main->data[plane_v], input_main->linesize[plane_v],
+                input_main->width / 2, input_main->height / 2,
+                main_adj_x, 1,
+                ctx->in_desc_main->comp[plane_v].depth, ctx->in_desc_main->comp[plane_v].shift,
+                (CUdeviceptr)input_overlay->data[2], input_overlay->linesize[2],
+                input_overlay->width / 2, input_overlay->height / 2,
+                (CUdeviceptr)input_overlay->data[3], input_overlay->linesize[3], 2, 2,
+                (ctx->alpha_format == 1 && ctx->in_format_overlay == AV_PIX_FMT_YUVA420P),
+                (input_overlay->color_range == AVCOL_RANGE_JPEG));
+        }
         break;
     default:
         av_log(ctx, AV_LOG_ERROR, "Passed unsupported overlay pixel format\n");
@@ -406,7 +441,7 @@ static av_cold void overlay_cuda_uninit(AVFilterContext *avctx)
     if (ctx->hwctx && ctx->cu_module) {
         CUcontext dummy;
         CudaFunctions *cu = ctx->hwctx->internal->cuda_dl;
-        CHECK_CU(cu->cuCtxPushCurrent(ctx->cu_ctx));
+        CHECK_CU(cu->cuCtxPushCurrent(ctx->hwctx->cuda_ctx));
         CHECK_CU(cu->cuModuleUnload(ctx->cu_module));
         CHECK_CU(cu->cuCtxPopCurrent(&dummy));
     }
@@ -465,6 +500,8 @@ static int overlay_cuda_config_output(AVFilterLink *outlink)
         return AVERROR(ENOSYS);
     }
 
+    ctx->in_desc_main = av_pix_fmt_desc_get(ctx->in_format_main);
+
     // check overlay input formats
 
     if (!frames_ctx_overlay) {
@@ -518,7 +555,13 @@ static int overlay_cuda_config_output(AVFilterLink *outlink)
         return err;
     }
 
-    err = CHECK_CU(cu->cuModuleGetFunction(&ctx->cu_func, ctx->cu_module, "Overlay_Cuda"));
+    err = CHECK_CU(cu->cuModuleGetFunction(&ctx->cu_func_uchar, ctx->cu_module, "Overlay_Cuda_uchar"));
+    if (err < 0) {
+        CHECK_CU(cu->cuCtxPopCurrent(&dummy));
+        return err;
+    }
+
+    err = CHECK_CU(cu->cuModuleGetFunction(&ctx->cu_func_ushort, ctx->cu_module, "Overlay_Cuda_ushort"));
     if (err < 0) {
         CHECK_CU(cu->cuCtxPopCurrent(&dummy));
         return err;
@@ -543,6 +586,9 @@ static int overlay_cuda_config_output(AVFilterLink *outlink)
 static const AVOption overlay_cuda_options[] = {
     { "x", "set the x expression of overlay", OFFSET(x_expr), AV_OPT_TYPE_STRING, { .str = "0" }, 0, 0, FLAGS },
     { "y", "set the y expression of overlay", OFFSET(y_expr), AV_OPT_TYPE_STRING, { .str = "0" }, 0, 0, FLAGS },
+    { "alpha_format", "alpha format", OFFSET(alpha_format), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, FLAGS, .unit = "alpha_format" },
+        { "straight",      "The overlay input is unpremultiplied", 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, .flags = FLAGS, .unit = "alpha_format" },
+        { "premultiplied", "The overlay input is premultiplied",   0, AV_OPT_TYPE_CONST, { .i64 = 1 }, .flags = FLAGS, .unit = "alpha_format" },
     { "eof_action", "Action to take when encountering EOF from secondary input ",
         OFFSET(fs.opt_eof_action), AV_OPT_TYPE_INT, { .i64 = EOF_ACTION_REPEAT },
         EOF_ACTION_REPEAT, EOF_ACTION_PASS, .flags = FLAGS, .unit = "eof_action" },

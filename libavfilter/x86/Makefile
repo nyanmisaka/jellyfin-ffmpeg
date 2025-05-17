@@ -36,6 +36,8 @@ OBJS-$(CONFIG_STEREO3D_FILTER)               += x86/vf_stereo3d_init.o
 OBJS-$(CONFIG_TBLEND_FILTER)                 += x86/vf_blend_init.o
 OBJS-$(CONFIG_THRESHOLD_FILTER)              += x86/vf_threshold_init.o
 OBJS-$(CONFIG_TINTERLACE_FILTER)             += x86/vf_tinterlace_init.o
+OBJS-$(CONFIG_TONEMAPX_FILTER)               += x86/vf_tonemapx_intrin_sse.o \
+                                                x86/vf_tonemapx_intrin_avx.o
 OBJS-$(CONFIG_TRANSPOSE_FILTER)              += x86/vf_transpose_init.o
 OBJS-$(CONFIG_VOLUME_FILTER)                 += x86/af_volume_init.o
 OBJS-$(CONFIG_V360_FILTER)                   += x86/vf_v360_init.o

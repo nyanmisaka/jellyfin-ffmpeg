@@ -358,6 +358,7 @@ External library support:
   --enable-omx             enable OpenMAX IL code [no]
   --enable-omx-rpi         enable OpenMAX IL code for Raspberry Pi [no]
   --enable-rkmpp           enable Rockchip Media Process Platform code [no]
+  --enable-rkrga           enable Rockchip 2D Raster Graphic Acceleration code [no]
   --disable-v4l2-m2m       disable V4L2 mem2mem code [autodetect]
   --disable-vaapi          disable Video Acceleration API (mainly Unix/Intel) code [autodetect]
   --disable-vdpau          disable Nvidia Video Decode and Presentation API for Unix code [autodetect]
@@ -1876,7 +1877,6 @@ EXTERNAL_LIBRARY_GPL_LIST="
 
 EXTERNAL_LIBRARY_NONFREE_LIST="
     decklink
-    libfdk_aac
     libtls
 "
 
@@ -1889,6 +1889,7 @@ EXTERNAL_LIBRARY_VERSION3_LIST="
     libvo_amrwbenc
     mbedtls
     rkmpp
+    rkrga
 "
 
 EXTERNAL_LIBRARY_GPLV3_LIST="
@@ -1916,6 +1917,7 @@ EXTERNAL_LIBRARY_LIST="
     libcodec2
     libdav1d
     libdc1394
+    libfdk_aac
     libflite
     libfontconfig
     libfreetype
@@ -2025,6 +2027,7 @@ HWACCEL_LIBRARY_LIST="
     mmal
     omx
     opencl
+    rkmpp
 "
 
 DOCUMENT_LIST="
@@ -2313,6 +2316,9 @@ HEADERS_LIST="
 INTRINSICS_LIST="
     intrinsics_neon
     intrinsics_sse2
+    intrinsics_sse42
+    intrinsics_fma3
+    intrinsics_avx2
 "
 
 MATH_FUNCS="
@@ -2461,6 +2467,7 @@ TYPES_LIST="
     kCMVideoCodecType_HEVC
     kCMVideoCodecType_HEVCWithAlpha
     kCMVideoCodecType_VP9
+    kCMVideoCodecType_AV1
     kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
     kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange
     kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
@@ -2527,6 +2534,7 @@ HAVE_LIST="
     xmllint
     zlib_gzip
     openvino2
+    libvpl_legacy_mfxinit
 "
 
 # options emitted with CONFIG_ prefix but not available on the command line
@@ -2747,6 +2755,9 @@ armv8_deps="aarch64"
 neon_deps_any="aarch64 arm"
 intrinsics_neon_deps="neon"
 intrinsics_sse2_deps="sse2"
+intrinsics_sse42_deps="sse42"
+intrinsics_fma3_deps="fma3"
+intrinsics_avx2_deps="avx2"
 vfp_deps="arm"
 vfpv3_deps="vfp"
 setend_deps="arm"
@@ -3166,6 +3177,8 @@ av1_vaapi_hwaccel_deps="vaapi VADecPictureParameterBufferAV1_bit_depth_idx"
 av1_vaapi_hwaccel_select="av1_decoder"
 av1_vdpau_hwaccel_deps="vdpau VdpPictureInfoAV1"
 av1_vdpau_hwaccel_select="av1_decoder"
+av1_videotoolbox_hwaccel_deps="videotoolbox"
+av1_videotoolbox_hwaccel_select="av1_decoder"
 av1_vulkan_hwaccel_deps="vulkan"
 av1_vulkan_hwaccel_select="av1_decoder"
 h263_vaapi_hwaccel_deps="vaapi"
@@ -3312,6 +3325,10 @@ scale_cuda_filter_deps="ffnvcodec"
 scale_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
 thumbnail_cuda_filter_deps="ffnvcodec"
 thumbnail_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
+tonemap_cuda_filter_deps="ffnvcodec const_nan"
+tonemap_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
+transpose_cuda_filter_deps="ffnvcodec"
+transpose_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
 transpose_npp_filter_deps="ffnvcodec libnpp"
 overlay_cuda_filter_deps="ffnvcodec"
 overlay_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
@@ -3343,8 +3360,10 @@ av1_qsv_encoder_deps="libvpl"
 av1_qsv_encoder_select="qsvenc"
 av1_vaapi_encoder_deps="VAEncPictureParameterBufferAV1"
 av1_vaapi_encoder_select="cbs_av1 vaapi_encode"
+av1_rkmpp_decoder_deps="rkmpp"
 h263_v4l2m2m_decoder_deps="v4l2_m2m h263_v4l2_m2m"
 h263_v4l2m2m_encoder_deps="v4l2_m2m h263_v4l2_m2m"
+h263_rkmpp_decoder_deps="rkmpp"
 h264_amf_encoder_deps="amf"
 h264_cuvid_decoder_deps="cuvid"
 h264_cuvid_decoder_select="h264_mp4toannexb_bsf"
@@ -3360,7 +3379,8 @@ h264_omx_encoder_deps="omx"
 h264_qsv_decoder_select="h264_mp4toannexb_bsf qsvdec"
 h264_qsv_encoder_select="atsc_a53 qsvenc"
 h264_rkmpp_decoder_deps="rkmpp"
-h264_rkmpp_decoder_select="h264_mp4toannexb_bsf"
+h264_rkmpp_decoder_select="h264_mp4toannexb_bsf dump_extradata_bsf"
+h264_rkmpp_encoder_deps="rkmpp"
 h264_vaapi_encoder_select="atsc_a53 cbs_h264 vaapi_encode"
 h264_vulkan_encoder_select="cbs_h264 vulkan_encode"
 h264_v4l2m2m_decoder_deps="v4l2_m2m h264_v4l2_m2m"
@@ -3380,7 +3400,8 @@ hevc_nvenc_encoder_select="atsc_a53"
 hevc_qsv_decoder_select="hevc_mp4toannexb_bsf qsvdec"
 hevc_qsv_encoder_select="hevcparse qsvenc"
 hevc_rkmpp_decoder_deps="rkmpp"
-hevc_rkmpp_decoder_select="hevc_mp4toannexb_bsf"
+hevc_rkmpp_decoder_select="hevc_mp4toannexb_bsf dump_extradata_bsf dovi_rpudec hevcparse"
+hevc_rkmpp_encoder_deps="rkmpp"
 hevc_vaapi_encoder_deps="VAEncPictureParameterBufferHEVC"
 hevc_vaapi_encoder_select="atsc_a53 cbs_h265 vaapi_encode"
 hevc_vulkan_encoder_select="atsc_a53 cbs_h265 vulkan_encode"
@@ -3393,11 +3414,13 @@ mjpeg_qsv_encoder_deps="libmfx"
 mjpeg_qsv_encoder_select="qsvenc"
 mjpeg_vaapi_encoder_deps="VAEncPictureParameterBufferJPEG"
 mjpeg_vaapi_encoder_select="cbs_jpeg jpegtables vaapi_encode"
+mjpeg_rkmpp_encoder_deps="rkmpp"
 mp3_mf_encoder_deps="mediafoundation"
 mp3_mediacodec_decoder_deps="mediacodec"
 mp3_mediacodec_decoder_select="mpegaudioheader"
 mpeg1_cuvid_decoder_deps="cuvid"
 mpeg1_v4l2m2m_decoder_deps="v4l2_m2m mpeg1_v4l2_m2m"
+mpeg1_rkmpp_decoder_deps="rkmpp"
 mpeg2_cuvid_decoder_deps="cuvid"
 mpeg2_mmal_decoder_deps="mmal"
 mpeg2_mediacodec_decoder_deps="mediacodec"
@@ -3405,6 +3428,7 @@ mpeg2_qsv_decoder_select="qsvdec"
 mpeg2_qsv_encoder_select="qsvenc"
 mpeg2_vaapi_encoder_select="cbs_mpeg2 vaapi_encode"
 mpeg2_v4l2m2m_decoder_deps="v4l2_m2m mpeg2_v4l2_m2m"
+mpeg2_rkmpp_decoder_deps="rkmpp"
 mpeg4_cuvid_decoder_deps="cuvid"
 mpeg4_mediacodec_decoder_deps="mediacodec"
 mpeg4_mediacodec_encoder_deps="mediacodec"
@@ -3413,6 +3437,8 @@ mpeg4_mmal_decoder_deps="mmal"
 mpeg4_omx_encoder_deps="omx"
 mpeg4_v4l2m2m_decoder_deps="v4l2_m2m mpeg4_v4l2_m2m"
 mpeg4_v4l2m2m_encoder_deps="v4l2_m2m mpeg4_v4l2_m2m"
+mpeg4_rkmpp_decoder_deps="rkmpp"
+mpeg4_rkmpp_decoder_select="mpeg4_unpack_bframes_bsf dump_extradata_bsf"
 vc1_cuvid_decoder_deps="cuvid"
 vc1_mmal_decoder_deps="mmal"
 vc1_qsv_decoder_select="qsvdec"
@@ -3510,6 +3536,8 @@ h264_videotoolbox_encoder_deps="pthreads"
 h264_videotoolbox_encoder_select="atsc_a53 videotoolbox_encoder"
 hevc_videotoolbox_encoder_deps="pthreads"
 hevc_videotoolbox_encoder_select="atsc_a53 videotoolbox_encoder"
+mjpeg_videotoolbox_encoder_deps="pthreads"
+mjpeg_videotoolbox_encoder_select="videotoolbox_encoder"
 prores_videotoolbox_encoder_deps="pthreads"
 prores_videotoolbox_encoder_select="videotoolbox_encoder"
 libaom_av1_decoder_deps="libaom"
@@ -3839,6 +3867,8 @@ boxblur_opencl_filter_deps="opencl gpl"
 bs2b_filter_deps="libbs2b"
 bwdif_cuda_filter_deps="ffnvcodec"
 bwdif_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
+bwdif_opencl_filter_deps="opencl"
+bwdif_videotoolbox_filter_deps="metal corevideo videotoolbox"
 bwdif_vulkan_filter_deps="vulkan spirv_compiler"
 chromaber_vulkan_filter_deps="vulkan spirv_compiler"
 color_vulkan_filter_deps="vulkan spirv_compiler"
@@ -3882,6 +3912,7 @@ gblur_vulkan_filter_deps="vulkan spirv_compiler"
 hflip_vulkan_filter_deps="vulkan spirv_compiler"
 histeq_filter_deps="gpl"
 hqdn3d_filter_deps="gpl"
+hwupload_vaapi_filter_deps="vaapi"
 iccdetect_filter_deps="lcms2"
 iccgen_filter_deps="lcms2"
 identity_filter_select="scene_sad"
@@ -3913,7 +3944,9 @@ overlay_opencl_filter_deps="opencl"
 overlay_qsv_filter_deps="libmfx"
 overlay_qsv_filter_select="qsvvpp"
 overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
+overlay_videotoolbox_filter_deps="metal corevideo coreimage videotoolbox"
 overlay_vulkan_filter_deps="vulkan spirv_compiler"
+overlay_rkrga_filter_deps="rkrga"
 owdenoise_filter_deps="gpl"
 pad_opencl_filter_deps="opencl"
 pan_filter_deps="swresample"
@@ -3933,8 +3966,10 @@ rubberband_filter_deps="librubberband"
 sab_filter_deps="gpl swscale"
 scale2ref_filter_deps="swscale"
 scale_filter_deps="swscale"
+scale_opencl_filter_deps="opencl"
 scale_qsv_filter_deps="libmfx"
 scale_qsv_filter_select="qsvvpp"
+scale_rkrga_filter_deps="rkrga"
 scdet_filter_select="scene_sad"
 select_filter_select="scene_sad"
 sharpness_vaapi_filter_deps="vaapi"
@@ -3956,11 +3991,13 @@ tinterlace_filter_deps="gpl"
 tinterlace_merge_test_deps="tinterlace_filter"
 tinterlace_pad_test_deps="tinterlace_filter"
 tonemap_filter_deps="const_nan"
+tonemapx_filter_deps="const_nan"
 tonemap_vaapi_filter_deps="vaapi VAProcFilterParameterBufferHDRToneMapping"
+tonemap_videotoolbox_filter_deps="metal corevideo videotoolbox const_nan"
 tonemap_opencl_filter_deps="opencl const_nan"
 transpose_opencl_filter_deps="opencl"
 transpose_vaapi_filter_deps="vaapi VAProcPipelineCaps_rotation_flags"
-transpose_vt_filter_deps="videotoolbox VTPixelRotationSessionCreate"
+transpose_vt_filter_deps="coreimage videotoolbox"
 transpose_vulkan_filter_deps="vulkan spirv_compiler"
 unsharp_opencl_filter_deps="opencl"
 uspp_filter_deps="gpl avcodec"
@@ -3978,10 +4015,12 @@ scale_vt_filter_deps="videotoolbox VTPixelTransferSessionCreate"
 scale_vulkan_filter_deps="vulkan spirv_compiler"
 vpp_qsv_filter_deps="libmfx"
 vpp_qsv_filter_select="qsvvpp"
+vpp_rkrga_filter_deps="rkrga"
 xfade_opencl_filter_deps="opencl"
 xfade_vulkan_filter_deps="vulkan spirv_compiler"
 yadif_cuda_filter_deps="ffnvcodec"
 yadif_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
+yadif_opencl_filter_deps="opencl"
 yadif_videotoolbox_filter_deps="metal corevideo videotoolbox"
 hstack_vaapi_filter_deps="vaapi_1"
 vstack_vaapi_filter_deps="vaapi_1"
@@ -4027,14 +4066,14 @@ cws2fws_extralibs="zlib_extralibs"
 
 # libraries, in any order
 avcodec_deps="avutil"
-avcodec_suggest="libm stdatomic liblcevc_dec"
+avcodec_suggest="libm stdatomic liblcevc_dec rkrga"
 avdevice_deps="avformat avcodec avutil"
 avdevice_suggest="libm stdatomic"
 avfilter_deps="avutil"
 avfilter_suggest="libm stdatomic"
 avformat_deps="avcodec avutil"
 avformat_suggest="libm network zlib stdatomic"
-avutil_suggest="clock_gettime ffnvcodec gcrypt libm libdrm libmfx opencl openssl user32 vaapi vulkan videotoolbox corefoundation corevideo coremedia bcrypt stdatomic"
+avutil_suggest="clock_gettime ffnvcodec gcrypt libm libdrm libmfx opencl openssl rkmpp user32 vaapi vulkan videotoolbox corefoundation corevideo coremedia bcrypt stdatomic"
 postproc_deps="avutil gpl"
 postproc_suggest="libm stdatomic"
 swresample_deps="avutil"
@@ -4690,8 +4729,10 @@ if enabled cuda_nvcc; then
     nvcc_default="nvcc"
     nvccflags_default="-gencode arch=compute_30,code=sm_30 -O2"
 else
+    # clang-20 emits ptx60 instruction 'brx.idx' even for ptx32 target (llvm/llvm-project@ccc3127)
+    # default to ptx60/sm_30 to follow the changes made in clang-16+ (llvm/llvm-project@d677505)
     nvcc_default="clang"
-    nvccflags_default="--cuda-gpu-arch=sm_30 -O2"
+    nvccflags_default="--cuda-feature=+ptx60 --cuda-gpu-arch=sm_30 -O2 -ffast-math"
     NVCC_C=""
 fi
 
@@ -4700,6 +4741,11 @@ set_default nvcc
 if enabled cuda_nvcc; then
     if $nvcc $nvccflags_default 2>&1 | grep -qi unsupported; then
         nvccflags_default="-gencode arch=compute_60,code=sm_60 -O2"
+    fi
+else
+    # '--cuda-feature=+ptx*' option is not available before clang-15
+    if $nvcc $nvccflags_default 2>&1 | grep -qi unsupported; then
+        nvccflags_default="--cuda-gpu-arch=sm_30 -O2 -ffast-math"
     fi
 fi
 
@@ -5590,7 +5636,7 @@ elif enabled x86; then
         ;;
         # everything else should support nopl and conditional mov (cmov)
         *)
-            cpuflags="-march=$cpu"
+            # there is no -march=generic option
             enable i686
             enable fast_cmov
         ;;
@@ -6478,6 +6524,19 @@ fi
 check_cc intrinsics_neon arm_neon.h "int16x8_t test = vdupq_n_s16(0)"
 check_cc intrinsics_sse2 emmintrin.h "__m128i test = _mm_setzero_si128()"
 
+disable intrinsics_sse42 && test_cc -msse4.2 <<EOF && enable intrinsics_sse42
+#include <immintrin.h>
+int main(void) { __m128i t = _mm_cmpgt_epi64(_mm_setzero_si128(), _mm_setzero_si128()); return 0; }
+EOF
+disable intrinsics_fma3 && test_cc -mfma <<EOF && enable intrinsics_fma3
+#include <immintrin.h>
+int main(void) { __m256 t = _mm256_fmadd_ps(_mm256_setzero_ps(), _mm256_setzero_ps(), _mm256_setzero_ps()); return 0; }
+EOF
+disable intrinsics_avx2 && test_cc -mavx2 <<EOF && enable intrinsics_avx2
+#include <immintrin.h>
+int main(void) { __m256i t = _mm256_abs_epi32(_mm256_setzero_si256()); return 0; }
+EOF
+
 check_ldflags -Wl,--as-needed
 check_ldflags -Wl,-z,noexecstack
 
@@ -6697,6 +6756,7 @@ enabled videotoolbox && {
     check_func_headers CoreMedia/CMFormatDescription.h kCMVideoCodecType_HEVC "-framework CoreMedia"
     check_func_headers CoreMedia/CMFormatDescription.h kCMVideoCodecType_HEVCWithAlpha "-framework CoreMedia"
     check_func_headers CoreMedia/CMFormatDescription.h kCMVideoCodecType_VP9 "-framework CoreMedia"
+    check_func_headers CoreMedia/CMFormatDescription.h kCMVideoCodecType_AV1 "-framework CoreMedia"
     check_func_headers CoreVideo/CVPixelBuffer.h kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange "-framework CoreVideo"
     check_func_headers CoreVideo/CVPixelBuffer.h kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange "-framework CoreVideo"
     check_func_headers CoreVideo/CVPixelBuffer.h kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange "-framework CoreVideo"
@@ -6753,7 +6813,7 @@ fi
 if enabled cuda_nvcc; then
     nvccflags="$nvccflags -ptx"
 else
-    nvccflags="$nvccflags -S -nocudalib -nocudainc --cuda-device-only -Wno-c++11-narrowing -include ${source_link}/compat/cuda/cuda_runtime.h"
+    nvccflags="$nvccflags -S -nocudalib -nocudainc --cuda-device-only -Wno-c++11-narrowing -std=c++14 -include ${source_link}/compat/cuda/cuda_runtime.h"
     check_nvcc cuda_llvm
 fi
 
@@ -6943,6 +7003,9 @@ elif enabled libvpl; then
             die "ERROR: libvpl >= 2.6 not found"
     add_cflags -DMFX_DEPRECATED_OFF
     check_type "vpl/mfxdefs.h vpl/mfxvideo.h" "struct mfxConfigInterface"
+# Ancient Intel driver on Windows still require the legacy init functions.
+# No compiler option is changed if the test fails, just needs to add back the disabled libmfx.
+    { test_pkg_config libmfx "vpl >= 2.6" "mfxvideo.h mfxdispatcher.h" "MFXInit MFXInitEx" && enable libvpl_legacy_mfxinit; } || enable libmfx
 fi
 
 if enabled libmfx; then
@@ -7108,10 +7171,15 @@ enabled openssl           && { { check_pkg_config openssl "openssl >= 3.0.0" ope
                                check_lib openssl openssl/ssl.h SSL_library_init -lssl -lcrypto -lws2_32 -lgdi32 ||
                                die "ERROR: openssl not found"; }
 enabled pocketsphinx      && require_pkg_config pocketsphinx pocketsphinx pocketsphinx/pocketsphinx.h ps_init
-enabled rkmpp             && { require_pkg_config rkmpp rockchip_mpp  rockchip/rk_mpi.h mpp_create &&
-                               require_pkg_config rockchip_mpp "rockchip_mpp >= 1.3.7" rockchip/rk_mpi.h mpp_create &&
+enabled rkmpp             && { require_pkg_config rkmpp rockchip_mpp rockchip/rk_mpi.h mpp_create &&
+                               require_pkg_config rockchip_mpp "rockchip_mpp >= 1.3.8" rockchip/rk_mpi.h mpp_create &&
                                { enabled libdrm ||
                                  die "ERROR: rkmpp requires --enable-libdrm"; }
+                             }
+enabled rkrga             && { require_pkg_config rkrga librga rga/RgaApi.h c_RkRgaBlit &&
+                               require_pkg_config rkrga librga rga/im2d.h querystring &&
+                               { enabled rkmpp ||
+                                 die "ERROR: rkrga requires --enable-rkmpp"; }
                              }
 enabled vapoursynth       && require_headers "vapoursynth/VSScript4.h vapoursynth/VapourSynth4.h"
 
@@ -7314,7 +7382,7 @@ fi
 if enabled_all opencl libdrm ; then
     check_type "CL/cl_intel.h" "clCreateImageFromFdINTEL_fn" &&
         enable opencl_drm_beignet
-    check_func_headers "CL/cl_ext.h" clImportMemoryARM &&
+    enabled_any arm aarch64 &&
         enable opencl_drm_arm
 fi
 
@@ -7581,7 +7649,9 @@ if enabled icc; then
             disable aligned_stack
     fi
 elif enabled gcc; then
-    check_optflags -fno-tree-vectorize
+    case $gcc_basever in
+        2|2.*|3.*|4.*|5.*|6.*) check_optflags -fno-tree-vectorize ;;
+    esac
     check_cflags -Werror=format-security
     check_cflags -Werror=implicit-function-declaration
     check_cflags -Werror=missing-prototypes
@@ -7598,6 +7668,16 @@ elif enabled gcc; then
             # function calls. Library entry points that might call assembly
             # functions align the stack. (The parameter means 2^4 bytes.)
             check_cflags -mpreferred-stack-boundary=4
+            ;;
+        esac
+    elif enabled x86_64; then
+        case $target_os in
+        mingw*|win*|cygwin*)
+            # GCC on Windows cannot guarantee a 32-byte aligned stack
+            # Such alignment is required by certain AVX instructions
+            # Force GCC to use the unaligned equivalents instead
+            check_cflags -Wa,-muse-unaligned-vector-move
+            check_cxxflags -Wa,-muse-unaligned-vector-move
             ;;
         esac
     fi

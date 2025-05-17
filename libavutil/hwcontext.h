@@ -38,6 +38,8 @@ enum AVHWDeviceType {
     AV_HWDEVICE_TYPE_MEDIACODEC,
     AV_HWDEVICE_TYPE_VULKAN,
     AV_HWDEVICE_TYPE_D3D12VA,
+    AV_HWDEVICE_TYPE_RKMPP,
+    AV_HWDEVICE_TYPE_NB,          ///< number of hw device types, not part of API/ABI.
 };
 
 /**

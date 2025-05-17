@@ -257,7 +257,10 @@ int sch_add_mux(Scheduler *sch, SchThreadFunc func, int (*init)(void *),
 /**
  * Default size of a frame thread queue.
  */
-#define DEFAULT_FRAME_THREAD_QUEUE_SIZE 8
+#define DEFAULT_FRAME_THREAD_QUEUE_SIZE 1
+
+// The new default value of 8 does little to help hwaccel, but instead increases
+// extra_hw_frames, which causes video memory on dGPU to be exhausted more easily.
 
 /**
  * Add a muxed stream for a previously added muxer.

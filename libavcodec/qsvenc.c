@@ -205,6 +205,7 @@ static void dump_video_param(AVCodecContext *avctx, QSVEncContext *q,
 #endif
 
     const char *tmp_str = NULL;
+    mfxExtHEVCParam *exthevcparam = NULL;
 
     if (q->co2_idx > 0)
         co2 = (mfxExtCodingOption2*)coding_opts[q->co2_idx];
@@ -220,6 +221,8 @@ static void dump_video_param(AVCodecContext *avctx, QSVEncContext *q,
         exthypermodeparam = (mfxExtHyperModeParam *)coding_opts[q->exthypermodeparam_idx];
 #endif
 
+    if (q->exthevcparam_idx > 0)
+        exthevcparam = (mfxExtHEVCParam *)coding_opts[q->exthevcparam_idx];
     av_log(avctx, AV_LOG_VERBOSE, "profile: %s; level: %"PRIu16"\n",
            print_profile(avctx->codec_id, info->CodecProfile), info->CodecLevel);
 
@@ -400,6 +403,11 @@ static void dump_video_param(AVCodecContext *avctx, QSVEncContext *q,
         av_log(avctx, AV_LOG_VERBOSE, "\n");
     }
 #endif
+    if (exthevcparam &&
+        exthevcparam->GeneralConstraintFlags == MFX_HEVC_CONSTR_REXT_ONE_PICTURE_ONLY &&
+        avctx->codec_id == AV_CODEC_ID_HEVC &&
+        info->CodecProfile == MFX_PROFILE_HEVC_MAIN10)
+        av_log(avctx, AV_LOG_VERBOSE, "Main10sp (Main10 profile and one_pic_only flag): enable\n");
 }
 
 static void dump_video_vp9_param(AVCodecContext *avctx, QSVEncContext *q,
@@ -1184,7 +1192,7 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
 
 #if QSV_HAVE_EXT_AV1_PARAM
     if (avctx->codec_id == AV_CODEC_ID_AV1) {
-        if (QSV_RUNTIME_VERSION_ATLEAST(q->ver, 2, 5)) {
+        if (QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 255)) { // (2, 5)
             q->extav1tileparam.Header.BufferId = MFX_EXTBUFF_AV1_TILE_PARAM;
             q->extav1tileparam.Header.BufferSz = sizeof(q->extav1tileparam);
             q->extav1tileparam.NumTileColumns  = q->tile_cols;
@@ -1209,6 +1217,18 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
         q->exthevctiles.NumTileColumns  = q->tile_cols;
         q->exthevctiles.NumTileRows     = q->tile_rows;
         q->extparam_internal[q->nb_extparam_internal++] = (mfxExtBuffer *)&q->exthevctiles;
+    }
+
+    if (avctx->codec_id == AV_CODEC_ID_HEVC && q->main10sp) {
+        if (QSV_RUNTIME_VERSION_ATLEAST(q->ver, 2, 0)) {
+            q->param.mfx.CodecProfile = MFX_PROFILE_HEVC_MAIN10;
+            q->exthevcparam.Header.BufferId = MFX_EXTBUFF_HEVC_PARAM;
+            q->exthevcparam.Header.BufferSz = sizeof(q->exthevcparam);
+            q->exthevcparam.GeneralConstraintFlags = MFX_HEVC_CONSTR_REXT_ONE_PICTURE_ONLY;
+            q->extparam_internal[q->nb_extparam_internal++] = (mfxExtBuffer *)&q->exthevcparam;
+        } else
+            av_log(avctx, AV_LOG_WARNING,
+                   "This version of runtime doesn't support 10bit single still picture\n");
     }
 
     q->extvsi.VideoFullRange = (avctx->color_range == AVCOL_RANGE_JPEG);
@@ -1396,7 +1416,7 @@ static int qsv_retrieve_enc_av1_params(AVCodecContext *avctx, QSVEncContext *q)
         (mfxExtBuffer*)&co3,
     };
 
-    if (!QSV_RUNTIME_VERSION_ATLEAST(q->ver, 2, 5)) {
+    if (!QSV_RUNTIME_VERSION_ATLEAST(q->ver, 1, 255)) { // (2, 5)
         av_log(avctx, AV_LOG_ERROR,
                "This version of runtime doesn't support AV1 encoding\n");
         return AVERROR_UNKNOWN;
@@ -1463,12 +1483,17 @@ static int qsv_retrieve_enc_params(AVCodecContext *avctx, QSVEncContext *q)
     };
 #endif
 
-    mfxExtBuffer *ext_buffers[6 + QSV_HAVE_HE];
+    mfxExtHEVCParam hevc_param_buf = {
+        .Header.BufferId = MFX_EXTBUFF_HEVC_PARAM,
+        .Header.BufferSz = sizeof(hevc_param_buf),
+    };
 
+    mfxExtBuffer *ext_buffers[7 + QSV_HAVE_HE];
     int need_pps = avctx->codec_id != AV_CODEC_ID_MPEG2VIDEO;
     int ret, ext_buf_num = 0, extradata_offset = 0;
 
     q->co2_idx = q->co3_idx = q->exthevctiles_idx = q->exthypermodeparam_idx = -1;
+    q->exthevcparam_idx = -1;
     ext_buffers[ext_buf_num++] = (mfxExtBuffer*)&extradata;
     ext_buffers[ext_buf_num++] = (mfxExtBuffer*)&co;
 
@@ -1496,6 +1521,10 @@ static int qsv_retrieve_enc_params(AVCodecContext *avctx, QSVEncContext *q)
         ext_buffers[ext_buf_num++] = (mfxExtBuffer*)&hyper_mode_param_buf;
     }
 #endif
+    if (avctx->codec_id == AV_CODEC_ID_HEVC && QSV_RUNTIME_VERSION_ATLEAST(q->ver, 2, 0)) {
+        q->exthevcparam_idx = ext_buf_num;
+        ext_buffers[ext_buf_num++] = (mfxExtBuffer*)&hevc_param_buf;
+    }
 
     q->param.ExtParam    = ext_buffers;
     q->param.NumExtParam = ext_buf_num;
@@ -1871,6 +1900,10 @@ static void clear_unused_frames(QSVEncContext *q)
             memset(&cur->enc_ctrl, 0, sizeof(cur->enc_ctrl));
             cur->enc_ctrl.Payload = cur->payloads;
             cur->enc_ctrl.ExtParam = cur->extparam;
+            if (cur->external_frame) {
+                av_freep(&cur->surface.Data.MemId);
+                cur->external_frame = 0;
+            }
             if (cur->frame->format == AV_PIX_FMT_QSV) {
                 av_frame_unref(cur->frame);
             }
@@ -2042,6 +2075,16 @@ static int submit_frame(QSVEncContext *q, const AVFrame *frame,
         return ret;
 
     if (frame->format == AV_PIX_FMT_QSV) {
+        AVHWFramesContext *frames_ctx = NULL;
+        AVQSVFramesContext *frames_hwctx = NULL;
+        int is_fixed_pool = 0;
+
+        if (q->avctx->hw_frames_ctx) {
+            frames_ctx    = (AVHWFramesContext *)q->avctx->hw_frames_ctx->data;
+            frames_hwctx  = frames_ctx->hwctx;
+            is_fixed_pool = frames_hwctx->nb_surfaces > 0;
+        }
+
         ret = av_frame_ref(qf->frame, frame);
         if (ret < 0)
             return ret;
@@ -2050,10 +2093,19 @@ static int submit_frame(QSVEncContext *q, const AVFrame *frame,
 
         if (q->frames_ctx.mids) {
             ret = ff_qsv_find_surface_idx(&q->frames_ctx, qf);
-            if (ret < 0)
+            if (ret < 0 && !is_fixed_pool)
                 return ret;
-
-            qf->surface.Data.MemId = &q->frames_ctx.mids[ret];
+            if (ret >= 0)
+                qf->surface.Data.MemId = &q->frames_ctx.mids[ret];
+        }
+        if (is_fixed_pool && (!q->frames_ctx.mids || ret < 0)) {
+            QSVMid *mid = NULL;
+            mid = (QSVMid *)av_mallocz(sizeof(*mid));
+            if (!mid)
+                return AVERROR(ENOMEM);
+            mid->handle_pair = (mfxHDLPair *)qf->surface.Data.MemId;
+            qf->surface.Data.MemId = mid;
+            qf->external_frame = 1;
         }
     } else {
         /* make a copy if the input is not padded as libmfx requires */

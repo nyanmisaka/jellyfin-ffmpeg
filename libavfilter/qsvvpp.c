@@ -70,6 +70,36 @@ static const struct {
 #endif
 };
 
+extern int ff_qsvvpp_check_dynamic_pool_supported(AVHWDeviceContext *device_ctx);
+
+int ff_qsvvpp_check_dynamic_pool_supported(AVHWDeviceContext *device_ctx)
+{
+    AVQSVDeviceContext *device_hwctx;
+    mfxIMPL impl;
+    mfxVersion ver;
+    int ret;
+
+    if (!device_ctx || device_ctx->type != AV_HWDEVICE_TYPE_QSV)
+        return AVERROR(EINVAL);
+
+    device_hwctx = device_ctx->hwctx;
+
+    ret = MFXQueryIMPL(device_hwctx->session, &impl);
+    if (ret == MFX_ERR_NONE)
+        ret = MFXQueryVersion(device_hwctx->session, &ver);
+    if (ret != MFX_ERR_NONE)
+        return AVERROR_UNKNOWN;
+
+    if (!QSV_RUNTIME_VERSION_ATLEAST(ver, 2, 9))
+        return AVERROR(ENOSYS);
+
+    if (!(MFX_IMPL_VIA_VAAPI == MFX_IMPL_VIA_MASK(impl) ||
+          MFX_IMPL_VIA_D3D11 == MFX_IMPL_VIA_MASK(impl)))
+        return AVERROR(ENOSYS);
+
+    return 0;
+}
+
 int ff_qsvvpp_print_iopattern(void *log_ctx, int mfx_iopattern,
                               const char *extra_string)
 {
@@ -168,7 +198,7 @@ int ff_qsvvpp_print_warning(void *log_ctx, mfxStatus err,
     const char *desc;
     int ret;
     ret = qsv_map_error(err, &desc);
-    av_log(log_ctx, AV_LOG_WARNING, "%s: %s (%d)\n", warning_string, desc, err);
+    av_log(log_ctx, AV_LOG_VERBOSE, "%s: %s (%d)\n", warning_string, desc, err);
     return ret;
 }
 
@@ -460,8 +490,12 @@ static QSVFrame *submit_frame(QSVVPPContext *s, AVFilterLink *inlink, AVFrame *p
             !(qsv_frame->frame->flags & AV_FRAME_FLAG_INTERLACED) ? MFX_PICSTRUCT_PROGRESSIVE :
             ((qsv_frame->frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) ? MFX_PICSTRUCT_FIELD_TFF :
                                                  MFX_PICSTRUCT_FIELD_BFF);
-    if (qsv_frame->frame->repeat_pict == 1)
+    if (qsv_frame->frame->repeat_pict == 1) {
         qsv_frame->surface.Info.PicStruct |= MFX_PICSTRUCT_FIELD_REPEATED;
+        qsv_frame->surface.Info.PicStruct |=
+            (qsv_frame->frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) ? MFX_PICSTRUCT_FIELD_TFF :
+                                                                        MFX_PICSTRUCT_FIELD_BFF;
+    }
     else if (qsv_frame->frame->repeat_pict == 2)
         qsv_frame->surface.Info.PicStruct |= MFX_PICSTRUCT_FRAME_DOUBLING;
     else if (qsv_frame->frame->repeat_pict == 4)
@@ -471,7 +505,8 @@ static QSVFrame *submit_frame(QSVVPPContext *s, AVFilterLink *inlink, AVFrame *p
 }
 
 /* get the output surface */
-static QSVFrame *query_frame(QSVVPPContext *s, AVFilterLink *outlink, const AVFrame *in)
+static QSVFrame *query_frame(QSVVPPContext *s, AVFilterLink *outlink, const AVFrame *in,
+                             const AVFrame *propref)
 {
     FilterLink *l = ff_filter_link(outlink);
     AVFilterContext *ctx = outlink->src;
@@ -511,6 +546,15 @@ static QSVFrame *query_frame(QSVVPPContext *s, AVFilterLink *outlink, const AVFr
                                    &out_frame->surface);
         if (ret < 0)
             return NULL;
+    }
+
+    if (propref) {
+        ret = av_frame_copy_props(out_frame->frame, propref);
+        if (ret < 0) {
+            av_frame_free(&out_frame->frame);
+            av_log(ctx, AV_LOG_ERROR, "Failed to copy metadata fields from src to dst.\n");
+            return NULL;
+        }
     }
 
     if (l->frame_rate.num && l->frame_rate.den)
@@ -642,6 +686,9 @@ static int init_vpp_session(AVFilterContext *avctx, QSVVPPContext *s)
         }
 
         out_frames_hwctx->frame_type      = s->out_mem_mode;
+
+        if (in_frames_hwctx)
+            out_frames_hwctx->require_sync = in_frames_hwctx->require_sync;
 
         ret = av_hwframe_ctx_init(out_frames_ref);
         if (ret < 0) {
@@ -903,8 +950,13 @@ static int qsvvpp_init_vpp_session(AVFilterContext *avctx, QSVVPPContext *s, con
 
         /* Query VPP params again, including params for frame */
         ret = MFXVideoVPP_Query(s->session, &s->vpp_param, &s->vpp_param);
-        if (ret < 0)
-            return ff_qsvvpp_print_error(avctx, ret, "Error querying VPP params");
+        if (ret < 0) {
+            /* Wa a PicStruct validation issue in VPL/MSDK RT */
+            if (s->vpp_param.vpp.In.PicStruct != in->surface.Info.PicStruct)
+                s->vpp_param.vpp.In.PicStruct = in->surface.Info.PicStruct;
+            else
+                return ff_qsvvpp_print_error(avctx, ret, "Error querying VPP params");
+        }
         else if (ret > 0)
             ff_qsvvpp_print_warning(avctx, ret, "Warning When querying VPP params");
 
@@ -985,7 +1037,7 @@ int ff_qsvvpp_filter_frame(QSVVPPContext *s, AVFilterLink *inlink, AVFrame *picr
     }
 
     do {
-        out_frame = query_frame(s, outlink, in_frame->frame);
+        out_frame = query_frame(s, outlink, in_frame->frame, propref);
         if (!out_frame) {
             av_log(ctx, AV_LOG_ERROR, "Failed to query an output frame.\n");
             return AVERROR(ENOMEM);
@@ -1007,15 +1059,6 @@ int ff_qsvvpp_filter_frame(QSVVPPContext *s, AVFilterLink *inlink, AVFrame *picr
             if (ret == MFX_ERR_MORE_DATA)
                 return AVERROR(EAGAIN);
             break;
-        }
-
-        if (propref) {
-            ret1 = av_frame_copy_props(out_frame->frame, propref);
-            if (ret1 < 0) {
-                av_frame_free(&out_frame->frame);
-                av_log(ctx, AV_LOG_ERROR, "Failed to copy metadata fields from src to dst.\n");
-                return ret1;
-            }
         }
 
         out_frame->frame->pts = av_rescale_q(out_frame->surface.Data.TimeStamp,
@@ -1056,6 +1099,16 @@ int ff_qsvvpp_filter_frame(QSVVPPContext *s, AVFilterLink *inlink, AVFrame *picr
 
     return 0;
 }
+
+#if !QSV_ONEVPL || HAVE_LIBVPL_LEGACY_MFXINIT
+
+static int qsvvpp_create_mfx_session_legacy(void *ctx,
+                                            void *loader,
+                                            mfxIMPL implementation,
+                                            mfxVersion *pver,
+                                            mfxSession *psession);
+
+#endif
 
 #if QSV_ONEVPL
 
@@ -1100,6 +1153,15 @@ int ff_qsvvpp_create_mfx_session(void *ctx,
         impl_idx++;
     }
 
+#if HAVE_LIBVPL_LEGACY_MFXINIT
+    if (sts < 0) {
+        av_log(ctx, AV_LOG_VERBOSE, "Error creating a MFX session using oneVPL, "
+               "falling back to retry with the legacy Media SDK path\n");
+        if (!qsvvpp_create_mfx_session_legacy(ctx, loader, implementation, pver, psession))
+            return 0;
+    }
+#endif
+
     if (sts < 0)
         return ff_qsvvpp_print_error(ctx, sts,
                                      "Error creating a MFX session");
@@ -1116,6 +1178,19 @@ int ff_qsvvpp_create_mfx_session(void *ctx,
                                  mfxIMPL implementation,
                                  mfxVersion *pver,
                                  mfxSession *psession)
+{
+    return qsvvpp_create_mfx_session_legacy(ctx, loader, implementation, pver, psession);
+}
+
+#endif
+
+#if !QSV_ONEVPL || HAVE_LIBVPL_LEGACY_MFXINIT
+
+static int qsvvpp_create_mfx_session_legacy(void *ctx,
+                                            void *loader,
+                                            mfxIMPL implementation,
+                                            mfxVersion *pver,
+                                            mfxSession *psession)
 {
     mfxSession session = NULL;
     mfxStatus sts;

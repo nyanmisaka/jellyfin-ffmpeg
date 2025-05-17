@@ -185,7 +185,7 @@ int ff_vk_load_props(FFVulkanContext *s)
         };
         s->qf_props[i] = (VkQueueFamilyProperties2) {
             .sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2,
-            .pNext = &s->video_props[i],
+            .pNext = s->extensions & FF_VK_EXT_VIDEO_QUEUE ? &s->video_props[i] : NULL,
         };
     }
 
@@ -887,8 +887,11 @@ int ff_vk_alloc_mem(FFVulkanContext *s, VkMemoryRequirements *req,
 
     ret = vk->AllocateMemory(s->hwctx->act_dev, &alloc_info,
                              s->hwctx->alloc, mem);
-    if (ret != VK_SUCCESS)
+    if (ret != VK_SUCCESS) {
+        av_log(s, AV_LOG_ERROR, "Failed to allocate memory: %s\n",
+               ff_vk_ret2str(ret));
         return AVERROR(ENOMEM);
+    }
 
     if (mem_flags)
         *mem_flags |= s->mprops.memoryTypes[index].propertyFlags;

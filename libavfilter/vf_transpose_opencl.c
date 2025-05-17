@@ -103,8 +103,20 @@ static int transpose_opencl_config_output(AVFilterLink *outlink)
         return AVERROR(EINVAL);
     }
 
-    s->ocf.output_width = inlink->h;
-    s->ocf.output_height = inlink->w;
+    switch (s->dir) {
+    case TRANSPOSE_CCLOCK_FLIP:
+    case TRANSPOSE_CCLOCK:
+    case TRANSPOSE_CLOCK:
+    case TRANSPOSE_CLOCK_FLIP:
+        s->ocf.output_width  = inlink->h;
+        s->ocf.output_height = inlink->w;
+        break;
+    default:
+        s->ocf.output_width  = inlink->w;
+        s->ocf.output_height = inlink->h;
+        break;
+    }
+
     ret = ff_opencl_filter_config_output(outlink);
     if (ret < 0)
         return ret;
@@ -116,10 +128,8 @@ static int transpose_opencl_config_output(AVFilterLink *outlink)
         outlink->sample_aspect_ratio = inlink->sample_aspect_ratio;
 
     av_log(avctx, AV_LOG_VERBOSE,
-           "w:%d h:%d dir:%d -> w:%d h:%d rotation:%s vflip:%d\n",
-           inlink->w, inlink->h, s->dir, outlink->w, outlink->h,
-           s->dir == 1 || s->dir == 3 ? "clockwise" : "counterclockwise",
-           s->dir == 0 || s->dir == 3);
+           "w:%d h:%d dir:%d -> w:%d h:%d\n",
+           inlink->w, inlink->h, s->dir, outlink->w, outlink->h);
     return 0;
 }
 
@@ -237,11 +247,14 @@ static av_cold void transpose_opencl_uninit(AVFilterContext *avctx)
 #define OFFSET(x) offsetof(TransposeOpenCLContext, x)
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 static const AVOption transpose_opencl_options[] = {
-    { "dir", "set transpose direction", OFFSET(dir), AV_OPT_TYPE_INT, { .i64 = TRANSPOSE_CCLOCK_FLIP }, 0, 3, FLAGS, .unit = "dir" },
+    { "dir", "set transpose direction", OFFSET(dir), AV_OPT_TYPE_INT, { .i64 = TRANSPOSE_CCLOCK_FLIP }, 0, 6, FLAGS, .unit = "dir" },
         { "cclock_flip", "rotate counter-clockwise with vertical flip", 0, AV_OPT_TYPE_CONST, { .i64 = TRANSPOSE_CCLOCK_FLIP }, .flags=FLAGS, .unit = "dir" },
         { "clock",       "rotate clockwise",                            0, AV_OPT_TYPE_CONST, { .i64 = TRANSPOSE_CLOCK       }, .flags=FLAGS, .unit = "dir" },
         { "cclock",      "rotate counter-clockwise",                    0, AV_OPT_TYPE_CONST, { .i64 = TRANSPOSE_CCLOCK      }, .flags=FLAGS, .unit = "dir" },
         { "clock_flip",  "rotate clockwise with vertical flip",         0, AV_OPT_TYPE_CONST, { .i64 = TRANSPOSE_CLOCK_FLIP  }, .flags=FLAGS, .unit = "dir" },
+        { "reversal",    "rotate by half-turn",                         0, AV_OPT_TYPE_CONST, { .i64 = TRANSPOSE_REVERSAL    }, .flags=FLAGS, .unit = "dir" },
+        { "hflip",       "flip horizontally",                           0, AV_OPT_TYPE_CONST, { .i64 = TRANSPOSE_HFLIP       }, .flags=FLAGS, .unit = "dir" },
+        { "vflip",       "flip vertically",                             0, AV_OPT_TYPE_CONST, { .i64 = TRANSPOSE_VFLIP       }, .flags=FLAGS, .unit = "dir" },
 
     { "passthrough", "do not apply transposition if the input matches the specified geometry",
       OFFSET(passthrough), AV_OPT_TYPE_INT, {.i64=TRANSPOSE_PT_TYPE_NONE},  0, INT_MAX, FLAGS, .unit = "passthrough" },

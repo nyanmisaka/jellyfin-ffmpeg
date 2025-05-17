@@ -233,7 +233,7 @@ FATE_HEVC-$(call ALLYES, HEVC_DEMUXER MOV_DEMUXER HEVC_PARSER HEVC_MP4TOANNEXB_B
 fate-hevc-bsf-mp4toannexb: tests/data/hevc-mp4.mov
 fate-hevc-bsf-mp4toannexb: CMD = md5 -i $(TARGET_PATH)/tests/data/hevc-mp4.mov -c:v copy -fflags +bitexact -f hevc
 fate-hevc-bsf-mp4toannexb: CMP = oneline
-fate-hevc-bsf-mp4toannexb: REF = 73019329ed7f81c24f9af67c34c640c0
+fate-hevc-bsf-mp4toannexb: REF = 7d05a79c7a6665ae22c0043a4d83a811
 
 fate-hevc-skiploopfilter: CMD = framemd5 -skip_loop_filter nokey -i $(TARGET_SAMPLES)/hevc-conformance/SAO_D_Samsung_5.bit -sws_flags bitexact
 FATE_HEVC-$(call FRAMEMD5, HEVC, HEVC, HEVC_PARSER) += fate-hevc-skiploopfilter

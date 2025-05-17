@@ -124,3 +124,74 @@ void ff_isom_put_dvcc_dvvc(void *logctx, uint8_t out[ISOM_DVCC_DVVC_SIZE],
            dovi->dv_bl_signal_compatibility_id,
            dovi->dv_md_compression);
 }
+
+int ff_isom_validate_dovi_config(const AVDOVIDecoderConfigurationRecord *dovi,
+                                 const AVCodecParameters *codec_par, int codec_tag)
+{
+    if (!dovi || !codec_par)
+        return AVERROR(ENOMEM);
+
+    switch (dovi->dv_profile) {
+    case 4:
+    case 5:
+    case 7:
+    case 8:
+    case 20:
+        if (codec_par->codec_id != AV_CODEC_ID_HEVC)
+            return AVERROR(EINVAL);
+        break;
+    case 9:
+        if (codec_par->codec_id != AV_CODEC_ID_H264)
+            return AVERROR(EINVAL);
+        break;
+    case 10:
+        if (codec_par->codec_id != AV_CODEC_ID_AV1)
+            return AVERROR(EINVAL);
+        break;
+    default:
+        return AVERROR(EINVAL);
+    }
+
+    switch (dovi->dv_bl_signal_compatibility_id) {
+    case 0:
+        // Although the IPT-PQ-C2 Dolby Vision uses is always full range, some videos tag that wrong in the container
+        // To allow stream copy for such videos, don't check for the color range
+        if (codec_par->format != AV_PIX_FMT_YUV420P10 ||
+            (codec_tag && !(codec_tag == MKTAG('d', 'v', 'h', '1') ||
+                            codec_tag == MKTAG('d', 'v', 'h', 'e') ||
+                            codec_tag == MKTAG('d', 'a', 'v', '1')))) {
+            return AVERROR(EINVAL);
+        }
+        break;
+    case 1: // HDR10
+    case 6:
+        if (codec_par->color_trc != AVCOL_TRC_SMPTE2084 ||
+            codec_par->color_primaries != AVCOL_PRI_BT2020 ||
+            codec_par->color_space != AVCOL_SPC_BT2020_NCL ||
+            codec_par->color_range != AVCOL_RANGE_MPEG ||
+            codec_par->format != AV_PIX_FMT_YUV420P10) {
+            return AVERROR(EINVAL);
+        }
+        break;
+    case 2: // SDR
+        // Don't check range or color info for SDR base layer as a lot of them will set to unspecified
+        // And a lot of players assumes unspecified as BT709 in tv range
+        if (codec_par->format != AV_PIX_FMT_YUV420P)
+            return AVERROR(EINVAL);
+        break;
+    case 4: // HLG
+        if (codec_par->color_trc != AVCOL_TRC_ARIB_STD_B67 ||
+            codec_par->color_primaries != AVCOL_PRI_BT2020 ||
+            codec_par->color_space != AVCOL_SPC_BT2020_NCL ||
+            codec_par->color_range != AVCOL_RANGE_MPEG ||
+            codec_par->format != AV_PIX_FMT_YUV420P10) {
+            return AVERROR(EINVAL);
+        }
+        break;
+    default:
+        // others are reserved value, don't check
+        break;
+    }
+
+    return 0;
+}

@@ -703,6 +703,11 @@ static int input_thread(void *arg)
         DemuxStream *ds;
         unsigned send_flags = 0;
 
+        if (paused_start) {
+            av_usleep(1000); // pausing the input thread
+            continue;
+        }
+
         ret = av_read_frame(f->ctx, dt.pkt_demux);
 
         if (ret == AVERROR(EAGAIN)) {

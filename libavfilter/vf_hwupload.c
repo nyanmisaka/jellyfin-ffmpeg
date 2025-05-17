@@ -23,10 +23,18 @@
 #include "libavutil/pixdesc.h"
 #include "libavutil/opt.h"
 
+#if HAVE_OPENCL_D3D11
+#include "libavutil/hwcontext_d3d11va.h"
+#endif
+
 #include "avfilter.h"
 #include "filters.h"
 #include "formats.h"
 #include "video.h"
+
+#if CONFIG_QSVVPP
+extern int ff_qsvvpp_check_dynamic_pool_supported(AVHWDeviceContext *device_ctx);
+#endif
 
 typedef struct HWUploadContext {
     const AVClass *class;
@@ -112,6 +120,9 @@ static int hwupload_config_output(AVFilterLink *outlink)
     FilterLink        *inl = ff_filter_link(inlink);
     HWUploadContext   *ctx = avctx->priv;
     int err;
+#if HAVE_OPENCL_D3D11
+    D3D11_TEXTURE2D_DESC texDesc = { .BindFlags = D3D11_BIND_DECODER, };
+#endif
 
     av_buffer_unref(&ctx->hwframes_ref);
 
@@ -152,6 +163,20 @@ static int hwupload_config_output(AVFilterLink *outlink)
 
     if (avctx->extra_hw_frames >= 0)
         ctx->hwframes->initial_pool_size = 2 + avctx->extra_hw_frames;
+
+#if HAVE_OPENCL_D3D11
+    if (ctx->hwframes->format == AV_PIX_FMT_D3D11)
+        ctx->hwframes->user_opaque = &texDesc;
+#endif
+
+#if CONFIG_QSVVPP
+    if (ctx->hwframes->format == AV_PIX_FMT_QSV) {
+        AVHWDeviceContext *qsv_ctx = (AVHWDeviceContext *)ctx->hwdevice_ref->data;
+        if (!ff_qsvvpp_check_dynamic_pool_supported(qsv_ctx)) {
+            ctx->hwframes->initial_pool_size = 0;
+        }
+    }
+#endif
 
     err = av_hwframe_ctx_init(ctx->hwframes_ref);
     if (err < 0)

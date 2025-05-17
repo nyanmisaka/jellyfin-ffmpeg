@@ -201,8 +201,8 @@ static const AVClass class = {
 
 static const FFCodecDefault qsv_enc_defaults[] = {
     { "b",         "0"    },
-    { "g",         "-1"   },
-    { "bf",        "-1"   },
+    { "g",         "250"  },
+    { "bf",        "3"    },
     { "refs",      "0"    },
     { NULL },
 };

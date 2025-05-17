@@ -81,6 +81,11 @@ typedef struct AVQSVFramesContext {
      * pool have the same mfxFrameInfo.
      */
     mfxFrameInfo *info;
+
+    /**
+     * Whether the frames require extra sync when exporting as external memory.
+     */
+    int require_sync;
 } AVQSVFramesContext;
 
 #endif /* AVUTIL_HWCONTEXT_QSV_H */

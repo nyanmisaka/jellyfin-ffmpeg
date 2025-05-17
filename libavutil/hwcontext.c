@@ -66,6 +66,9 @@ static const HWContextType * const hw_table[] = {
 #if CONFIG_VULKAN
     &ff_hwcontext_type_vulkan,
 #endif
+#if CONFIG_RKMPP
+    &ff_hwcontext_type_rkmpp,
+#endif
     NULL,
 };
 
@@ -82,22 +85,8 @@ static const char *const hw_type_names[] = {
     [AV_HWDEVICE_TYPE_VIDEOTOOLBOX] = "videotoolbox",
     [AV_HWDEVICE_TYPE_MEDIACODEC] = "mediacodec",
     [AV_HWDEVICE_TYPE_VULKAN] = "vulkan",
+    [AV_HWDEVICE_TYPE_RKMPP] = "rkmpp",
 };
-
-typedef struct FFHWDeviceContext {
-    /**
-     * The public AVHWDeviceContext. See hwcontext.h for it.
-     */
-    AVHWDeviceContext p;
-
-    const HWContextType *hw_type;
-
-    /**
-     * For a derived device, a reference to the original device
-     * context it was derived from.
-     */
-    AVBufferRef *source_device;
-} FFHWDeviceContext;
 
 enum AVHWDeviceType av_hwdevice_find_type_by_name(const char *name)
 {
@@ -143,6 +132,7 @@ static void hwdevice_ctx_free(void *opaque, uint8_t *data)
 {
     FFHWDeviceContext *ctxi = (FFHWDeviceContext*)data;
     AVHWDeviceContext *ctx  = &ctxi->p;
+    int i;
 
     /* uninit might still want access the hw context and the user
      * free() callback might destroy it, so uninit has to be called first */
@@ -153,6 +143,8 @@ static void hwdevice_ctx_free(void *opaque, uint8_t *data)
         ctx->free(ctx);
 
     av_buffer_unref(&ctxi->source_device);
+    for (i = 0; i < AV_HWDEVICE_TYPE_NB; i++)
+        av_buffer_unref(&ctxi->derived_devices[i]);
 
     av_freep(&ctx->hwctx);
     av_freep(&ctx);
@@ -633,6 +625,28 @@ fail:
     return ret;
 }
 
+static AVBufferRef* find_derived_hwdevice_ctx(AVBufferRef *src_ref, enum AVHWDeviceType type)
+{
+    AVBufferRef *tmp_ref;
+    FFHWDeviceContext *src_ctxi;
+    AVHWDeviceContext *src_ctx;
+    int i;
+
+    src_ctxi = (FFHWDeviceContext *)src_ref->data;
+    src_ctx = &src_ctxi->p;
+    if (src_ctx->type == type)
+        return src_ref;
+
+    for (i = 0; i < AV_HWDEVICE_TYPE_NB; i++)
+        if (src_ctxi->derived_devices[i]) {
+            tmp_ref = find_derived_hwdevice_ctx(src_ctxi->derived_devices[i], type);
+            if (tmp_ref)
+                return tmp_ref;
+        }
+
+    return NULL;
+}
+
 int av_hwdevice_ctx_create_derived_opts(AVBufferRef **dst_ref_ptr,
                                         enum AVHWDeviceType type,
                                         AVBufferRef *src_ref,
@@ -656,6 +670,16 @@ int av_hwdevice_ctx_create_derived_opts(AVBufferRef **dst_ref_ptr,
         tmp_ref = tmp_ctx->source_device;
     }
 
+    tmp_ref = find_derived_hwdevice_ctx(src_ref, type);
+    if (tmp_ref) {
+        dst_ref = av_buffer_ref(tmp_ref);
+        if (!dst_ref) {
+            ret = AVERROR(ENOMEM);
+            goto fail;
+        }
+        goto done;
+    }
+
     dst_ref = av_hwdevice_ctx_alloc(type);
     if (!dst_ref) {
         ret = AVERROR(ENOMEM);
@@ -673,6 +697,11 @@ int av_hwdevice_ctx_create_derived_opts(AVBufferRef **dst_ref_ptr,
             if (ret == 0) {
                 dst_ctx->source_device = av_buffer_ref(src_ref);
                 if (!dst_ctx->source_device) {
+                    ret = AVERROR(ENOMEM);
+                    goto fail;
+                }
+                tmp_ctx->derived_devices[type] = av_buffer_ref(dst_ref);
+                if (!tmp_ctx->derived_devices[type]) {
                     ret = AVERROR(ENOMEM);
                     goto fail;
                 }
