@@ -3093,22 +3093,30 @@ static int opencl_map_from_d3d11(AVHWFramesContext *dst_fc, AVFrame *dst,
     cl_mem plane_uint;
     const cl_mem *mem_objs;
     cl_uint num_objs;
-    int err, i, p, derived_frames = 1, nb_planes = 2;
+    int err, i, p, derived_frames = 1;
+    int nb_planes = (src_fc->sw_format == AV_PIX_FMT_BGRA ||
+                     src_fc->sw_format == AV_PIX_FMT_X2BGR10) ? 1 : 2;
 
     cl_flags = opencl_mem_flags_for_mapping(flags);
     if (!cl_flags)
         return AVERROR(EINVAL);
 
-    // all major vendors support NV12 and P01X,
+    // both AMD and Intel support NV12 and P01X,
     // but Intel requires D3D11_RESOURCE_MISC_SHARED.
     if (device_priv->d3d11_map_amd ||
-        device_priv->d3d11_map_intel ||
-        device_priv->d3d11_map_nv) {
+        device_priv->d3d11_map_intel) {
         if (src_fc->sw_format != AV_PIX_FMT_NV12 &&
             src_fc->sw_format != AV_PIX_FMT_P010 &&
             src_fc->sw_format != AV_PIX_FMT_P012) {
-            av_log(dst_fc, AV_LOG_ERROR, "Only NV12, P010 and P012 textures "
-                   "are supported for D3D11 to OpenCL mapping.\n");
+            av_log(dst_fc, AV_LOG_ERROR, "Only NV12, P010 and P012 textures are "
+                   "supported on AMD and Intel for D3D11 to OpenCL mapping.\n");
+            return AVERROR(EINVAL);
+        }
+    } else if (device_priv->d3d11_map_nv) {
+        if (src_fc->sw_format != AV_PIX_FMT_BGRA &&
+            src_fc->sw_format != AV_PIX_FMT_X2BGR10) {
+            av_log(dst_fc, AV_LOG_ERROR, "Only BGRA and X2BGR10 textures are "
+                   "supported on NVIDIA for D3D11 to OpenCL mapping.\n");
             return AVERROR(EINVAL);
         }
     } else

@@ -27,8 +27,11 @@
 #include "libavutil/hwcontext_d3d11va.h"
 
 enum OutputFormat {
-    OUTPUT_NV12 = 0,
-    OUTPUT_P010 = 1,
+    OUTPUT_NV12,
+    OUTPUT_P010,
+    OUTPUT_BGRA,
+    OUTPUT_X2BGR10,
+    OUTPUT_MAX,
 };
 
 typedef struct D3D11ScaleContext {
@@ -93,6 +96,12 @@ static int d3d11scale_configure_processor(D3D11ScaleContext *s, AVFilterContext 
         break;
     case OUTPUT_P010:
         s->output_format = DXGI_FORMAT_P010;
+        break;
+    case OUTPUT_BGRA:
+        s->output_format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        break;
+    case OUTPUT_X2BGR10:
+        s->output_format = DXGI_FORMAT_R10G10B10A2_UNORM;
         break;
     default:
         av_log(ctx, AV_LOG_ERROR, "Invalid output format specified\n");
@@ -396,6 +405,12 @@ static int d3d11scale_config_props(AVFilterLink *outlink)
     case OUTPUT_P010:
         sw_format = AV_PIX_FMT_P010;
         break;
+    case OUTPUT_BGRA:
+        sw_format = AV_PIX_FMT_BGRA;
+        break;
+    case OUTPUT_X2BGR10:
+        sw_format = AV_PIX_FMT_X2BGR10;
+        break;
     default:
         return AVERROR(EINVAL);
     }
@@ -410,7 +425,9 @@ static int d3d11scale_config_props(AVFilterLink *outlink)
     AVD3D11VAFramesContext *frames_hwctx = frames_ctx->hwctx;
     frames_hwctx->MiscFlags = D3D11_RESOURCE_MISC_SHARED; //0;
     frames_hwctx->BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE; // | D3D11_BIND_VIDEO_ENCODER;
-    frames_hwctx->require_sync = 1;
+
+    AVD3D11VAFramesContext *in_frames_hwctx = in_frames_ctx->hwctx;
+    frames_hwctx->require_sync = in_frames_hwctx->require_sync;
 
     ret = av_hwframe_ctx_init(s->hw_frames_ctx_out);
     if (ret < 0) {
@@ -464,9 +481,11 @@ static const AVFilterPad d3d11scale_outputs[] = {
 static const AVOption d3d11scale_options[] = {
     { "w", "Output video width",  OFFSET(w_expr), AV_OPT_TYPE_STRING, {.str = "iw"}, .flags = FLAGS },
     { "h", "Output video height", OFFSET(h_expr), AV_OPT_TYPE_STRING, {.str = "ih"}, .flags = FLAGS },
-    { "format", "Output format", OFFSET(output_format_opt), AV_OPT_TYPE_INT, {.i64 = OUTPUT_NV12}, 0, OUTPUT_P010, FLAGS, .unit = "format" },
+    { "format", "Output format", OFFSET(output_format_opt), AV_OPT_TYPE_INT, {.i64 = OUTPUT_NV12}, 0, OUTPUT_MAX - 1, FLAGS, .unit = "format" },
       { "nv12", "NV12 format", 0, AV_OPT_TYPE_CONST, {.i64 = OUTPUT_NV12}, 0, 0, FLAGS, .unit = "format" },
       { "p010", "P010 format", 0, AV_OPT_TYPE_CONST, {.i64 = OUTPUT_P010}, 0, 0, FLAGS, .unit = "format" },
+      { "bgra", "BGRA format", 0, AV_OPT_TYPE_CONST, {.i64 = OUTPUT_BGRA}, 0, 0, FLAGS, .unit = "format" },
+      { "x2bgr10", "X2BGR10 format", 0, AV_OPT_TYPE_CONST, {.i64 = OUTPUT_X2BGR10}, 0, 0, FLAGS, .unit = "format" },
     { NULL }
 };
 
