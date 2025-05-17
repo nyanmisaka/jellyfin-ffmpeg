@@ -2923,6 +2923,7 @@ static void opencl_unmap_from_d3d11(AVHWFramesContext *dst_fc,
     cl_int cle;
     const cl_mem *mem_objs;
     cl_uint num_objs;
+    int p;
 
     if (!(device_priv->d3d11_map_amd ||
           device_priv->d3d11_map_intel))
@@ -2941,6 +2942,18 @@ static void opencl_unmap_from_d3d11(AVHWFramesContext *dst_fc,
     }
 
     opencl_wait_events(dst_fc, &event, 1);
+
+    if (!frames_priv->nb_mapped_frames && !frames_priv->mapped_frames) {
+        for (p = 0; p < desc->nb_planes; p++) {
+            cle = clReleaseMemObject(desc->planes[p]);
+            if (cle != CL_SUCCESS) {
+                av_log(dst_fc, AV_LOG_ERROR, "Failed to release CL "
+                       "image of plane %d of D3D11 texture: %d\n",
+                       p, cle);
+            }
+        }
+        av_freep(&desc);
+    }
 }
 
 static int opencl_map_from_d3d11(AVHWFramesContext *dst_fc, AVFrame *dst,
@@ -2962,7 +2975,7 @@ static int opencl_map_from_d3d11(AVHWFramesContext *dst_fc, AVFrame *dst,
     cl_mem plane_uint;
     const cl_mem *mem_objs;
     cl_uint num_objs;
-    int err, i, p, nb_planes = 2;
+    int err, i, p, derived_frames = 1, nb_planes = 2;
 
     cl_flags = opencl_mem_flags_for_mapping(flags);
     if (!cl_flags)
@@ -2983,18 +2996,18 @@ static int opencl_map_from_d3d11(AVHWFramesContext *dst_fc, AVFrame *dst,
         return AVERROR(ENOSYS);
 
     if (src_fc->initial_pool_size == 0) {
-        av_log(dst_fc, AV_LOG_ERROR, "Only fixed-size pools are supported "
-               "for D3D11 to OpenCL mapping.\n");
-        return AVERROR(EINVAL);
+        av_log(dst_fc, AV_LOG_DEBUG, "Non fixed-size pools input for "
+               "D3D11 to OpenCL mapping.\n");
+        derived_frames = 0;
     }
-    if (index >= src_fc->initial_pool_size) {
+    if (derived_frames && index >= src_fc->initial_pool_size) {
         av_log(dst_fc, AV_LOG_ERROR, "Texture array index out of range for "
                "mapping: %d >= %d.\n", index, src_fc->initial_pool_size);
         return AVERROR(EINVAL);
     }
     av_log(dst_fc, AV_LOG_DEBUG, "Map D3D11 texture %d to OpenCL.\n", index);
 
-    if (!frames_priv->mapped_frames) {
+    if (derived_frames && !frames_priv->mapped_frames) {
         frames_priv->nb_mapped_frames = src_fc->initial_pool_size;
 
         frames_priv->mapped_frames =
@@ -3017,16 +3030,25 @@ static int opencl_map_from_d3d11(AVHWFramesContext *dst_fc, AVFrame *dst,
 
         if (frames_priv->sync_point || frames_priv->sync_tex_2x2) {
             opencl_sync_d3d11_texture(frames_priv, device_hwctx,
-                                      tex, index, dst_fc);
+                                      tex, (derived_frames ? index : 0),
+                                      dst_fc);
         }
     }
 
-    desc = &frames_priv->mapped_frames[index];
-
+    if (derived_frames)
+        desc = &frames_priv->mapped_frames[index];
+    else {
+        desc = av_mallocz(sizeof(*desc));
+        if (!desc) {
+            err = AVERROR(ENOMEM);
+            goto fail2;
+        }
+        desc->nb_planes = nb_planes + !!device_priv->d3d11_map_amd;
+    }
     // deferred clCreateFromD3D11Texture2DKHR() for low startup latency.
     if (device_priv->d3d11_map_intel) {
         for (p = 0; p < desc->nb_planes; p++) {
-            UINT subresource = 2 * index + p;
+            UINT subresource = derived_frames ? (2 * index + p) : p;
 
             if (desc->planes[p])
                 continue;
@@ -3048,7 +3070,7 @@ static int opencl_map_from_d3d11(AVHWFramesContext *dst_fc, AVFrame *dst,
         if (!desc->planes[desc->nb_planes - 1]) {
             // put the multiple-plane AMD shared image at the end.
             desc->planes[desc->nb_planes - 1] = device_priv->clCreateFromD3D11Texture2DKHR(
-                dst_dev->context, cl_flags, tex, index, &cle);
+                dst_dev->context, cl_flags, tex, (derived_frames ? index : 0), &cle);
             if (!desc->planes[desc->nb_planes - 1]) {
                 av_log(dst_fc, AV_LOG_ERROR, "Failed to create CL image "
                        "from D3D11 texture index %d: %d.\n", index, cle);
@@ -3152,15 +3174,23 @@ fail:
     if (cle == CL_SUCCESS)
         opencl_wait_events(dst_fc, &event, 1);
 fail2:
-    for (i = 0; i < frames_priv->nb_mapped_frames; i++) {
-        desc = &frames_priv->mapped_frames[i];
+    if (derived_frames) {
+        for (i = 0; i < frames_priv->nb_mapped_frames; i++) {
+            desc = &frames_priv->mapped_frames[i];
+            for (p = 0; p < desc->nb_planes; p++) {
+                if (desc->planes[p])
+                    clReleaseMemObject(desc->planes[p]);
+            }
+        }
+        av_freep(&frames_priv->mapped_frames);
+        frames_priv->nb_mapped_frames = 0;
+    } else {
         for (p = 0; p < desc->nb_planes; p++) {
             if (desc->planes[p])
                 clReleaseMemObject(desc->planes[p]);
         }
+        av_freep(&desc);
     }
-    av_freep(&frames_priv->mapped_frames);
-    frames_priv->nb_mapped_frames = 0;
     if (plane_uint)
         clReleaseMemObject(plane_uint);
     memset(dst->data, 0, sizeof(dst->data));

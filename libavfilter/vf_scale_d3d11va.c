@@ -22,6 +22,8 @@
 #include "libavutil/pixdesc.h"
 #include "video.h"
 #include "compat/w32dlfcn.h"
+
+#include "libavutil/hwcontext.h"
 #include "libavutil/hwcontext_d3d11va.h"
 
 enum OutputFormat {
@@ -223,9 +225,9 @@ static int d3d11scale_filter_frame(AVFilterLink *inlink, AVFrame *in)
     int subIdx = (int)(intptr_t)in->data[1];
 
     D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC inputViewDesc = {
-        .FourCC = s->input_format,
+//        .FourCC = s->input_format,
         .ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D,
-        .Texture2D.ArraySlice = subIdx
+        .Texture2D = { .MipSlice = 0, .ArraySlice = subIdx },
     };
 
     hr = s->videoDevice->lpVtbl->CreateVideoProcessorInputView(
@@ -269,6 +271,18 @@ static int d3d11scale_filter_frame(AVFilterLink *inlink, AVFrame *in)
         av_frame_free(&out);
         return AVERROR_EXTERNAL;
     }
+
+    // Set StreamSourceRect and SetStreamDestRect (Cropping)
+    {
+        RECT src_rect = { 0, 0, in->width, in->height };
+        RECT dst_rect = { 0, 0, s->width, s->height };
+        videoContext->lpVtbl->VideoProcessorSetStreamSourceRect(videoContext, s->processor, 0, TRUE, &src_rect);
+        videoContext->lpVtbl->VideoProcessorSetStreamDestRect(videoContext, s->processor, 0, TRUE, &dst_rect);
+    }
+
+    // Set StreamFrameFormat
+    videoContext->lpVtbl->VideoProcessorSetStreamFrameFormat(
+        videoContext, s->processor, 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
 
     // Process the frame
     hr = videoContext->lpVtbl->VideoProcessorBlt(videoContext, s->processor, s->outputView, 0, 1, &stream);
@@ -391,11 +405,12 @@ static int d3d11scale_config_props(AVFilterLink *outlink)
     frames_ctx->sw_format = sw_format;
     frames_ctx->width = s->width;
     frames_ctx->height = s->height;
-    frames_ctx->initial_pool_size = 30; // Adjust pool size as needed
+    frames_ctx->initial_pool_size = 0; // dynamic pool //30; // Adjust pool size as needed
 
     AVD3D11VAFramesContext *frames_hwctx = frames_ctx->hwctx;
-    frames_hwctx->MiscFlags = 0;
-    frames_hwctx->BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_VIDEO_ENCODER;
+    frames_hwctx->MiscFlags = D3D11_RESOURCE_MISC_SHARED; //0;
+    frames_hwctx->BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE; // | D3D11_BIND_VIDEO_ENCODER;
+    frames_hwctx->require_sync = 1;
 
     ret = av_hwframe_ctx_init(s->hw_frames_ctx_out);
     if (ret < 0) {
@@ -447,11 +462,11 @@ static const AVFilterPad d3d11scale_outputs[] = {
 #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 
 static const AVOption d3d11scale_options[] = {
-    { "width",  "Output video width",  OFFSET(w_expr), AV_OPT_TYPE_STRING, {.str = "iw"}, .flags = FLAGS },
-    { "height", "Output video height", OFFSET(h_expr), AV_OPT_TYPE_STRING, {.str = "ih"}, .flags = FLAGS },
-    { "output_fmt", "Output format", OFFSET(output_format_opt), AV_OPT_TYPE_INT, {.i64 = OUTPUT_NV12}, 0, OUTPUT_P010, FLAGS, "fmt" },
-    { "nv12", "NV12 format", 0, AV_OPT_TYPE_CONST, {.i64 = OUTPUT_NV12}, 0, 0, FLAGS, "fmt" },
-    { "p010", "P010 format", 0, AV_OPT_TYPE_CONST, {.i64 = OUTPUT_P010}, 0, 0, FLAGS, "fmt" },
+    { "w", "Output video width",  OFFSET(w_expr), AV_OPT_TYPE_STRING, {.str = "iw"}, .flags = FLAGS },
+    { "h", "Output video height", OFFSET(h_expr), AV_OPT_TYPE_STRING, {.str = "ih"}, .flags = FLAGS },
+    { "format", "Output format", OFFSET(output_format_opt), AV_OPT_TYPE_INT, {.i64 = OUTPUT_NV12}, 0, OUTPUT_P010, FLAGS, .unit = "format" },
+      { "nv12", "NV12 format", 0, AV_OPT_TYPE_CONST, {.i64 = OUTPUT_NV12}, 0, 0, FLAGS, .unit = "format" },
+      { "p010", "P010 format", 0, AV_OPT_TYPE_CONST, {.i64 = OUTPUT_P010}, 0, 0, FLAGS, .unit = "format" },
     { NULL }
 };
 
