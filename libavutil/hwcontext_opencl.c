@@ -3167,34 +3167,7 @@ static int opencl_map_from_d3d11(AVHWFramesContext *dst_fc, AVFrame *dst,
         desc->nb_planes = nb_planes + !!device_priv->d3d11_map_amd;
     }
     // deferred clCreateFromD3D11Texture2DKHR() for low startup latency.
-    if (device_priv->d3d11_map_intel || device_priv->d3d11_map_nv) {
-        for (p = 0; p < desc->nb_planes; p++) {
-            UINT subresource = derived_frames ? (2 * index + p) : p;
-
-            if (desc->planes[p])
-                continue;
-
-            if (device_priv->d3d11_map_nv) {
-                desc->planes[p] =
-                    device_priv->clCreateFromD3D11Texture2DNV(
-                        dst_dev->context, cl_flags, tex,
-                        subresource, &cle);
-            } else {
-                desc->planes[p] =
-                    device_priv->clCreateFromD3D11Texture2DKHR(
-                        dst_dev->context, cl_flags, tex,
-                        subresource, &cle);
-            }
-            if (!desc->planes[p]) {
-                av_log(dst_fc, AV_LOG_ERROR, "Failed to create CL "
-                       "image from plane %d of D3D11 texture "
-                       "index %d (subresource %u): %d.\n",
-                       p, index, (unsigned)subresource, cle);
-                err = AVERROR(EIO);
-                goto fail2;
-            }
-        }
-    } else if (device_priv->d3d11_map_amd) {
+    if (device_priv->d3d11_map_amd) {
         if (!desc->planes[desc->nb_planes - 1]) {
             // put the multiple-plane AMD shared image at the end.
             desc->planes[desc->nb_planes - 1] = device_priv->clCreateFromD3D11Texture2DKHR(
@@ -3261,8 +3234,32 @@ static int opencl_map_from_d3d11(AVHWFramesContext *dst_fc, AVFrame *dst,
             }
         }
     } else {
-        err = AVERROR(ENOSYS);
-        goto fail2;
+        for (p = 0; p < desc->nb_planes; p++) {
+            UINT subresource = derived_frames ? (2 * index + p) : p;
+
+            if (desc->planes[p])
+                continue;
+
+            if (device_priv->d3d11_map_nv) {
+                desc->planes[p] =
+                    device_priv->clCreateFromD3D11Texture2DNV(
+                        dst_dev->context, cl_flags, tex,
+                        subresource, &cle);
+            } else {
+                desc->planes[p] =
+                    device_priv->clCreateFromD3D11Texture2DKHR(
+                        dst_dev->context, cl_flags, tex,
+                        subresource, &cle);
+            }
+            if (!desc->planes[p]) {
+                av_log(dst_fc, AV_LOG_ERROR, "Failed to create CL "
+                       "image from plane %d of D3D11 texture "
+                       "index %d (subresource %u): %d.\n",
+                       p, index, (unsigned)subresource, cle);
+                err = AVERROR(EIO);
+                goto fail2;
+            }
+        }
     }
 
     num_objs = device_priv->d3d11_map_amd ? 1 : desc->nb_planes;
