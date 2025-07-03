@@ -28,13 +28,13 @@ jobs:
             toolchain: mingw-w64-clang-x86_64-toolchain
             nasm: mingw-w64-clang-x86_64-nasm
             build_script: ./msys2/build.sh
-          - name: CLANGARM64
-            arch: winarm64
-            runner: windows-11-arm
-            msystem: CLANGARM64
-            toolchain: mingw-w64-clang-aarch64-toolchain
-            nasm: mingw-w64-clang-aarch64-nasm
-            build_script: ./msys2/buildarm64.sh
+        # - name: CLANGARM64
+        #   arch: winarm64
+        #   runner: windows-11-arm
+        #   msystem: CLANGARM64
+        #   toolchain: mingw-w64-clang-aarch64-toolchain
+        #   nasm: mingw-w64-clang-aarch64-nasm
+        #   build_script: ./msys2/buildarm64.sh
     defaults:
       run:
         shell: msys2 {0}
@@ -77,7 +77,8 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        arch: [win64, winarm64]
+        arch: [win64]
+      # arch: [win64, winarm64]
 
     steps:
       - name: Set Versions

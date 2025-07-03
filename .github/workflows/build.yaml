@@ -18,21 +18,21 @@ on:
       - '**/*.md'
 
 jobs:
-  build_debian:
-    uses: ./.github/workflows/_meta.yaml
-    with:
-      distro: 'debian'
-      codenames: '["bullseye", "bookworm", "trixie"]'
-      architectures: '["amd64", "arm64"]'
-      release: false
+  # build_debian:
+  #   uses: ./.github/workflows/_meta.yaml
+  #   with:
+  #     distro: 'debian'
+  #     codenames: '["bullseye", "bookworm", "trixie"]'
+  #     architectures: '["amd64", "arm64"]'
+  #     release: false
 
-  build_ubuntu:
-    uses: ./.github/workflows/_meta.yaml
-    with:
-      distro: 'ubuntu'
-      codenames: '["jammy", "noble"]'
-      architectures: '["amd64", "arm64"]'
-      release: false
+  # build_ubuntu:
+  #   uses: ./.github/workflows/_meta.yaml
+  #   with:
+  #     distro: 'ubuntu'
+  #     codenames: '["jammy", "noble"]'
+  #     architectures: '["amd64", "arm64"]'
+  #     release: false
 
   # Disabled as clang is stable.
   # build_portable_windows:
@@ -47,14 +47,14 @@ jobs:
     with:
       release: false
 
-  build_portable_linux:
-    uses: ./.github/workflows/_meta_portable.yaml
-    with:
-      os: 'linux'
-      architectures: '["amd64", "arm64"]'
-      release: false
+  # build_portable_linux:
+  # uses: ./.github/workflows/_meta_portable.yaml
+  # with:
+  #    os: 'linux'
+  #    architectures: '["amd64", "arm64"]'
+  #    release: false
 
-  build_portable_mac:
-    uses: ./.github/workflows/_meta_mac_portable.yaml
-    with:
-      release: false
+  # build_portable_mac:
+  #  uses: ./.github/workflows/_meta_mac_portable.yaml
+  #  with:
+  #    release: false
