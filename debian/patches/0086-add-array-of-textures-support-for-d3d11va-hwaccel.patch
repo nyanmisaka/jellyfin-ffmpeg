@@ -178,7 +178,7 @@ Index: FFmpeg/libavcodec/dxva2.c
 +        D3D11_VIDEO_DECODER_CONFIG config;
  
          frames_hwctx->BindFlags |= D3D11_BIND_DECODER;
-         frames_hwctx->require_sync = device_hwctx->device_desc.VendorId == 0x8086;
+         frames_hwctx->require_sync = device_hwctx->device_desc.VendorId == 0x1002;
 +
 +        if (!d3d11va_get_decoder_desc_and_config(avctx, frames_ctx, 0, &decoder_guid, &desc, &config))
 +            frames_hwctx->array_of_tex = d3d11va_prefer_array_of_tex(avctx, config);
