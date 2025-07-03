@@ -9,7 +9,7 @@ Index: FFmpeg/libavcodec/dxva2.c
 +        AVD3D11VADeviceContext *device_hwctx = device_ctx->hwctx;
  
          frames_hwctx->BindFlags |= D3D11_BIND_DECODER;
-+        frames_hwctx->require_sync = device_hwctx->device_desc.VendorId == 0x8086;
++        frames_hwctx->require_sync = device_hwctx->device_desc.VendorId == 0x1002;
      }
  #endif
  
