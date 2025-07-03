@@ -155,7 +155,7 @@ Index: FFmpeg/libavutil/hwcontext_opencl.c
                  CL_CONTEXT_D3D11_DEVICE_KHR,
                  (intptr_t)src_hwctx->device,
 +                CL_CONTEXT_INTEROP_USER_SYNC,
-+                CL_TRUE,
++                CL_FALSE,
                  0,
              };
              OpenCLDeviceSelector selector = {
