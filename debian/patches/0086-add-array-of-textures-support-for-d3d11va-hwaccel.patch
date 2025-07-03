@@ -40,7 +40,7 @@ Index: FFmpeg/libavcodec/dxva2.c
 +    case AV_CODEC_ID_HEVC:
 +    case AV_CODEC_ID_VP9:
 +    case AV_CODEC_ID_AV1:
-+        return (config.ConfigDecoderSpecific >> 14) & 1;
++        return 0; //(config.ConfigDecoderSpecific >> 14) & 1;
 +    default:
 +        return 0;
 +    }
