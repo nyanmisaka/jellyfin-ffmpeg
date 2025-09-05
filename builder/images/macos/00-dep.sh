@@ -9,6 +9,8 @@ ffbuild_macbase() {
   chmod +x /opt/ffbuild/bin/retry-tool
   cp "$BUILDER_ROOT"/images/base/check-wget.sh /opt/ffbuild/bin/check-wget
   chmod +x /opt/ffbuild/bin/check-wget
+  cp "$BUILDER_ROOT"/images/macos/bin/nproc /opt/ffbuild/bin/nproc
+  chmod +x /opt/ffbuild/bin/nproc
   export PATH="/opt/ffbuild/bin:$PATH"
   export CMAKE_POLICY_VERSION_MINIMUM="3.5"
 }

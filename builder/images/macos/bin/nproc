@@ -1,0 +1,2 @@
+#!/bin/bash
+sysctl -n hw.logicalcpu
