@@ -22,7 +22,7 @@ Index: FFmpeg/fftools/ffmpeg.c
  #if HAVE_TERMIOS_H
  
  /* init terminal so that we can grab keys */
-@@ -785,12 +791,28 @@ static void set_tty_echo(int on)
+@@ -785,6 +791,20 @@ static void set_tty_echo(int on)
  #endif
  }
  
@@ -43,16 +43,7 @@ Index: FFmpeg/fftools/ffmpeg.c
  static int check_keyboard_interaction(int64_t cur_time)
  {
      int i, key;
-     static int64_t last_time;
--    if (received_nb_signals)
-+    if (received_nb_signals) {
-+        unpause_transcoding();
-         return AVERROR_EXIT;
-+    }
-     /* read_key() returns 0 on EOF */
-     if (cur_time - last_time >= 100000) {
-         key =  read_key();
-@@ -803,6 +825,11 @@ static int check_keyboard_interaction(in
+@@ -801,6 +821,11 @@ static int check_keyboard_interaction(in
      }
      if (key == '+') av_log_set_level(av_log_get_level()+10);
      if (key == '-') av_log_set_level(av_log_get_level()-10);
@@ -64,7 +55,7 @@ Index: FFmpeg/fftools/ffmpeg.c
      if (key == 'c' || key == 'C'){
          char buf[4096], target[64], command[256], arg[256] = {0};
          double time;
-@@ -842,7 +869,9 @@ static int check_keyboard_interaction(in
+@@ -840,7 +865,9 @@ static int check_keyboard_interaction(in
                          "c      Send command to first matching filter supporting it\n"
                          "C      Send/Queue command to all matching filters\n"
                          "h      dump packets/hex press to cycle through the 3 states\n"
@@ -74,12 +65,18 @@ Index: FFmpeg/fftools/ffmpeg.c
                          "s      Show QP histogram\n"
          );
      }
-@@ -872,12 +901,15 @@ static int transcode(Scheduler *sch)
+@@ -870,15 +897,20 @@ static int transcode(Scheduler *sch)
      timer_start = av_gettime_relative();
  
      while (!sch_wait(sch, stats_period, &transcode_ts)) {
 -        int64_t cur_time= av_gettime_relative();
 +        int64_t cur_time= gettime_relative_minus_pause();
+ 
+-        if (received_nb_signals)
++        if (received_nb_signals) {
++            unpause_transcoding();
+             break;
++        }
  
          /* if 'q' pressed, exits */
 -        if (stdin_interaction)
@@ -93,7 +90,7 @@ Index: FFmpeg/fftools/ffmpeg.c
  
          /* dump report by using the output first video and audio streams */
          print_report(0, timer_start, cur_time, transcode_ts);
-@@ -894,11 +926,17 @@ static int transcode(Scheduler *sch)
+@@ -895,11 +927,17 @@ static int transcode(Scheduler *sch)
      term_exit();
  
      /* dump report by using the first video and audio streams */
@@ -130,7 +127,7 @@ Index: FFmpeg/fftools/ffmpeg_demux.c
 ===================================================================
 --- FFmpeg.orig/fftools/ffmpeg_demux.c
 +++ FFmpeg/fftools/ffmpeg_demux.c
-@@ -703,6 +703,11 @@ static int input_thread(void *arg)
+@@ -704,6 +704,11 @@ static int input_thread(void *arg)
          DemuxStream *ds;
          unsigned send_flags = 0;
  
