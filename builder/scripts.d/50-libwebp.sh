@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_REPO="https://chromium.googlesource.com/webm/libwebp"
-SCRIPT_COMMIT="1d86819f49edc8237fa2b844543081bcb8ef8a92"
+SCRIPT_COMMIT="3779daa97f89e007e2c8121a8d4b514ad6dcda56"
 
 ffbuild_enabled() {
     return 0
