@@ -2,7 +2,7 @@ Index: FFmpeg/configure
 ===================================================================
 --- FFmpeg.orig/configure
 +++ FFmpeg/configure
-@@ -2316,6 +2316,9 @@ HEADERS_LIST="
+@@ -2319,6 +2319,9 @@ HEADERS_LIST="
  INTRINSICS_LIST="
      intrinsics_neon
      intrinsics_sse2
@@ -12,7 +12,7 @@ Index: FFmpeg/configure
  "
  
  MATH_FUNCS="
-@@ -2750,6 +2753,9 @@ armv8_deps="aarch64"
+@@ -2753,6 +2756,9 @@ armv8_deps="aarch64"
  neon_deps_any="aarch64 arm"
  intrinsics_neon_deps="neon"
  intrinsics_sse2_deps="sse2"
@@ -22,7 +22,7 @@ Index: FFmpeg/configure
  vfp_deps="arm"
  vfpv3_deps="vfp"
  setend_deps="arm"
-@@ -3979,6 +3985,7 @@ tinterlace_filter_deps="gpl"
+@@ -3984,6 +3990,7 @@ tinterlace_filter_deps="gpl"
  tinterlace_merge_test_deps="tinterlace_filter"
  tinterlace_pad_test_deps="tinterlace_filter"
  tonemap_filter_deps="const_nan"
@@ -30,7 +30,7 @@ Index: FFmpeg/configure
  tonemap_vaapi_filter_deps="vaapi VAProcFilterParameterBufferHDRToneMapping"
  tonemap_videotoolbox_filter_deps="metal corevideo videotoolbox const_nan"
  tonemap_opencl_filter_deps="opencl const_nan"
-@@ -6510,6 +6517,19 @@ fi
+@@ -6529,6 +6536,19 @@ fi
  check_cc intrinsics_neon arm_neon.h "int16x8_t test = vdupq_n_s16(0)"
  check_cc intrinsics_sse2 emmintrin.h "__m128i test = _mm_setzero_si128()"
  
@@ -49,8 +49,8 @@ Index: FFmpeg/configure
 +
  check_ldflags -Wl,--as-needed
  check_ldflags -Wl,-z,noexecstack
- 
-@@ -7639,6 +7659,16 @@ elif enabled gcc; then
+ if [ $target_os = "darwin" ]; then
+@@ -7661,6 +7681,16 @@ elif enabled gcc; then
              check_cflags -mpreferred-stack-boundary=4
              ;;
          esac
