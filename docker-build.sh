@@ -61,7 +61,7 @@ prepare_extra_common() {
 
     # LIBXML2
     pushd ${SOURCE_DIR}
-    libxml2_ver="v2.14.4"
+    libxml2_ver="v2.15.0"
     git clone -b ${libxml2_ver} --depth=1 https://github.com/GNOME/libxml2.git
     pushd libxml2
     ./autogen.sh \
@@ -77,7 +77,7 @@ prepare_extra_common() {
 
     # FREETYPE
     pushd ${SOURCE_DIR}
-    git clone -b VER-2-13-3 --depth=1 https://github.com/freetype/freetype.git
+    git clone -b VER-2-14-1 --depth=1 https://github.com/freetype/freetype.git
     pushd freetype
     ./autogen.sh
     ./configure \
@@ -110,10 +110,10 @@ prepare_extra_common() {
     pushd ${SOURCE_DIR}
     mkdir fontconfig
     pushd fontconfig
-    fc_ver="2.16.0"
-    fc_link="https://www.freedesktop.org/software/fontconfig/release/fontconfig-${fc_ver}.tar.xz"
-    wget ${fc_link} -O fc.tar.gz
-    tar xaf fc.tar.gz
+    fc_ver="2.17.1"
+    fc_link="https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/${fc_ver}/fontconfig-${fc_ver}.tar.xz"
+    wget ${fc_link} -O fc.tar.xz
+    tar xaf fc.tar.xz
     pushd fontconfig-${fc_ver}
     ./configure \
         ${CROSS_OPT} \
@@ -259,7 +259,7 @@ prepare_extra_common() {
 
     # SVT-AV1
     pushd ${SOURCE_DIR}
-    git clone -b v3.0.2 --depth=1 https://gitlab.com/AOMediaCodec/SVT-AV1.git
+    git clone -b v3.1.2 --depth=1 https://gitlab.com/AOMediaCodec/SVT-AV1.git
     pushd SVT-AV1
     mkdir build
     pushd build
@@ -388,7 +388,7 @@ prepare_extra_amd64() {
 
     # GMMLIB
     pushd ${SOURCE_DIR}
-    git clone -b intel-gmmlib-22.7.3 --depth=1 https://github.com/intel/gmmlib.git
+    git clone -b intel-gmmlib-22.8.2 --depth=1 https://github.com/intel/gmmlib.git
     pushd gmmlib
     mkdir build && pushd build
     cmake -DCMAKE_INSTALL_PREFIX=${TARGET_DIR} ..
@@ -448,7 +448,7 @@ prepare_extra_amd64() {
     # VPL-GPU-RT (RT only)
     # Provides VPL runtime (libmfx-gen.so.1.2) for 11th Gen Tiger Lake and newer
     pushd ${SOURCE_DIR}
-    git clone -b intel-onevpl-25.2.6 --depth=1 https://github.com/intel/vpl-gpu-rt.git
+    git clone -b intel-onevpl-25.3.4 --depth=1 https://github.com/intel/vpl-gpu-rt.git
     pushd vpl-gpu-rt
     # Fix missing entries in PicStruct validation
     wget -q -O - https://github.com/intel/vpl-gpu-rt/commit/c7eb030.patch | git apply
@@ -470,7 +470,7 @@ prepare_extra_amd64() {
     # Full Feature Build: ENABLE_KERNELS=ON(Default) ENABLE_NONFREE_KERNELS=ON(Default)
     # Free Kernel Build: ENABLE_KERNELS=ON ENABLE_NONFREE_KERNELS=OFF
     pushd ${SOURCE_DIR}
-    git clone -b intel-media-25.2.6 --depth=1 https://github.com/intel/media-driver.git
+    git clone -b intel-media-25.3.4 --depth=1 https://github.com/intel/media-driver.git
     pushd media-driver
     # Enable VC1 decode on DG2 (note that MTL+ is not supported)
     wget -q -O - https://github.com/intel/media-driver/commit/25fb926.patch | git apply
@@ -491,7 +491,7 @@ prepare_extra_amd64() {
 
     # Vulkan Headers
     pushd ${SOURCE_DIR}
-    git clone -b v1.4.320 --depth=1 https://github.com/KhronosGroup/Vulkan-Headers.git
+    git clone -b v1.4.326 --depth=1 https://github.com/KhronosGroup/Vulkan-Headers.git
     pushd Vulkan-Headers
     mkdir build && pushd build
     cmake \
@@ -504,7 +504,7 @@ prepare_extra_amd64() {
 
     # Vulkan ICD Loader
     pushd ${SOURCE_DIR}
-    git clone -b v1.4.320 --depth=1 https://github.com/KhronosGroup/Vulkan-Loader.git
+    git clone -b v1.4.326 --depth=1 https://github.com/KhronosGroup/Vulkan-Loader.git
     pushd Vulkan-Loader
     mkdir build && pushd build
     cmake \

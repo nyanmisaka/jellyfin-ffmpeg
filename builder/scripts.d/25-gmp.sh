@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_REPO="https://github.com/BtbN/gmplib.git"
-SCRIPT_COMMIT="655b673c0c825a772b2596d9761ffc3dd953074e"
+SCRIPT_COMMIT="ece1292e8282ef2c9ca204d1b510ff2aca04a7a3"
 
 ffbuild_enabled() {
     return 0

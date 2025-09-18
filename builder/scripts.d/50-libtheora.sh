@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_REPO="https://github.com/xiph/theora.git"
-SCRIPT_COMMIT="7180717276af1ebc7da15c83162d6c5d6203aabf"
+SCRIPT_COMMIT="23161c4a63fd9f9d09b9e972f95def2d56c777af"
 
 ffbuild_enabled() {
     return 0
