@@ -3,9 +3,8 @@
 
 _realname=libxml2
 pkgbase=mingw-w64-jellyfin-${_realname}
-pkgname=("${MINGW_PACKAGE_PREFIX}-jellyfin-${_realname}"
-         "${MINGW_PACKAGE_PREFIX}-jellyfin-${_realname}-docs")
-pkgver=2.14.4
+pkgname=("${MINGW_PACKAGE_PREFIX}-jellyfin-${_realname}")
+pkgver=2.15.0
 pkgrel=1
 arch=('any')
 mingw_arch=('mingw32' 'mingw64' 'ucrt64' 'clang64' 'clangarm64')
@@ -28,7 +27,7 @@ source=("https://download.gnome.org/sources/libxml2/${pkgver%.*}/${_realname}-${
         https://www.w3.org/XML/Test/xmlts20130923.tar.gz
         0027-decoding-segfault.patch
 	0029-xml2-config-win-paths.patch)
-sha256sums=('24175ec30a97cfa86bdf9befb7ccf4613f8f4b2713c5103e0dd0bc9c711a2773'
+sha256sums=('5abc766497c5b1d6d99231f662e30c99402a90d03b06c67b62d6c1179dedd561'
             '9b61db9f5dbffa545f4b8d78422167083a8568c59bd1129f94138f936cf6fc1f'
             '0391a4b267ba7251ca74ff2e98bf4c0332a14b618e8147a9341ec5617e45d9d9'
 	    '278b4531da3d2aabda080c412c5122b471202dd6df67768b38bb0c31c7a0e508')
@@ -74,6 +73,7 @@ build() {
     --build="${MINGW_CHOST}" \
     --without-python \
     --with-modules \
+    --with-http \
     --enable-static \
     --disable-shared \
     --with-threads=win32 \
@@ -96,16 +96,6 @@ package_libxml2() {
   local PREFIX_DEPS=$(cygpath -am ${FF_MINGW_PREFIX})
   sed -s "s|${PREFIX_DEPS}\/lib|\${libdir}|g" -i "${pkgdir}"${FF_MINGW_PREFIX}/bin/xml2-config
   sed -s "s|${PREFIX_DEPS}\/lib|\${libdir}|g" -i "${pkgdir}"${FF_MINGW_PREFIX}/lib/pkgconfig/libxml-2.0.pc
-
-  mkdir -p dest${FF_MINGW_PREFIX}/share
-  mv "${pkgdir}${FF_MINGW_PREFIX}"/share/{doc,gtk-doc} dest${FF_MINGW_PREFIX}/share
-}
-
-package_libxml2-docs() {
-  pkgdesc+=" (documentation)"
-  depends=()
-
-  mv dest/* "${pkgdir}"
 }
 
 # template start; name=mingw-w64-splitpkg-wrappers; version=1.0;

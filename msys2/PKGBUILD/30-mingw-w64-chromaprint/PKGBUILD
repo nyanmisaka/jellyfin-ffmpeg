@@ -3,8 +3,8 @@
 _realname=chromaprint
 pkgbase=mingw-w64-jellyfin-${_realname}
 pkgname="${MINGW_PACKAGE_PREFIX}-jellyfin-${_realname}"
-pkgver=1.5.1
-pkgrel=2
+pkgver=1.6.0
+pkgrel=1
 pkgdesc="Library that implements a custom algorithm for extracting fingerprints from any audio source (mingw-w64)"
 arch=('any')
 mingw_arch=('mingw32' 'mingw64' 'ucrt64' 'clang64' 'clangarm64')
@@ -17,7 +17,7 @@ makedepends=("${MINGW_PACKAGE_PREFIX}-cmake"
              "${MINGW_PACKAGE_PREFIX}-ninja")
 options=('strip' 'staticlibs')
 source=("https://github.com/acoustid/${_realname}/releases/download/v${pkgver}/${_realname}-${pkgver}.tar.gz")
-sha256sums=('a1aad8fa3b8b18b78d3755b3767faff9abb67242e01b478ec9a64e190f335e1c')
+sha256sums=('9d33482e56a1389a37a0d6742c376139fa43e3b8a63d29003222b93db2cb40da')
 
 export MINGW_TOOLCHAIN_PREFIX="${MINGW_PREFIX}"
 export FF_MINGW_PREFIX="${MINGW_TOOLCHAIN_PREFIX}/ffbuild"

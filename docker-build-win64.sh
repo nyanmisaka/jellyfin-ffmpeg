@@ -47,7 +47,7 @@ popd
 popd
 
 # LIBXML2
-git clone -b v2.14.4 --depth=1 https://github.com/GNOME/libxml2.git
+git clone -b v2.15.0 --depth=1 https://github.com/GNOME/libxml2.git
 pushd libxml2
 ./autogen.sh \
     --prefix=${FF_DEPS_PREFIX} \
@@ -70,7 +70,7 @@ make install
 popd
 
 # FREETYPE
-git clone -b VER-2-13-3 --depth=1 https://github.com/freetype/freetype.git
+git clone -b VER-2-14-1 --depth=1 https://github.com/freetype/freetype.git
 pushd freetype
 ./autogen.sh
 ./configure \
@@ -174,10 +174,10 @@ popd
 # FONTCONFIG
 mkdir fontconfig
 pushd fontconfig
-fc_ver="2.16.0"
-fc_link="https://www.freedesktop.org/software/fontconfig/release/fontconfig-${fc_ver}.tar.xz"
-wget ${fc_link} -O fc.tar.gz
-tar xaf fc.tar.gz
+fc_ver="2.17.1"
+fc_link="https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/${fc_ver}/fontconfig-${fc_ver}.tar.xz"
+wget ${fc_link} -O fc.tar.xz
+tar xaf fc.tar.xz
 pushd fontconfig-${fc_ver}
 ./configure \
     --prefix=${FF_DEPS_PREFIX} \
@@ -245,20 +245,18 @@ make install
 popd
 
 # LIBBLURAY
-git clone -b 1.3.4 --depth=1 https://code.videolan.org/videolan/libbluray.git
-pushd libbluray
-sed -i 's/dec_init/libbluray_dec_init/g' src/libbluray/disc/*.{c,h}
-./bootstrap
-./configure \
+git clone -b 1.4.0 --depth=1 https://code.videolan.org/videolan/libbluray.git
+sed -i 's/dec_init/libbluray_dec_init/g' libbluray/src/libbluray/disc/*.{c,h}
+meson setup libbluray libbluray_build \
     --prefix=${FF_DEPS_PREFIX} \
-    --host=${FF_TOOLCHAIN} \
-    --disable-{shared,examples,bdjava-jar} \
-    --disable-doxygen-{doc,dot,html,ps,pdf} \
-    --enable-static \
-    --with-pic
-make -j$(nproc)
-make install
-popd
+    --cross-file=${FF_MESON_TOOLCHAIN} \
+    --buildtype=release \
+    -Ddefault_library=static \
+    -Denable_{docs,tools,devtools,examples}=false \
+    -Dbdj_jar=disabled \
+    -D{fontconfig,freetype,libxml2}=enabled
+meson configure libbluray_build
+ninja -j$(nproc) -C libbluray_build install
 
 # LAME
 mkdir lame
@@ -335,7 +333,7 @@ popd
 # OPENMPT
 mkdir mpt
 pushd mpt
-mpt_ver="0.7.13"
+mpt_ver="0.8.3"
 mpt_link="https://lib.openmpt.org/files/libopenmpt/src/libopenmpt-${mpt_ver}+release.autotools.tar.gz"
 wget ${mpt_link} -O mpt.tar.gz
 tar xaf mpt.tar.gz
@@ -352,7 +350,7 @@ popd
 popd
 
 # LIBWEBP
-git clone -b v1.5.0 --depth=1 https://chromium.googlesource.com/webm/libwebp
+git clone -b v1.6.0 --depth=1 https://chromium.googlesource.com/webm/libwebp
 pushd libwebp
 ./autogen.sh
 ./configure \
@@ -472,7 +470,7 @@ popd
 popd
 
 # SVT-AV1
-git clone -b v3.0.2 --depth=1 https://gitlab.com/AOMediaCodec/SVT-AV1.git
+git clone -b v3.1.2 --depth=1 https://gitlab.com/AOMediaCodec/SVT-AV1.git
 pushd SVT-AV1
 mkdir build
 pushd build

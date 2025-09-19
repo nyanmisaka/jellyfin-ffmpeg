@@ -86,9 +86,6 @@
 0086-add-array-of-textures-support-for-d3d11va-hwaccel.patch
 0087-no-error-out-on-unmatched-dovi-rpu-trailing-padding-bytes.patch
 0088-remove-el-when-stripping-dovi-metadata.patch
-0089-fix-missing-allowed-extensions-in-hls-demuxer.patch
-0090-fix-avcodec-params-when-bsfs-are-enable-by-decoder.patch
-0091-fix-display-matrix-not-removed-after-autorotation.patch
-0092-unbreak-build-with-latest-svtav1-3-0.patch
-0093-backport-fix-for-missing-h264-sei-build-deps.patch
-0094-dont-return-ext-error-for-invalid-vt-frame.patch
+0089-fix-avcodec-params-when-bsfs-are-enable-by-decoder.patch
+0090-dont-return-ext-error-for-invalid-vt-frame.patch
+0091-backport-a-fix-for-setting-values-in-lavc-decode.patch
