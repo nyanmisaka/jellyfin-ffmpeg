@@ -89,3 +89,4 @@
 0089-fix-avcodec-params-when-bsfs-are-enable-by-decoder.patch
 0090-dont-return-ext-error-for-invalid-vt-frame.patch
 0091-backport-a-fix-for-setting-values-in-lavc-decode.patch
+0092-backport-a-fix-for-stripping-fps-from-setpts-outlink.patch
