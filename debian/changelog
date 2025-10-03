@@ -1,3 +1,11 @@
+jellyfin-ffmpeg (7.1.2-2) unstable; urgency=medium
+
+  * Backport a fix for stripping FPS from setpts outlink
+  * Avoid amfenc assertion due to filter chain reset
+  * Sync changes from ffmpeg-rockchip
+
+ -- nyanmisaka <nst799610810@gmail.com>  Fri, 3 Oct 2025 16:36:03 +0800
+
 jellyfin-ffmpeg (7.1.2-1) unstable; urgency=medium
 
   * New upstream version 7.1.2
