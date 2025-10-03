@@ -2099,7 +2099,7 @@ Index: FFmpeg/libavcodec/rkmppdec.c
 +    return ret;
 +}
 +
-+static void rkmpp_decode_flush(AVCodecContext *avctx)
++static av_cold void rkmpp_decode_flush(AVCodecContext *avctx)
 +{
 +    RKMPPDecContext *r = avctx->priv_data;
 +    int ret;
@@ -2381,7 +2381,7 @@ Index: FFmpeg/libavcodec/rkmppenc.c
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavcodec/rkmppenc.c
-@@ -0,0 +1,1297 @@
+@@ -0,0 +1,1307 @@
 +/*
 + * Copyright (c) 2023 Huseyin BIYIK
 + * Copyright (c) 2023 NyanMisaka
@@ -2923,6 +2923,15 @@ Index: FFmpeg/libavcodec/rkmppenc.c
 +            mpp_enc_cfg_set_s32(cfg, "rc:qp_min", qp_min);
 +            mpp_enc_cfg_set_s32(cfg, "rc:qp_max_i",qp_max_i);
 +            mpp_enc_cfg_set_s32(cfg, "rc:qp_min_i", qp_min_i);
++
++            /* Intra Refresh / GDR */
++            if (r->intra_refresh && r->refresh_num) {
++                mpp_enc_cfg_set_u32(cfg, "rc:refresh_en", 1);
++                mpp_enc_cfg_set_u32(cfg, "rc:refresh_mode", r->refresh_mode);
++                mpp_enc_cfg_set_u32(cfg, "rc:refresh_num", r->refresh_num);
++                av_log(avctx, AV_LOG_VERBOSE, "Requested to use Intra Refresh, "
++                       "Mode/Num is set to %d/%d\n", r->refresh_mode, r->refresh_num);
++            }
 +        }
 +        break;
 +    case AV_CODEC_ID_MJPEG:
@@ -3007,7 +3016,8 @@ Index: FFmpeg/libavcodec/rkmppenc.c
 +
 +    if (avctx->codec_id == AV_CODEC_ID_H264 ||
 +        avctx->codec_id == AV_CODEC_ID_HEVC) {
-+        sei_mode = r->udu_sei ? MPP_ENC_SEI_MODE_ONE_FRAME : MPP_ENC_SEI_MODE_DISABLE;
++        sei_mode = (r->udu_sei || (r->intra_refresh && r->refresh_num))
++                   ? MPP_ENC_SEI_MODE_ONE_FRAME : MPP_ENC_SEI_MODE_DISABLE;
 +        if ((ret = r->mapi->control(r->mctx, MPP_ENC_SET_SEI_CFG, &sei_mode)) != MPP_OK) {
 +            av_log(avctx, AV_LOG_ERROR, "Failed to set SEI config: %d\n", ret);
 +            return AVERROR_EXTERNAL;
@@ -3447,7 +3457,7 @@ Index: FFmpeg/libavcodec/rkmppenc.c
 +    return 0;
 +}
 +
-+static int rkmpp_encode_close(AVCodecContext *avctx)
++static av_cold int rkmpp_encode_close(AVCodecContext *avctx)
 +{
 +    RKMPPEncContext *r = avctx->priv_data;
 +
@@ -3502,7 +3512,7 @@ Index: FFmpeg/libavcodec/rkmppenc.c
 +    return 0;
 +}
 +
-+static int rkmpp_encode_init(AVCodecContext *avctx)
++static av_cold int rkmpp_encode_init(AVCodecContext *avctx)
 +{
 +    RKMPPEncContext *r = avctx->priv_data;
 +    enum AVPixelFormat pix_fmt = AV_PIX_FMT_NONE;
@@ -3683,7 +3693,7 @@ Index: FFmpeg/libavcodec/rkmppenc.h
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavcodec/rkmppenc.h
-@@ -0,0 +1,311 @@
+@@ -0,0 +1,322 @@
 +/*
 + * Copyright (c) 2023 Huseyin BIYIK
 + * Copyright (c) 2023 NyanMisaka
@@ -3771,6 +3781,9 @@ Index: FFmpeg/libavcodec/rkmppenc.h
 +    int                udu_sei;
 +    int                prefix_mode;
 +    int                chroma_fmt;
++    int                intra_refresh;
++    int                refresh_mode;
++    int                refresh_num;
 +} RKMPPEncContext;
 +
 +static const AVRational mpp_tb = { 1, 1000000 };
@@ -3801,6 +3814,14 @@ Index: FFmpeg/libavcodec/rkmppenc.h
 +            { .i64 = -1 }, -1, 51, VE, "qp_max_i" }, \
 +    { "qp_min_i", "Set the min QP value for I frame", OFFSET(qp_min_i), AV_OPT_TYPE_INT, \
 +            { .i64 = -1 }, -1, 51, VE, "qp_min_i" }, \
++    { "intra_refresh", "Use Intra Refresh instead of IDR frames", OFFSET(intra_refresh), AV_OPT_TYPE_BOOL, \
++            { .i64 = 0 }, 0, 1, VE, "intra_refresh" }, \
++    { "refresh_mode", "Set the Intra Refresh mode", OFFSET(refresh_mode), AV_OPT_TYPE_INT, \
++            { .i64 = MPP_ENC_RC_INTRA_REFRESH_ROW }, MPP_ENC_RC_INTRA_REFRESH_ROW, MPP_ENC_RC_INTRA_REFRESH_COL, VE, "refresh_mode" }, \
++        { "row", "Refresh by MB row",    0, AV_OPT_TYPE_CONST, { .i64 = MPP_ENC_RC_INTRA_REFRESH_ROW }, 0, 0, VE, .unit = "refresh_mode" }, \
++        { "col", "Refresh by MB column", 0, AV_OPT_TYPE_CONST, { .i64 = MPP_ENC_RC_INTRA_REFRESH_COL }, 0, 0, VE, .unit = "refresh_mode" }, \
++    { "refresh_num", "Set how many MB rows or columns refresh each time", OFFSET(refresh_num), AV_OPT_TYPE_INT, \
++            { .i64 = 1 }, 1, INT_MAX, VE, "refresh_num" }, \
 +
 +static const AVOption h264_options[] = {
 +    RKMPP_ENC_COMMON_OPTS
