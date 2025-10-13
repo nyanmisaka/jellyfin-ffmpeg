@@ -90,3 +90,4 @@
 0090-dont-return-ext-error-for-invalid-vt-frame.patch
 0091-backport-a-fix-for-setting-values-in-lavc-decode.patch
 0092-backport-a-fix-for-stripping-fps-from-setpts-outlink.patch
+0093-add-hevc-recovery-point-support-backport-from-upstream.patch
