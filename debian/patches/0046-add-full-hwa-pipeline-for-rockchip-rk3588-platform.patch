@@ -4092,7 +4092,7 @@ Index: FFmpeg/libavfilter/rkrga_common.c
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/rkrga_common.c
-@@ -0,0 +1,1423 @@
+@@ -0,0 +1,1425 @@
 +/*
 + * Copyright (c) 2023 NyanMisaka
 + *
@@ -4775,6 +4775,7 @@ Index: FFmpeg/libavfilter/rkrga_common.c
 +            goto exit;
 +        }
 +
++#ifndef RGA_NORMAL_FBCE_RGB_BGR_FIXUP
 +        /* Inverted RGB/BGR order in FBCE */
 +        switch (info.rect.format) {
 +        case RK_FORMAT_RGBA_8888:
@@ -4784,6 +4785,7 @@ Index: FFmpeg/libavfilter/rkrga_common.c
 +            info.rect.format = RK_FORMAT_RGBA_8888;
 +            break;
 +        }
++#endif
 +
 +        info.rect.wstride = w_stride;
 +        info.rect.hstride = h_stride;

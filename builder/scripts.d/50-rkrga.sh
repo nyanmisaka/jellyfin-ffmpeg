@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_REPO="https://github.com/nyanmisaka/rk-mirrors.git"
-SCRIPT_COMMIT="571a880951583a3b2a04e7e1fa900861653befde"
+SCRIPT_COMMIT="1d330cc28551943bed3380261a5a9c6fbd58ff53"
 SCRIPT_BRANCH="jellyfin-rga-next"
 
 ffbuild_enabled() {
