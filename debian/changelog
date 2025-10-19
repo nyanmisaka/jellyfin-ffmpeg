@@ -1,3 +1,10 @@
+jellyfin-ffmpeg (7.1.2-3) unstable; urgency=medium
+
+  * Backport HEVC recovery point support from upstream
+  * Fix inverted RGB/BGR order in FBCE in RGA runtime
+
+ -- nyanmisaka <nst799610810@gmail.com>  Sun, 19 Oct 2025 16:31:34 +0800
+
 jellyfin-ffmpeg (7.1.2-2) unstable; urgency=medium
 
   * Backport a fix for stripping FPS from setpts outlink
