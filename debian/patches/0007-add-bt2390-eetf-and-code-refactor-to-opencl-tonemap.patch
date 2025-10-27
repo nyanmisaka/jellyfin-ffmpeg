@@ -1214,7 +1214,7 @@ Index: FFmpeg/libavfilter/opencl/tonemap.cl
 +// Qualcomm has a really bad OpenCL compiler that is having performance regression with vectorized reshaping kernel
 +// Make a scalar version just for them
 +#ifdef IS_QCOM_GPU
-+inline vec reshape_poly(vec s, vec4 coeffs) {
++static inline vec reshape_poly(vec s, vec4 coeffs) {
 +    return (coeffs.z * s + coeffs.y) * s + coeffs.x;
  }
 -// map from source space YUV to destination space RGB
@@ -1224,14 +1224,14 @@ Index: FFmpeg/libavfilter/opencl/tonemap.cl
 -    c = lrgb2lrgb(c);
 -    return c;
 +
-+inline void reshape_dovi_sig(float *dst,
-+                             const vec src,
-+                             const vec3 *sig,
-+                             const uchar idx,
-+                             __global const vec *src_dovi_params,
-+                             __global const vec *src_dovi_pivots,
-+                             __global const vec4 *src_dovi_coeffs,
-+                             __global const vec4 *src_dovi_mmr)
++static inline void reshape_dovi_sig(float *dst,
++                                    const vec src,
++                                    const vec3 *sig,
++                                    const uchar idx,
++                                    __global const vec *src_dovi_params,
++                                    __global const vec *src_dovi_pivots,
++                                    __global const vec4 *src_dovi_coeffs,
++                                    __global const vec4 *src_dovi_mmr)
 +{
 +    bool t, has_mmr_poly;
 +    vec s = src;
