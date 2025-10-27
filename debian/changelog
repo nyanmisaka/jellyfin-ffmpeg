@@ -1,3 +1,9 @@
+jellyfin-ffmpeg (7.1.2-4) unstable; urgency=medium
+
+  * Fix yadif_opencl failure on newer AMD drivers
+
+ -- nyanmisaka <nst799610810@gmail.com>  Mon, 27 Oct 2025 19:12:50 +0800
+
 jellyfin-ffmpeg (7.1.2-3) unstable; urgency=medium
 
   * Backport HEVC recovery point support from upstream
