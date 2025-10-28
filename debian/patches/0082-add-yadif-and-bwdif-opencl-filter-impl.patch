@@ -188,8 +188,8 @@ Index: FFmpeg/libavfilter/opencl/bwdif.cl
 +__constant float coef_sp[2] = { 5077.0f, 981.0f };
 +
 +#define FILTER_INTRA(T) \
-+inline T filter_intra_##T(T cur_prefs3, T cur_prefs, \
-+                          T cur_mrefs, T cur_mrefs3) \
++T filter_intra_##T(T cur_prefs3, T cur_prefs, \
++                   T cur_mrefs, T cur_mrefs3) \
 +{ \
 +    T final = native_divide((coef_sp[0] * (cur_mrefs + cur_prefs) - \
 +                             coef_sp[1] * (cur_mrefs3 + cur_prefs3)), (float)(1 << 13)); \
@@ -199,10 +199,10 @@ Index: FFmpeg/libavfilter/opencl/bwdif.cl
 +FILTER_INTRA(float)
 +FILTER_INTRA(float2)
 +
-+inline float filter_temp_float(float cur_prefs3, float cur_prefs, float cur_mrefs, float cur_mrefs3,
-+                               float prev2_prefs4, float prev2_prefs2, float prev2_0, float prev2_mrefs2, float prev2_mrefs4,
-+                               float prev_prefs, float prev_mrefs, float next_prefs, float next_mrefs,
-+                               float next2_prefs4, float next2_prefs2, float next2_0, float next2_mrefs2, float next2_mrefs4)
++float filter_temp_float(float cur_prefs3, float cur_prefs, float cur_mrefs, float cur_mrefs3,
++                        float prev2_prefs4, float prev2_prefs2, float prev2_0, float prev2_mrefs2, float prev2_mrefs4,
++                        float prev_prefs, float prev_mrefs, float next_prefs, float next_mrefs,
++                        float next2_prefs4, float next2_prefs2, float next2_0, float next2_mrefs2, float next2_mrefs4)
 +{
 +    float final;
 +    float c = cur_mrefs;
@@ -244,10 +244,10 @@ Index: FFmpeg/libavfilter/opencl/bwdif.cl
 +    return final;
 +}
 +
-+inline float2 filter_temp_float2(float2 cur_prefs3, float2 cur_prefs, float2 cur_mrefs, float2 cur_mrefs3,
-+                                 float2 prev2_prefs4, float2 prev2_prefs2, float2 prev2_0, float2 prev2_mrefs2, float2 prev2_mrefs4,
-+                                 float2 prev_prefs, float2 prev_mrefs, float2 next_prefs, float2 next_mrefs,
-+                                 float2 next2_prefs4, float2 next2_prefs2, float2 next2_0, float2 next2_mrefs2, float2 next2_mrefs4)
++float2 filter_temp_float2(float2 cur_prefs3, float2 cur_prefs, float2 cur_mrefs, float2 cur_mrefs3,
++                          float2 prev2_prefs4, float2 prev2_prefs2, float2 prev2_0, float2 prev2_mrefs2, float2 prev2_mrefs4,
++                          float2 prev_prefs, float2 prev_mrefs, float2 next_prefs, float2 next_mrefs,
++                          float2 next2_prefs4, float2 next2_prefs2, float2 next2_0, float2 next2_mrefs2, float2 next2_mrefs4)
 +{
 +    return (float2)(filter_temp_float(cur_prefs3.x, cur_prefs.x, cur_mrefs.x, cur_mrefs3.x,
 +                                      prev2_prefs4.x, prev2_prefs2.x, prev2_0.x, prev2_mrefs2.x, prev2_mrefs4.x,
@@ -260,15 +260,15 @@ Index: FFmpeg/libavfilter/opencl/bwdif.cl
 +}
 +
 +#define BWDIF_COMPUTE(T, XY) \
-+inline T bwdif_compute_##T(__write_only image2d_t dst, \
-+                           __read_only  image2d_t cur, \
-+                           __read_only  image2d_t prev2, \
-+                           __read_only  image2d_t prev1, \
-+                           __read_only  image2d_t next1, \
-+                           __read_only  image2d_t next2, \
-+                           int parity, \
-+                           bool is_field_end, \
-+                           int2 pos) \
++T bwdif_compute_##T(__write_only image2d_t dst, \
++                    __read_only  image2d_t cur, \
++                    __read_only  image2d_t prev2, \
++                    __read_only  image2d_t prev1, \
++                    __read_only  image2d_t next1, \
++                    __read_only  image2d_t next2, \
++                    int parity, \
++                    bool is_field_end, \
++                    int2 pos) \
 +{ \
 +    /* Don't modify the primary field */ \
 +    if (pos.y % 2 == parity) { \
@@ -345,7 +345,7 @@ Index: FFmpeg/libavfilter/opencl/yadif.cl
 @@ -0,0 +1,197 @@
 +/*
 + * Copyright (C) 2018 Philip Langdale <philipl@overt.org>
-+ *               2025 NyanMisaka
++ * Copyright (C) 2025 NyanMisaka
 + *
 + * This file is part of FFmpeg.
 + *
@@ -371,8 +371,8 @@ Index: FFmpeg/libavfilter/opencl/yadif.cl
 +                                CLK_ADDRESS_CLAMP_TO_EDGE   |
 +                                CLK_FILTER_NEAREST);
 +
-+inline float spatial_predictor_float(float a, float b, float c, float d, float e, float f, float g,
-+                                     float h, float i, float j, float k, float l, float m, float n)
++float spatial_predictor_float(float a, float b, float c, float d, float e, float f, float g,
++                              float h, float i, float j, float k, float l, float m, float n)
 +{
 +    float spatial_pred = (d + k) * 0.5f;
 +    float spatial_score = fabs(c - j) + fabs(d - k) + fabs(e - l);
@@ -400,8 +400,8 @@ Index: FFmpeg/libavfilter/opencl/yadif.cl
 +    return spatial_pred;
 +}
 +
-+inline float2 spatial_predictor_float2(float2 a, float2 b, float2 c, float2 d, float2 e, float2 f, float2 g,
-+                                       float2 h, float2 i, float2 j, float2 k, float2 l, float2 m, float2 n)
++float2 spatial_predictor_float2(float2 a, float2 b, float2 c, float2 d, float2 e, float2 f, float2 g,
++                                float2 h, float2 i, float2 j, float2 k, float2 l, float2 m, float2 n)
 +{
 +    return (float2)(spatial_predictor_float(a.x, b.x, c.x, d.x, e.x, f.x, g.x,
 +                                            h.x, i.x, j.x, k.x, l.x, m.x, n.x),
@@ -410,9 +410,9 @@ Index: FFmpeg/libavfilter/opencl/yadif.cl
 +}
 +
 +
-+inline float temporal_predictor_float(float A, float B, float C, float D, float E, float F,
-+                                      float G, float H, float I, float J, float K, float L,
-+                                      float spatial_pred, bool skip_check)
++float temporal_predictor_float(float A, float B, float C, float D, float E, float F,
++                               float G, float H, float I, float J, float K, float L,
++                               float spatial_pred, bool skip_check)
 +{
 +    float p0 = (C + H) * 0.5f;
 +    float p1 = F;
@@ -434,9 +434,9 @@ Index: FFmpeg/libavfilter/opencl/yadif.cl
 +    return clamp(spatial_pred, p2 - diff, p2 + diff);
 +}
 +
-+inline float2 temporal_predictor_float2(float2 A, float2 B, float2 C, float2 D, float2 E, float2 F,
-+                                        float2 G, float2 H, float2 I, float2 J, float2 K, float2 L,
-+                                        float2 spatial_pred, bool skip_check)
++float2 temporal_predictor_float2(float2 A, float2 B, float2 C, float2 D, float2 E, float2 F,
++                                 float2 G, float2 H, float2 I, float2 J, float2 K, float2 L,
++                                 float2 spatial_pred, bool skip_check)
 +{
 +    return (float2)(temporal_predictor_float(A.x, B.x, C.x, D.x, E.x, F.x,
 +                                             G.x, H.x, I.x, J.x, K.x, L.x,
@@ -447,7 +447,7 @@ Index: FFmpeg/libavfilter/opencl/yadif.cl
 +}
 +
 +#define YADIF_COMPUTE_SPATIAL(T, XY) \
-+inline T yadif_compute_spatial_##T(__read_only image2d_t cur, int2 pos) \
++T yadif_compute_spatial_##T(__read_only image2d_t cur, int2 pos) \
 +{ \
 +    T a = read_imagef(cur, sampler, (int2)(pos.x - 3, pos.y - 1)).XY; \
 +    T b = read_imagef(cur, sampler, (int2)(pos.x - 2, pos.y - 1)).XY; \
@@ -468,14 +468,14 @@ Index: FFmpeg/libavfilter/opencl/yadif.cl
 +}
 +
 +#define YADIF_COMPUTE_TEMPORAL(T, XY) \
-+inline T yadif_compute_temporal_##T(__read_only image2d_t cur, \
-+                                    __read_only image2d_t prev2, \
-+                                    __read_only image2d_t prev1, \
-+                                    __read_only image2d_t next1, \
-+                                    __read_only image2d_t next2, \
-+                                    T spatial_pred, \
-+                                    bool skip_spatial_check, \
-+                                    int2 pos) \
++T yadif_compute_temporal_##T(__read_only image2d_t cur, \
++                             __read_only image2d_t prev2, \
++                             __read_only image2d_t prev1, \
++                             __read_only image2d_t next1, \
++                             __read_only image2d_t next2, \
++                             T spatial_pred, \
++                             bool skip_spatial_check, \
++                             int2 pos) \
 +{ \
 +    T A = read_imagef(prev2, sampler, (int2)(pos.x, pos.y - 1)).XY; \
 +    T B = read_imagef(prev2, sampler, (int2)(pos.x, pos.y + 1)).XY; \
