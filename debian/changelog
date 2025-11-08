@@ -1,6 +1,7 @@
 jellyfin-ffmpeg (7.1.2-4) unstable; urgency=medium
 
   * Fix yadif_opencl failure on newer AMD drivers
+  * Sync fixes from ffmpeg-rockchip
 
  -- nyanmisaka <nst799610810@gmail.com>  Mon, 27 Oct 2025 19:12:50 +0800
 
