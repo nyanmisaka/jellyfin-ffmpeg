@@ -88,6 +88,6 @@
 0088-remove-el-when-stripping-dovi-metadata.patch
 0089-fix-avcodec-params-when-bsfs-are-enable-by-decoder.patch
 0090-dont-return-ext-error-for-invalid-vt-frame.patch
-0091-backport-a-fix-for-setting-values-in-lavc-decode.patch
-0092-backport-a-fix-for-stripping-fps-from-setpts-outlink.patch
-0093-add-hevc-recovery-point-support-backport-from-upstream.patch
+0091-backport-a-fix-for-stripping-fps-from-setpts-outlink.patch
+0092-add-hevc-recovery-point-support-backport-from-upstream.patch
+0093-backport-a-fix-for-unnecessary-rescale-av-nopts-in-lavfi.patch
