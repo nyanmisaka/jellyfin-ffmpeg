@@ -1,8 +1,8 @@
 #!/bin/bash
 
 SCRIPT_REPO="https://github.com/nyanmisaka/mpp.git"
-SCRIPT_COMMIT="4e5b4cfe7fa30394c5d5c37b67229f148865ccbd"
-SCRIPT_BRANCH="jellyfin-mpp-next"
+SCRIPT_COMMIT="670f3728732e127739c381f58c38f234c1bd1b91"
+SCRIPT_BRANCH="jellyfin-mpp-dev"
 
 ffbuild_enabled() {
     [[ $TARGET == linux* ]] && [[ $TARGET == *arm64 ]] && return 0

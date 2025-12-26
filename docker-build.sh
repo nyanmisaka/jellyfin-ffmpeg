@@ -649,7 +649,7 @@ prepare_extra_amd64() {
 prepare_extra_arm() {
     # RKMPP
     pushd ${SOURCE_DIR}
-    git clone -b jellyfin-mpp-next --depth=1 https://github.com/nyanmisaka/mpp.git rkmpp
+    git clone -b jellyfin-mpp-dev --depth=1 https://github.com/nyanmisaka/mpp.git rkmpp
     pushd rkmpp
     mkdir rkmpp_build
     pushd rkmpp_build
