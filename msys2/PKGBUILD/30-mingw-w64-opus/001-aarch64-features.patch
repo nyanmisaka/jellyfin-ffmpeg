@@ -1,7 +1,8 @@
-diff -bur opus-1.5.1-orig/celt/arm/armcpu.c opus-1.5.1/celt/arm/armcpu.c
---- opus-1.5.1-orig/celt/arm/armcpu.c	2024-03-09 21:13:23.646469400 -0700
-+++ opus-1.5.1/celt/arm/armcpu.c	2024-03-09 22:51:55.794039700 -0700
-@@ -191,6 +191,31 @@
+diff --git a/celt/arm/armcpu.c b/celt/arm/armcpu.c
+index f03408c..e9f9dff 100644
+--- a/celt/arm/armcpu.c
++++ b/celt/arm/armcpu.c
+@@ -271,6 +271,31 @@ static opus_uint32 opus_cpu_capabilities(void)
    return flags;
  }
  
@@ -20,7 +21,7 @@ diff -bur opus-1.5.1-orig/celt/arm/armcpu.c opus-1.5.1/celt/arm/armcpu.c
 +    flags |= OPUS_CPU_ARM_EDSP_FLAG | OPUS_CPU_ARM_MEDIA_FLAG | OPUS_CPU_ARM_NEON_FLAG;
 +
 +#  if defined(OPUS_ARM_MAY_HAVE_DOTPROD)
-+  
++
 +  if (IsProcessorFeaturePresent(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE))
 +  {
 +    flags |= OPUS_CPU_ARM_DOTPROD_FLAG;
@@ -32,4 +33,7 @@ diff -bur opus-1.5.1-orig/celt/arm/armcpu.c opus-1.5.1/celt/arm/armcpu.c
 +
  #else
  /* The feature registers which can tell us what the processor supports are
-  * accessible in priveleged modes only, so we can't have a general user-space
+  * accessible in privileged modes only, so we can't have a general user-space
+-- 
+2.34.1
+

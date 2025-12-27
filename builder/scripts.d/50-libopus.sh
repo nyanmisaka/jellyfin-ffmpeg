@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_REPO="https://github.com/xiph/opus.git"
-SCRIPT_COMMIT="b5dc74f26ff9a9ef1f1af9a473b9ae07520eed7d"
+SCRIPT_COMMIT="59f13a3eb0eed3a56cf46bd68cc2f29f18d83ba2"
 
 ffbuild_enabled() {
     return 0
@@ -10,9 +10,6 @@ ffbuild_enabled() {
 ffbuild_dockerbuild() {
     git-mini-clone "$SCRIPT_REPO" "$SCRIPT_COMMIT" opus
     cd opus
-
-    # Fix AVX2 auto detction
-    wget -q -O - https://github.com/xiph/opus/commit/9ec11c1.patch | git apply
 
     ./autogen.sh
 

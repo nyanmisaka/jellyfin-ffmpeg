@@ -1,7 +1,7 @@
 #!/bin/bash
 
-SCRIPT_REPO="https://github.com/nyanmisaka/mpp.git"
-SCRIPT_COMMIT="4e5b4cfe7fa30394c5d5c37b67229f148865ccbd"
+SCRIPT_REPO="https://github.com/nyanmisaka/rk-mirrors.git"
+SCRIPT_COMMIT="a9380ef333102ac318628f83b5f7a460d377749e"
 SCRIPT_BRANCH="jellyfin-mpp-next"
 
 ffbuild_enabled() {
