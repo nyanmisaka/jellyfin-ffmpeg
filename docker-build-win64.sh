@@ -47,7 +47,7 @@ popd
 popd
 
 # LIBXML2
-git clone -b v2.15.0 --depth=1 https://github.com/GNOME/libxml2.git
+git clone -b v2.15.1 --depth=1 https://github.com/GNOME/libxml2.git
 pushd libxml2
 ./autogen.sh \
     --prefix=${FF_DEPS_PREFIX} \
@@ -156,7 +156,7 @@ popd
 popd
 
 # LZMA
-git clone -b v5.8.1 --depth=1 https://github.com/tukaani-project/xz.git
+git clone -b v5.8.2 --depth=1 https://github.com/tukaani-project/xz.git
 pushd xz
 ./autogen.sh --no-po4a --no-doxygen
 ./configure \
@@ -333,7 +333,7 @@ popd
 # OPENMPT
 mkdir mpt
 pushd mpt
-mpt_ver="0.8.3"
+mpt_ver="0.8.4"
 mpt_link="https://lib.openmpt.org/files/libopenmpt/src/libopenmpt-${mpt_ver}+release.autotools.tar.gz"
 wget ${mpt_link} -O mpt.tar.gz
 tar xaf mpt.tar.gz
@@ -486,7 +486,7 @@ popd
 popd
 
 # DAV1D
-git clone -b 1.5.1 --depth=1 https://code.videolan.org/videolan/dav1d.git
+git clone -b 1.5.2 --depth=1 https://code.videolan.org/videolan/dav1d.git
 meson setup dav1d dav1d_build \
     --prefix=${FF_DEPS_PREFIX} \
     --cross-file=${FF_MESON_TOOLCHAIN} \
@@ -570,7 +570,7 @@ popd
 popd
 
 # VPL
-git clone -b v2.15.0 --depth=1 https://github.com/intel/libvpl.git
+git clone -b v2.16.0 --depth=1 https://github.com/intel/libvpl.git
 pushd libvpl
 mkdir build && pushd build
 cmake \
