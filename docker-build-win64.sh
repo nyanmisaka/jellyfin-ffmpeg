@@ -21,8 +21,10 @@ make install
 popd
 
 # mingw-std-threads
-git clone --depth=1 https://github.com/meganz/mingw-std-threads.git
+mingw_threads_commit="c931bac289dd431f1dd30fc4a5d1a7be36668073"
+git clone https://github.com/meganz/mingw-std-threads.git
 pushd mingw-std-threads
+git checkout ${mingw_threads_commit}
 mkdir -p ${FF_DEPS_PREFIX}/include
 mv *.h ${FF_DEPS_PREFIX}/include
 popd
@@ -136,7 +138,7 @@ popd
 popd
 
 # CHROMAPRINT
-git clone --depth=1 https://github.com/acoustid/chromaprint.git
+git clone -b v1.6.0 --depth=1 https://github.com/acoustid/chromaprint.git
 pushd chromaprint
 mkdir build
 pushd build
@@ -203,21 +205,19 @@ meson configure harfbuzz_build
 ninja -j$(nproc) -C harfbuzz_build install
 
 # LIBUDFREAD
-git clone --depth=1 https://code.videolan.org/videolan/libudfread.git
-pushd libudfread
-./bootstrap
-./configure \
+git clone -b 1.2.0 --depth=1 https://code.videolan.org/videolan/libudfread.git
+sed -i 's/-DUDFREAD_API_EXPORT/-DUDFREAD_API_EXPORT_DISABLED/g' libudfread/src/meson.build
+meson setup libudfread libudfread_build \
     --prefix=${FF_DEPS_PREFIX} \
-    --host=${FF_TOOLCHAIN} \
-    --disable-shared \
-    --enable-static \
-    --with-pic
-make -j$(nproc)
-make install
-popd
+    --cross-file=${FF_MESON_TOOLCHAIN} \
+    --buildtype=release \
+    --default-library=static \
+    -Denable_examples=false
+meson configure libudfread_build
+ninja -j$(nproc) -C libudfread_build install
 
 # UNIBREAK
-git clone --depth=1 https://github.com/adah1972/libunibreak.git
+git clone -b libunibreak_6_1 --depth=1 https://github.com/adah1972/libunibreak.git
 pushd libunibreak
 ./bootstrap
 ./configure \
@@ -245,8 +245,9 @@ make install
 popd
 
 # LIBBLURAY
-git clone -b 1.4.0 --depth=1 https://code.videolan.org/videolan/libbluray.git
+git clone -b 1.4.1 --depth=1 https://code.videolan.org/videolan/libbluray.git
 sed -i 's/dec_init/libbluray_dec_init/g' libbluray/src/libbluray/disc/*.{c,h}
+sed -i 's/-DBLURAY_API_EXPORT/-DBLURAY_API_EXPORT_DISABLED/g' libbluray/src/meson.build
 meson setup libbluray libbluray_build \
     --prefix=${FF_DEPS_PREFIX} \
     --cross-file=${FF_MESON_TOOLCHAIN} \
@@ -277,7 +278,7 @@ popd
 popd
 
 # OGG
-git clone --depth=1 https://github.com/xiph/ogg.git
+git clone -b v1.3.6 --depth=1 https://github.com/xiph/ogg.git
 pushd ogg
 ./autogen.sh
 ./configure \
@@ -291,7 +292,7 @@ make install
 popd
 
 # OPUS
-git clone --depth=1 https://github.com/xiph/opus.git
+git clone -b v1.6.1 --depth=1 https://github.com/xiph/opus.git
 pushd opus
 ./autogen.sh
 ./configure \
@@ -304,7 +305,7 @@ make install
 popd
 
 # THEORA
-git clone --depth=1 https://github.com/xiph/theora.git
+git clone -b v1.2.0 --depth=1 https://github.com/xiph/theora.git
 pushd theora
 ./autogen.sh
 ./configure \
@@ -318,7 +319,7 @@ make install
 popd
 
 # VORBIS
-git clone --depth=1 https://github.com/xiph/vorbis.git
+git clone -b v1.3.7 --depth=1 https://github.com/xiph/vorbis.git
 pushd vorbis
 ./autogen.sh
 ./configure \
@@ -364,7 +365,7 @@ make install
 popd
 
 # LIBVPX
-git clone --depth=1 https://chromium.googlesource.com/webm/libvpx
+git clone -b v1.16.0 --depth=1 https://chromium.googlesource.com/webm/libvpx
 pushd libvpx
 export CROSS=${FF_CROSS_PREFIX}
 ./configure \
@@ -377,7 +378,7 @@ make install
 popd
 
 # ZIMG
-git clone --recursive --depth=1 https://github.com/sekrit-twc/zimg.git
+git clone -b release-3.0.6 --recursive --depth=1 https://github.com/sekrit-twc/zimg.git
 pushd zimg
 ./autogen.sh
 ./configure \
@@ -390,8 +391,10 @@ make install
 popd
 
 # X264
-git clone --depth=1 https://code.videolan.org/videolan/x264.git
+x264_commit="0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee"
+git clone https://code.videolan.org/videolan/x264.git
 pushd x264
+git checkout ${x264_commit}
 ./configure \
     --prefix=${FF_DEPS_PREFIX} \
     --host=${FF_TOOLCHAIN} \
