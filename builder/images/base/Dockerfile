@@ -2,14 +2,6 @@ FROM ubuntu:noble
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Use more reliable mirrors for Ubuntu packages
-RUN mkdir -p /etc/apt/sources.list.d/ \
- && touch /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
- && sed -i 's|archive.ubuntu.com/ubuntu/|mirrors.kernel.org/ubuntu/|g' \
-    /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
- && sed -i 's|security.ubuntu.com/ubuntu/|mirrors.kernel.org/ubuntu/|g' \
-    /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
-
 RUN \
     apt-get -y update && \
     apt-get -y dist-upgrade && \
