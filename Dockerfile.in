@@ -24,14 +24,6 @@ ENV CPPFLAGS="-I${TARGET_DIR}/include $CPPFLAGS"
 ENV CFLAGS="-I${TARGET_DIR}/include $CFLAGS"
 ENV CMAKE_POLICY_VERSION_MINIMUM="3.5"
 
-# Use more reliable mirrors for Ubuntu packages
-RUN mkdir -p /etc/apt/sources.list.d/ \
- && touch /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
- && sed -i 's|archive.ubuntu.com/ubuntu/|mirrors.kernel.org/ubuntu/|g' \
-    /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
- && sed -i 's|security.ubuntu.com/ubuntu/|mirrors.kernel.org/ubuntu/|g' \
-    /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
-
 # Prepare Debian build environment
 RUN apt-get update \
  && apt-get dist-upgrade -y \

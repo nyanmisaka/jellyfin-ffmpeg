@@ -33,7 +33,7 @@ popd
 mkdir iconv
 pushd iconv
 iconv_ver="1.18"
-iconv_link="https://mirrors.kernel.org/gnu/libiconv/libiconv-${iconv_ver}.tar.gz"
+iconv_link="https://mirrors.edge.kernel.org/gnu/libiconv/libiconv-${iconv_ver}.tar.gz"
 wget ${iconv_link} -O iconv.tar.gz
 tar xaf iconv.tar.gz
 pushd libiconv-${iconv_ver}
@@ -100,7 +100,7 @@ sed -i 's/Cflags:/Cflags: -DFRIBIDI_LIB_STATIC/' ${FF_DEPS_PREFIX}/lib/pkgconfig
 mkdir gmp
 pushd gmp
 gmp_ver="6.3.0"
-gmp_link="https://mirrors.kernel.org/gnu/gmp/gmp-${gmp_ver}.tar.xz"
+gmp_link="https://mirrors.edge.kernel.org/gnu/gmp/gmp-${gmp_ver}.tar.xz"
 wget ${gmp_link} -O gmp.tar.gz
 tar xaf gmp.tar.gz
 pushd gmp-${gmp_ver}
