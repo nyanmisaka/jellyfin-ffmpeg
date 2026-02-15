@@ -9,6 +9,7 @@ usage() {
     echo -e " * trixie"
     echo -e " * jammy"
     echo -e " * noble"
+    echo -e " * resolute"
 }
 
 if [[ -z ${1} ]]; then
@@ -47,6 +48,12 @@ case ${cli_release} in
         gcc_ver="13"
         llvm_ver="19"
         llvmspirvlib_ver="19"
+    ;;
+    'resolute')
+        release="ubuntu:resolute"
+        gcc_ver="15"
+        llvm_ver="20"
+        llvmspirvlib_ver="20"
     ;;
     *)
         echo "Invalid release."

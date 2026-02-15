@@ -13,3 +13,5 @@ packages:
   - jammy-arm64
   - noble-amd64
   - noble-arm64
+  - resolute-amd64
+  - resolute-arm64

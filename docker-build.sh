@@ -476,6 +476,8 @@ prepare_extra_amd64() {
     wget -q -O - https://github.com/intel/media-driver/commit/25fb926.patch | git apply
     mkdir build && pushd build
     cmake -DCMAKE_INSTALL_PREFIX=${TARGET_DIR} \
+          -DCMAKE_C_FLAGS="${CFLAGS} -Wno-error=array-bounds" \
+          -DCMAKE_CXX_FLAGS="${CXXFLAGS} -Wno-error=array-bounds" \
           -DENABLE_KERNELS=ON \
           -DENABLE_NONFREE_KERNELS=ON \
           LIBVA_DRIVERS_PATH=${TARGET_DIR}/lib/dri \
@@ -551,8 +553,8 @@ prepare_extra_amd64() {
     # MESA
     # Minimal libs for AMD VAAPI, AMD RADV and Intel ANV
     if [[ ${LLVM_VER} -ge 15 ]]; then
-        if [[ ${LLVMSPIRVLIB_VER} -ge 15 ]]; then
-            # Intel ANV requires llvmspirvlib >= 15
+        if [[ ${LLVMSPIRVLIB_VER} -ge 15 && ${LLVMSPIRVLIB_VER} -le 20 ]]; then
+            # Intel ANV requires llvmspirvlib >= 15 (and <= 20 in mesa 25.0)
             mesa_vk_drv="amd,intel"
             mesa_llvm_clc="enabled"
             apt-get install -y {llvm-,libllvmspirvlib-,libclc-,libclang-,libclang-cpp}${LLVMSPIRVLIB_VER}-dev libudev-dev
@@ -626,6 +628,8 @@ prepare_extra_amd64() {
     git clone -b v7.351.0 --recursive --depth=1 https://github.com/haasn/libplacebo.git
     # Wa for the regression made in Mesa RADV
     git -C libplacebo apply ${SOURCE_DIR}/builder/patches/libplacebo/*.patch
+    # Fix build script for python 3.14
+    wget -q -O - https://github.com/haasn/libplacebo/commit/12509c0.patch | git -C libplacebo apply
     sed -i 's|env: python_env,||g' libplacebo/src/vulkan/meson.build
     meson setup libplacebo placebo_build \
         --prefix=${TARGET_DIR} \
