@@ -1,6 +1,6 @@
 * text eol=lf
 *.ico -diff -text
 *.pnm -diff -text
+Changelog    merge=union
 debian/patches/* -text
 tests/ref/fate/* -text
-tests/ref/fate/sub-scc text eol=crlf
