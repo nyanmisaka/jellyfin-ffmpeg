@@ -2,10 +2,10 @@ Index: FFmpeg/configure
 ===================================================================
 --- FFmpeg.orig/configure
 +++ FFmpeg/configure
-@@ -3935,6 +3935,7 @@ rubberband_filter_deps="librubberband"
- sab_filter_deps="gpl swscale"
- scale2ref_filter_deps="swscale"
+@@ -4197,6 +4197,7 @@ scale2ref_filter_deps="swscale"
  scale_filter_deps="swscale"
+ sr_amf_filter_deps="amf"
+ vpp_amf_filter_deps="amf"
 +scale_opencl_filter_deps="opencl"
  scale_qsv_filter_deps="libmfx"
  scale_qsv_filter_select="qsvvpp"
@@ -14,7 +14,7 @@ Index: FFmpeg/libavfilter/Makefile
 ===================================================================
 --- FFmpeg.orig/libavfilter/Makefile
 +++ FFmpeg/libavfilter/Makefile
-@@ -461,6 +461,7 @@ OBJS-$(CONFIG_SCALE_FILTER)
+@@ -476,6 +476,7 @@ OBJS-$(CONFIG_SCALE_D3D12_FILTER)
  OBJS-$(CONFIG_SCALE_CUDA_FILTER)             += vf_scale_cuda.o scale_eval.o \
                                                  vf_scale_cuda.ptx.o cuda/load_helper.o
  OBJS-$(CONFIG_SCALE_NPP_FILTER)              += vf_scale_npp.o scale_eval.o
@@ -26,14 +26,14 @@ Index: FFmpeg/libavfilter/allfilters.c
 ===================================================================
 --- FFmpeg.orig/libavfilter/allfilters.c
 +++ FFmpeg/libavfilter/allfilters.c
-@@ -433,6 +433,7 @@ extern const AVFilter ff_vf_sab;
- extern const AVFilter ff_vf_scale;
- extern const AVFilter ff_vf_scale_cuda;
- extern const AVFilter ff_vf_scale_npp;
-+extern const AVFilter ff_vf_scale_opencl;
- extern const AVFilter ff_vf_scale_qsv;
- extern const AVFilter ff_vf_scale_vaapi;
- extern const AVFilter ff_vf_scale_vt;
+@@ -447,6 +447,7 @@ extern const FFFilter ff_vf_scale_cuda;
+ extern const FFFilter ff_vf_scale_d3d11;
+ extern const FFFilter ff_vf_scale_d3d12;
+ extern const FFFilter ff_vf_scale_npp;
++extern const FFFilter ff_vf_scale_opencl;
+ extern const FFFilter ff_vf_scale_qsv;
+ extern const FFFilter ff_vf_scale_vaapi;
+ extern const FFFilter ff_vf_scale_vt;
 Index: FFmpeg/libavfilter/opencl/scale.cl
 ===================================================================
 --- /dev/null
@@ -373,7 +373,7 @@ Index: FFmpeg/libavfilter/vf_scale_opencl.c
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/vf_scale_opencl.c
-@@ -0,0 +1,931 @@
+@@ -0,0 +1,929 @@
 +/*
 + * Copyright (c) 2018 Gabriel Machado
 + * Copyright (c) 2021 NyanMisaka
@@ -644,7 +644,7 @@ Index: FFmpeg/libavfilter/vf_scale_opencl.c
 +    size_t m_origin[3] = {0};
 +    size_t m_region[3] = {ff_fruit_dither_size, ff_fruit_dither_size, 1};
 +    size_t m_row_pitch = ff_fruit_dither_size * sizeof(ff_fruit_dither_matrix[0]);
-+    cl_event event;
++    cl_event event = NULL;
 +    cl_int cle;
 +    int i, j, err;
 +    float scalex, scaley;
@@ -697,7 +697,6 @@ Index: FFmpeg/libavfilter/vf_scale_opencl.c
 +
 +        cx = av_malloc_array(ctx->dst_w * ctx->filterw, sizeof(cl_float));
 +        cy = av_malloc_array(ctx->dst_h * ctx->filterh, sizeof(cl_float));
-+
 +        if (!cx || !cy) {
 +            err = AVERROR(ENOMEM);
 +            goto fail;
@@ -735,21 +734,19 @@ Index: FFmpeg/libavfilter/vf_scale_opencl.c
 +                cy[i * ctx->filterh + j] /= sum;
 +        }
 +
-+        ctx->cx = clCreateBuffer(ctx->ocf.hwctx->context,
-+                                 CL_MEM_READ_ONLY     |
-+                                 CL_MEM_COPY_HOST_PTR |
-+                                 CL_MEM_HOST_NO_ACCESS,
-+                                 ctx->dst_w * ctx->filterw * sizeof(cl_float),
-+                                 cx,
-+                                 &cle);
++        CL_CREATE_BUFFER_FLAGS(ctx, cx,
++                               CL_MEM_READ_ONLY |
++                               CL_MEM_COPY_HOST_PTR |
++                               CL_MEM_HOST_NO_ACCESS,
++                               ctx->dst_w * ctx->filterw * sizeof(cl_float),
++                               cx);
 +
-+        ctx->cy = clCreateBuffer(ctx->ocf.hwctx->context,
-+                                 CL_MEM_READ_ONLY     |
-+                                 CL_MEM_COPY_HOST_PTR |
-+                                 CL_MEM_HOST_NO_ACCESS,
-+                                 ctx->dst_h * ctx->filterh * sizeof(cl_float),
-+                                 cy,
-+                                 &cle);
++        CL_CREATE_BUFFER_FLAGS(ctx, cy,
++                               CL_MEM_READ_ONLY |
++                               CL_MEM_COPY_HOST_PTR |
++                               CL_MEM_HOST_NO_ACCESS,
++                               ctx->dst_h * ctx->filterh * sizeof(cl_float),
++                               cy);
 +        av_free(cx);
 +        av_free(cy);
 +        if (!ctx->cx || !ctx->cy) {
@@ -786,11 +783,8 @@ Index: FFmpeg/libavfilter/vf_scale_opencl.c
 +    ctx->command_queue = clCreateCommandQueue(ctx->ocf.hwctx->context,
 +                                              ctx->ocf.hwctx->device_id,
 +                                              0, &cle);
-+    if (!ctx->command_queue) {
-+        av_log(avctx, AV_LOG_ERROR, "Failed to create OpenCL command queue: %d.\n", cle);
-+        err = AVERROR(EIO);
-+        goto fail;
-+    }
++    CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to create OpenCL "
++                     "command queue %d.\n", cle);
 +
 +    if (ctx->in_desc->comp[0].depth > ctx->out_desc->comp[0].depth) {
 +        cl_image_format image_format = {
@@ -956,7 +950,7 @@ Index: FFmpeg/libavfilter/vf_scale_opencl.c
 +        return ret;
 +
 +    ff_scale_adjust_dimensions(inlink, &ctx->dst_w, &ctx->dst_h,
-+                               ctx->force_original_aspect_ratio, ctx->force_divisible_by);
++                               ctx->force_original_aspect_ratio, ctx->force_divisible_by, 1.0f);
 +
 +    if (((int64_t)ctx->dst_h * inlink->w) > INT_MAX ||
 +        ((int64_t)ctx->dst_w * inlink->h) > INT_MAX)
@@ -1049,7 +1043,7 @@ Index: FFmpeg/libavfilter/vf_scale_opencl.c
 +        global_work[1] = output->height / y_subsample;
 +
 +        av_log(avctx, AV_LOG_DEBUG, "Run kernel conv_yuv "
-+               "(%"SIZE_SPECIFIER"x%"SIZE_SPECIFIER").\n",
++               "(%zu x %zu).\n",
 +               global_work[0], global_work[1]);
 +
 +        cle = clEnqueueNDRangeKernel(ctx->command_queue, kernel, 2, NULL,
@@ -1091,7 +1085,7 @@ Index: FFmpeg/libavfilter/vf_scale_opencl.c
 +        global_work[1] = output->height;
 +
 +        av_log(avctx, AV_LOG_DEBUG, "Run kernel %s "
-+               "(%"SIZE_SPECIFIER"x%"SIZE_SPECIFIER").\n",
++               "(%zu x %zu).\n",
 +               ctx->kernel_name, global_work[0], global_work[1]);
 +
 +        cle = clEnqueueNDRangeKernel(ctx->command_queue, ctx->kernel, 2, NULL,
@@ -1103,7 +1097,7 @@ Index: FFmpeg/libavfilter/vf_scale_opencl.c
 +        global_work[1] = output->height / y_subsample;
 +
 +        av_log(avctx, AV_LOG_DEBUG, "Run kernel %s "
-+               "(%"SIZE_SPECIFIER"x%"SIZE_SPECIFIER").\n",
++               "(%zu x %zu).\n",
 +               ctx->kernel_name_uv, global_work[0], global_work[1]);
 +
 +        cle = clEnqueueNDRangeKernel(ctx->command_queue, ctx->kernel_uv, 2, NULL,
@@ -1153,6 +1147,10 @@ Index: FFmpeg/libavfilter/vf_scale_opencl.c
 +        goto fail;
 +    output->width  = outlink->w;
 +    output->height = outlink->h;
++    if (output->width != input->width || output->height != input->height) {
++        av_frame_side_data_remove_by_props(&output->side_data, &output->nb_side_data,
++                                           AV_SIDE_DATA_PROP_SIZE_DEPENDENT);
++    }
 +
 +    if (ctx->in_fmt == AV_PIX_FMT_NV15 && !(ctx->src_w == ctx->dst_w && ctx->src_h == ctx->dst_h)) {
 +        /* for scaling P010 compact: 1st pass conv & 2nd pass scale */
@@ -1265,9 +1263,9 @@ Index: FFmpeg/libavfilter/vf_scale_opencl.c
 +        { "spline",       "Bicubic Spline",   0, AV_OPT_TYPE_CONST, { .i64 = F_SPLINE       }, 0, 0, FLAGS, .unit = "algo" },
 +        { "experimental", "Experimental",     0, AV_OPT_TYPE_CONST, { .i64 = F_EXPERIMENTAL }, 0, 0, FLAGS, .unit = "algo" },
 +    { "force_original_aspect_ratio", "Decrease or increase w/h if necessary to keep the original AR", OFFSET(force_original_aspect_ratio), AV_OPT_TYPE_INT, { .i64 = 1 }, 0, 2, FLAGS, .unit = "force_oar" },
-+        { "disable",       NULL,              0, AV_OPT_TYPE_CONST, {.i64 = 0 }, 0, 0, FLAGS, .unit = "force_oar" },
-+        { "decrease",      NULL,              0, AV_OPT_TYPE_CONST, {.i64 = 1 }, 0, 0, FLAGS, .unit = "force_oar" },
-+        { "increase",      NULL,              0, AV_OPT_TYPE_CONST, {.i64 = 2 }, 0, 0, FLAGS, .unit = "force_oar" },
++        { "disable",       NULL,              0, AV_OPT_TYPE_CONST, {.i64 = SCALE_FORCE_OAR_DISABLE  }, 0, 0, FLAGS, .unit = "force_oar" },
++        { "decrease",      NULL,              0, AV_OPT_TYPE_CONST, {.i64 = SCALE_FORCE_OAR_DECREASE }, 0, 0, FLAGS, .unit = "force_oar" },
++        { "increase",      NULL,              0, AV_OPT_TYPE_CONST, {.i64 = SCALE_FORCE_OAR_INCREASE }, 0, 0, FLAGS, .unit = "force_oar" },
 +    { "force_divisible_by", "Enforce that the output resolution is divisible by a defined integer when force_original_aspect_ratio is used", OFFSET(force_divisible_by), AV_OPT_TYPE_INT, { .i64 = 2 }, 1, 256, FLAGS },
 +    { NULL }
 +};
@@ -1292,16 +1290,16 @@ Index: FFmpeg/libavfilter/vf_scale_opencl.c
 +    },
 +};
 +
-+const AVFilter ff_vf_scale_opencl = {
-+    .name           = "scale_opencl",
-+    .description    = NULL_IF_CONFIG_SMALL("Scale the input video size through OpenCL."),
++const FFFilter ff_vf_scale_opencl = {
++    .p.name         = "scale_opencl",
++    .p.description  = NULL_IF_CONFIG_SMALL("Scale the input video size through OpenCL."),
 +    .priv_size      = sizeof(ScaleOpenCLContext),
-+    .priv_class     = &scale_opencl_class,
++    .p.priv_class   = &scale_opencl_class,
 +    .init           = &ff_opencl_filter_init,
 +    .uninit         = &scale_opencl_uninit,
 +    FILTER_INPUTS(scale_opencl_inputs),
 +    FILTER_OUTPUTS(scale_opencl_outputs),
 +    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_OPENCL),
 +    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
-+    .flags          = AVFILTER_FLAG_HWDEVICE,
++    .p.flags        = AVFILTER_FLAG_HWDEVICE,
 +};
