@@ -52,11 +52,11 @@ Build-Depends:
 # assembler optimizations
  nasm
 
-Package: jellyfin-ffmpeg7
+Package: jellyfin-ffmpeg8
 Architecture: amd64 arm64
 Multi-Arch: foreign
-Replaces: jellyfin-ffmpeg, jellyfin-ffmpeg5, jellyfin-ffmpeg6
-Conflicts: jellyfin-ffmpeg, jellyfin-ffmpeg5, jellyfin-ffmpeg6
+Replaces: jellyfin-ffmpeg, jellyfin-ffmpeg5, jellyfin-ffmpeg6, jellyfin-ffmpeg7
+Conflicts: jellyfin-ffmpeg, jellyfin-ffmpeg5, jellyfin-ffmpeg6, jellyfin-ffmpeg7
 Depends:
  ${shlibs:Depends},
  ${misc:Depends}

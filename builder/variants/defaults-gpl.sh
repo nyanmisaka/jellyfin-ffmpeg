@@ -1,4 +1,4 @@
-FF_CONFIGURE="--enable-gpl --enable-version3 --disable-ffplay --disable-debug --disable-doc --disable-sdl2"
+FF_CONFIGURE="--disable-unstable --enable-gpl --enable-version3 --disable-ffplay --disable-debug --disable-doc --disable-sdl2"
 FF_CFLAGS=""
 FF_CXXFLAGS=""
 FF_LDFLAGS=""

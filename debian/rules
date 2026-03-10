@@ -10,6 +10,7 @@ FLTO_OPTIONS := auto
 CONFIG := --prefix=${TARGET_DIR} \
 	--target-os=linux \
 	--extra-version=Jellyfin \
+	--disable-unstable \
 	--disable-doc \
 	--disable-ffplay \
 	--disable-static \

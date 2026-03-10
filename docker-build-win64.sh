@@ -5,21 +5,6 @@
 set -o errexit
 set -o xtrace
 
-# Update mingw-w64 headers
-mingw_commit="6b2176247a83644113aa209acbeeaf8cdc78a8fa"
-git clone https://github.com/mingw-w64/mingw-w64.git
-pushd mingw-w64/mingw-w64-headers
-git checkout ${mingw_commit}
-./configure \
-    --prefix=/usr/${FF_TOOLCHAIN} \
-    --host=${FF_TOOLCHAIN} \
-    --with-default-win32-winnt="0x0601" \
-    --with-default-msvcrt="msvcrt" \
-    --enable-idl
-make -j$(nproc)
-make install
-popd
-
 # mingw-std-threads
 mingw_threads_commit="c931bac289dd431f1dd30fc4a5d1a7be36668073"
 git clone https://github.com/meganz/mingw-std-threads.git
@@ -562,7 +547,7 @@ popd
 # AMF
 mkdir amf-headers
 pushd amf-headers
-amf_ver="1.4.36"
+amf_ver="1.5.0"
 amf_link="https://github.com/GPUOpen-LibrariesAndSDKs/AMF/releases/download/v${amf_ver}/AMF-headers-v${amf_ver}.tar.gz"
 wget ${amf_link} -O amf.tar.gz
 tar xaf amf.tar.gz
@@ -602,6 +587,7 @@ fi
     --prefix=${FF_PREFIX} \
     ${FF_TARGET_FLAGS} \
     --extra-version=Jellyfin \
+    --disable-unstable \
     --disable-ffplay \
     --disable-debug \
     --disable-doc \
@@ -640,7 +626,6 @@ fi
     --enable-opencl \
     --enable-dxva2 \
     --enable-d3d11va \
-    --enable-d3d12va \
     --enable-amf \
     --enable-libvpl \
     --enable-ffnvcodec \
