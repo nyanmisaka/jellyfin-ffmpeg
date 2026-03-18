@@ -571,7 +571,9 @@ prepare_extra_amd64() {
         wget ${mesa_link} -O mesa.tar.gz
         tar xaf mesa.tar.gz
         # Cherry-pick fixes targeting mesa-stable
-        wget -q -O - https://gitlab.freedesktop.org/mesa/mesa/-/commit/ee4d7e98.patch | git -C mesa-${mesa_ver} apply
+        wget -q -O - https://gitlab.freedesktop.org/mesa/mesa/-/commit/ee4d7e98.patch | patch -p1 -d mesa-${mesa_ver}
+        # Fix duplicate definitions in C23/glibc
+        wget -q -O - https://gitlab.freedesktop.org/mesa/mesa/-/commit/179e744f.patch | patch -p1 -d mesa-${mesa_ver}
         meson setup mesa-${mesa_ver} mesa_build \
             --prefix=${TARGET_DIR} \
             --libdir=lib \
