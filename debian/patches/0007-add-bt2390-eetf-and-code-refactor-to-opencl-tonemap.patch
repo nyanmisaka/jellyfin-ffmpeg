@@ -1368,10 +1368,10 @@ Index: FFmpeg/libavfilter/opencl/tonemap.cl
 +        return;
 +
 +    float2 src1_sz_recip = native_recip(convert_float2(src1_sz));
-+    float2 ncoords_yuv0 = convert_float2((int2)(x,     y)) * src1_sz_recip;
-+    float2 ncoords_yuv1 = convert_float2((int2)(x + 1, y)) * src1_sz_recip;
-+    float2 ncoords_yuv2 = convert_float2((int2)(x,     y + 1)) * src1_sz_recip;
-+    float2 ncoords_yuv3 = convert_float2((int2)(x + 1, y + 1)) * src1_sz_recip;
++    float2 ncoords_yuv0 = (convert_float2((int2)(x,     y)) + 0.5f) * src1_sz_recip;
++    float2 ncoords_yuv1 = (convert_float2((int2)(x + 1, y)) + 0.5f) * src1_sz_recip;
++    float2 ncoords_yuv2 = (convert_float2((int2)(x,     y + 1)) + 0.5f) * src1_sz_recip;
++    float2 ncoords_yuv3 = (convert_float2((int2)(x + 1, y + 1)) + 0.5f) * src1_sz_recip;
 +
 +    float3 yuv0, yuv1, yuv2, yuv3;
 +
@@ -1651,10 +1651,10 @@ Index: FFmpeg/libavfilter/opencl/tonemap.cl
 +        return;
 +
 +    float2 src1_sz_recip = native_recip(convert_float2(src1_sz));
-+    float2 ncoords_yuv0 = convert_float2((int2)(x,     y)) * src1_sz_recip;
-+    float2 ncoords_yuv1 = convert_float2((int2)(x + 1, y)) * src1_sz_recip;
-+    float2 ncoords_yuv2 = convert_float2((int2)(x,     y + 1)) * src1_sz_recip;
-+    float2 ncoords_yuv3 = convert_float2((int2)(x + 1, y + 1)) * src1_sz_recip;
++    float2 ncoords_yuv0 = (convert_float2((int2)(x,     y)) + 0.5f) * src1_sz_recip;
++    float2 ncoords_yuv1 = (convert_float2((int2)(x + 1, y)) + 0.5f) * src1_sz_recip;
++    float2 ncoords_yuv2 = (convert_float2((int2)(x,     y + 1)) + 0.5f) * src1_sz_recip;
++    float2 ncoords_yuv3 = (convert_float2((int2)(x + 1, y + 1)) + 0.5f) * src1_sz_recip;
 +
 +    float3 yuv0, yuv1, yuv2, yuv3;
 +

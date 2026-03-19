@@ -857,10 +857,10 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 +    if (xi >= dst2_sz.x || yi >= dst2_sz.y)
 +        return;
 +
-+    float2 ncoords_yuv0 = float2(int2(x, y)) / float2(src1_sz);
-+    float2 ncoords_yuv1 = float2(int2(x + 1, y)) / float2(src1_sz);
-+    float2 ncoords_yuv2 = float2(int2(x, y + 1)) / float2(src1_sz);
-+    float2 ncoords_yuv3 = float2(int2(x + 1, y + 1)) / float2(src1_sz);
++    float2 ncoords_yuv0 = (float2(int2(x, y)) + 0.5f) / float2(src1_sz);
++    float2 ncoords_yuv1 = (float2(int2(x + 1, y)) + 0.5f) / float2(src1_sz);
++    float2 ncoords_yuv2 = (float2(int2(x, y + 1)) + 0.5f) / float2(src1_sz);
++    float2 ncoords_yuv3 = (float2(int2(x + 1, y + 1)) + 0.5f) / float2(src1_sz);
 +
 +    float3 yuv0, yuv1, yuv2, yuv3;
 +
