@@ -1121,8 +1121,8 @@ Index: FFmpeg/libavfilter/cuda/pixfmt.h
 +
 +static __inline__ __device__ float3 read_tex_px_flt(const FFCUDAFrame& frame, int x, int y)
 +{
-+    float ncoord_x = (float)(x + 0.5f) / (float)frame.width;
-+    float ncoord_y = (float)(y + 0.5f) / (float)frame.height;
++    float ncoord_x = (float)(x + 1) / (float)(frame.width  + 1);
++    float ncoord_y = (float)(y + 1) / (float)(frame.height + 1);
 +
 +    float px_y = tex2D<float>(frame.tex[0], x, y);
 +    float2 px_uv = tex2D<float2>(frame.tex[1], ncoord_x, ncoord_y);
