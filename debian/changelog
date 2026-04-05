@@ -1,3 +1,9 @@
+jellyfin-ffmpeg (7.1.3-5) unstable; urgency=medium
+
+  * ffprobe: avoid runaway only_first_vframe probing
+
+ -- gnattu <gnattuoc@me.com>  Sun, 05 Apr 2026 12:25:00 +0000
+
 jellyfin-ffmpeg (7.1.3-4) unstable; urgency=medium
 
   * Add safe bail out for first-vframe ffprobe opt
