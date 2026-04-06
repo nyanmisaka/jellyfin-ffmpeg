@@ -30,7 +30,7 @@ jobs:
 
       - name: Set up Homebrew
         id: set-up-homebrew
-        uses: Homebrew/actions/setup-homebrew@83bdac2a10b90af5036d2905fd5c2831fefd42bd # master
+        uses: Homebrew/actions/setup-homebrew@8a142227998406381655ae2982b49542c6c9201e # master
 
       - name: Prepare prefix dir
         run: |
