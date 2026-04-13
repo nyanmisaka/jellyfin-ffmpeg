@@ -1,0 +1,12 @@
+--- a/libass/ass_compat.h
++++ b/libass/ass_compat.h
+@@ -41,6 +41,9 @@
+ #define strdup ass_strdup_fallback
+ #endif
+ 
++#ifdef _WIN32
++#undef HAVE_STRNDUP
++#endif
+ #ifndef HAVE_STRNDUP
+ #include <stddef.h>
+ char *ass_strndup_fallback(const char *s, size_t n); // definition in ass_utils.c

@@ -23,14 +23,17 @@ depends=("${MINGW_PACKAGE_PREFIX}-jellyfin-fribidi"
          "${MINGW_PACKAGE_PREFIX}-jellyfin-freetype"
          "${MINGW_PACKAGE_PREFIX}-jellyfin-libunibreak"
          "${MINGW_PACKAGE_PREFIX}-jellyfin-harfbuzz")
-source=(https://github.com/libass/${_realname}/releases/download/${pkgver}/${_realname}-${pkgver}.tar.xz)
-sha256sums=('SKIP')
+source=(https://github.com/libass/${_realname}/releases/download/${pkgver}/${_realname}-${pkgver}.tar.xz
+        fix-strndup-mingw.patch)
+sha256sums=('SKIP'
+            'SKIP')
 
 export MINGW_TOOLCHAIN_PREFIX="${MINGW_PREFIX}"
 export FF_MINGW_PREFIX="${MINGW_TOOLCHAIN_PREFIX}/ffbuild"
 
 prepare() {
   cd "${srcdir}/${_realname}-${pkgver}"
+  patch -p1 -i "${srcdir}/fix-strndup-mingw.patch"
   # autoreconf to get updated libtool for clang
   autoreconf -fiv
 }
