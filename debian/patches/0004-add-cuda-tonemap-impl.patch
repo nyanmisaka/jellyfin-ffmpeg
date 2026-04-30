@@ -743,7 +743,7 @@ Index: FFmpeg/libavfilter/cuda/host_util.c
 +  #define CU_TRSF_NORMALIZED_COORDINATES 2
 +#endif
 +        CUDA_TEXTURE_DESC tex_desc = {
-+            .addressMode = { CU_TR_ADDRESS_MODE_CLAMP },
++            .addressMode = { CU_TR_ADDRESS_MODE_CLAMP, CU_TR_ADDRESS_MODE_CLAMP },
 +            .filterMode = i == 0 ? CU_TR_FILTER_MODE_POINT : CU_TR_FILTER_MODE_LINEAR,
 +            .flags = i == 0 ? 0 : CU_TRSF_NORMALIZED_COORDINATES,
 +        };
@@ -1121,8 +1121,8 @@ Index: FFmpeg/libavfilter/cuda/pixfmt.h
 +
 +static __inline__ __device__ float3 read_tex_px_flt(const FFCUDAFrame& frame, int x, int y)
 +{
-+    float ncoord_x = (float)(x + 1) / (float)(frame.width  + 1);
-+    float ncoord_y = (float)(y + 1) / (float)(frame.height + 1);
++    float ncoord_x = (float)x / (float)frame.width;
++    float ncoord_y = (float)y / (float)frame.height;
 +
 +    float px_y = tex2D<float>(frame.tex[0], x, y);
 +    float2 px_uv = tex2D<float2>(frame.tex[1], ncoord_x, ncoord_y);
@@ -2264,7 +2264,8 @@ Index: FFmpeg/libavfilter/vf_tonemap_cuda.c
 +  #define CU_TRSF_NORMALIZED_COORDINATES 2
 +#endif
 +    CUDA_TEXTURE_DESC tex_desc = {
-+        .addressMode = { CU_TR_ADDRESS_MODE_WRAP },
++        .addressMode = { CU_TR_ADDRESS_MODE_WRAP,
++                         CU_TR_ADDRESS_MODE_WRAP },
 +        .filterMode = CU_TR_FILTER_MODE_POINT,
 +        .flags = CU_TRSF_NORMALIZED_COORDINATES,
 +    };
@@ -2559,6 +2560,9 @@ Index: FFmpeg/libavfilter/vf_tonemap_cuda.c
 +    extern const unsigned char ff_tonemap_ptx_data[];
 +    extern const unsigned int ff_tonemap_ptx_len;
 +
++    if (s->tonemap_mode == TONEMAP_MODE_AUTO)
++        s->tonemap_mode = TONEMAP_MODE_ITP;
++
 +    switch(s->tonemap) {
 +    case TONEMAP_GAMMA:
 +        if (isnan(s->param))
@@ -2774,14 +2778,6 @@ Index: FFmpeg/libavfilter/vf_tonemap_cuda.c
 +            av_log(ctx, AV_LOG_DEBUG, "Disabled dovi tradeoff on high perf GPU.\n");
 +    }
 +
-+    if (s->tonemap_mode == TONEMAP_MODE_AUTO) {
-+        if (s->tradeoff) {
-+            s->tonemap_mode = TONEMAP_MODE_LUM;
-+        } else {
-+            s->tonemap_mode = TONEMAP_MODE_ITP;
-+        }
-+    }
-+
 +    if (s->cu_module) {
 +        ret = CHECK_CU(cu->cuModuleUnload(s->cu_module));
 +        if (ret < 0)
@@ -2952,6 +2948,10 @@ Index: FFmpeg/libavfilter/vf_tonemap_cuda.c
 +                                      BLOCKX, BLOCKY, 1, 0, s->hwctx->stream, (s->lut_buffer ? args2 : args), NULL));
 +
 +fail:
++    for (int i = 0; i < src.planes; i++)
++        if (src.tex[i])
++            CHECK_CU(cu->cuTexObjectDestroy(src.tex[i]));
++
 +    return ret;
 +}
 +

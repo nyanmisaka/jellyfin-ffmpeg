@@ -325,10 +325,10 @@ prepare_extra_amd64() {
     pushd ${SOURCE_DIR}
     mkdir libdrm
     pushd libdrm
-    libdrm_ver="2.4.131"
-    libdrm_link="https://dri.freedesktop.org/libdrm/libdrm-${libdrm_ver}.tar.xz"
-    wget ${libdrm_link} -O libdrm.tar.xz
-    tar xaf libdrm.tar.xz
+    libdrm_ver="libdrm-2.4.131"
+    libdrm_link="https://gitlab.freedesktop.org/mesa/libdrm/-/archive/${libdrm_ver}/libdrm-${libdrm_ver}.tar.gz"
+    wget ${libdrm_link} -O libdrm.tar.gz
+    tar xaf libdrm.tar.gz
     meson setup libdrm-${libdrm_ver} drm_build \
         --prefix=${TARGET_DIR} \
         --libdir=lib \
