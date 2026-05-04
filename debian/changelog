@@ -1,3 +1,10 @@
+jellyfin-ffmpeg (8.1.1-1) unstable; urgency=medium
+
+  * New upstream version 8.1.1
+  * Rename package to jellyin-ffmpeg8
+
+ -- nyanmisaka <nst799610810@gmail.com>  Mon, 4 May 2026 17:49:42 +0800
+
 jellyfin-ffmpeg (7.1.3-6) unstable; urgency=medium
 
   * Enable Ubuntu 26.04 LTS (Resolute) in release builds
