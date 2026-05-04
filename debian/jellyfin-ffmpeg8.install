@@ -5,6 +5,5 @@ libavdevice/libavdevice.so* usr/lib/jellyfin-ffmpeg/lib
 libavfilter/libavfilter.so* usr/lib/jellyfin-ffmpeg/lib
 libavformat/libavformat.so* usr/lib/jellyfin-ffmpeg/lib
 libavutil/libavutil.so* usr/lib/jellyfin-ffmpeg/lib
-libpostproc/libpostproc.so* usr/lib/jellyfin-ffmpeg/lib
 libswresample/libswresample.so* usr/lib/jellyfin-ffmpeg/lib
 libswscale/libswscale.so* usr/lib/jellyfin-ffmpeg/lib
