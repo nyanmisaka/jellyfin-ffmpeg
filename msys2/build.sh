@@ -9,9 +9,10 @@ arch="x86_64"
 TARGET="win64-clang"
 VARIANT="gpl"
 
-# Copy libc++ to our prefix folder
+# Copy libc++ & libunwind to our prefix folder
 mkdir -p /clang64/ffbuild/lib
 cp /clang64/lib/libc++.a /clang64/ffbuild/lib/libc++.a
+cp /clang64/lib/libunwind.a /clang64/ffbuild/lib/libunwind.a
 
 cd "$BUILDER_ROOT"/PKGBUILD
 for pkg in *; do
@@ -81,6 +82,9 @@ PKG_CONFIG_PATH=/clang64/ffbuild/lib/pkgconfig ./configure \
     --enable-libsvtav1 \
     --enable-libdav1d \
     --enable-libfdk-aac \
+    --enable-libshaderc \
+    --enable-libplacebo \
+    --enable-vulkan \
     --enable-opencl \
     --enable-dxva2 \
     --enable-d3d11va \
