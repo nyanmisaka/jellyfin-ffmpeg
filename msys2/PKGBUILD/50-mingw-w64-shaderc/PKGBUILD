@@ -1,0 +1,81 @@
+# Maintainer: Biswapriyo Nath <nathbappai@gmail.com>
+
+_realname=shaderc
+pkgbase=mingw-w64-jellyfin-${_realname}
+pkgname=("${MINGW_PACKAGE_PREFIX}-jellyfin-${_realname}")
+pkgver=2026.1
+pkgrel=1
+pkgdesc="Collection of tools, libraries and tests for shader compilation (mingw-w64)"
+arch=('any')
+mingw_arch=('mingw64' 'ucrt64' 'clang64' 'clangarm64')
+url="https://github.com/google/shaderc"
+msys2_repository_url='https://github.com/google/shaderc'
+msys2_references=(
+  'archlinux: shaderc'
+)
+license=('spdx:Apache-2.0')
+conflicts=("${MINGW_PACKAGE_PREFIX}-${_realname}") # glslc.exe
+depends=("${MINGW_PACKAGE_PREFIX}-cc-libs")
+makedepends=("${MINGW_PACKAGE_PREFIX}-cc"
+             "${MINGW_PACKAGE_PREFIX}-cmake"
+             "${MINGW_PACKAGE_PREFIX}-ninja"
+             "${MINGW_PACKAGE_PREFIX}-python")
+source=("https://github.com/google/shaderc/archive/v${pkgver}/${_realname}-${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+export MINGW_TOOLCHAIN_PREFIX="${MINGW_PREFIX}"
+export FF_MINGW_PREFIX="${MINGW_TOOLCHAIN_PREFIX}/ffbuild"
+
+prepare() {
+  cd "${srcdir}/${_realname}-${pkgver}"
+  ./utils/git-sync-deps || return 1
+}
+
+build() {
+  mkdir -p "${srcdir}/build-${MSYSTEM}" && cd "${srcdir}/build-${MSYSTEM}"
+
+  local -a _extra_config
+  if check_option "debug" "y"; then
+    _extra_config+=(-DCMAKE_BUILD_TYPE=Debug)
+  else
+    _extra_config+=(-DCMAKE_BUILD_TYPE=Release)
+  fi
+
+  MSYS2_ARG_CONV_EXCL="-DCMAKE_INSTALL_PREFIX=" \
+  ${MINGW_TOOLCHAIN_PREFIX}/bin/cmake.exe \
+    -GNinja \
+    -DCMAKE_INSTALL_PREFIX=${FF_MINGW_PREFIX} \
+    "${_extra_config[@]}" \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DENABLE_GLSLANG_BINARIES=ON \
+    -DSPIRV_TOOLS_BUILD_STATIC=ON \
+    -DSHADERC_SKIP_TESTS=ON \
+    -DSHADERC_SKIP_EXAMPLES=ON \
+    -DSHADERC_SKIP_COPYRIGHT_CHECK=ON \
+    -DSHADERC_ENABLE_WERROR_COMPILE=OFF \
+    -DPython_EXECUTABLE="${MINGW_TOOLCHAIN_PREFIX}/bin/python.exe" \
+    ../${_realname}-${pkgver}
+
+  ${MINGW_TOOLCHAIN_PREFIX}/bin/cmake.exe --build ./
+}
+
+package() {
+  cd "${srcdir}/build-${MSYSTEM}"
+
+  DESTDIR="${pkgdir}" ${MINGW_TOOLCHAIN_PREFIX}/bin/cmake.exe --install .
+
+  install -Dm755 "glslc/glslc.exe" \
+    -t "${pkgdir}${MINGW_TOOLCHAIN_PREFIX}/bin"
+
+  install -Dm644 "libshaderc_util/libshaderc_util.a" \
+    -t "${pkgdir}${FF_MINGW_PREFIX}/lib"
+
+  pushd "${pkgdir}${FF_MINGW_PREFIX}/lib/pkgconfig"
+  echo "Libs: -lstdc++" >> shaderc_combined.pc
+  echo "Libs: -lstdc++" >> shaderc_static.pc
+  cp shaderc_combined.pc shaderc.pc
+  popd
+
+  install -Dm644 "${srcdir}/${_realname}-${pkgver}/LICENSE" \
+    "${pkgdir}${FF_MINGW_PREFIX}/share/licenses/${_realname}/LICENSE"
+}

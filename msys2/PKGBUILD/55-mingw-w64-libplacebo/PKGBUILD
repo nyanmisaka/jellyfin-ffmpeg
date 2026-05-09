@@ -1,0 +1,72 @@
+# Maintainer: Alexey Pavlov <alexpux@gmail.com>
+
+_realname=libplacebo
+pkgbase=mingw-w64-jellyfin-${_realname}
+pkgname="${MINGW_PACKAGE_PREFIX}-jellyfin-${_realname}"
+pkgver=7.360.1
+pkgrel=1
+pkgdesc="Reusable library for GPU-accelerated video/image rendering primitives (mingw-w64)"
+arch=('any')
+mingw_arch=('mingw64' 'ucrt64' 'clang64' 'clangarm64')
+url="https://code.videolan.org/videolan/libplacebo"
+msys2_repository_url='https://code.videolan.org/videolan/libplacebo'
+depends=("${MINGW_PACKAGE_PREFIX}-jellyfin-shaderc"
+         "${MINGW_PACKAGE_PREFIX}-jellyfin-spirv-cross"
+         "${MINGW_PACKAGE_PREFIX}-jellyfin-vulkan")
+makedepends=("${MINGW_PACKAGE_PREFIX}-cc"
+             "${MINGW_PACKAGE_PREFIX}-meson"
+             "${MINGW_PACKAGE_PREFIX}-pkgconf"
+             "${MINGW_PACKAGE_PREFIX}-jellyfin-vulkan-headers")
+license=('LGPL2.1')
+source=("${_realname}"::"git+https://code.videolan.org/videolan/${_realname}.git#tag=v${pkgver}"
+        "0001-libav-utils-fix-non-multiplane-fmt-bit_shift-in-pl_m.patch")
+sha256sums=('SKIP'
+            'c9ba5eb29194fd4d84dbee63ede7ac328f43bc26b016b11458e4684388617f43')
+
+export MINGW_TOOLCHAIN_PREFIX="${MINGW_PREFIX}"
+export FF_MINGW_PREFIX="${MINGW_TOOLCHAIN_PREFIX}/ffbuild"
+
+prepare() {
+  cd "${srcdir}/${_realname}"
+  git submodule update --init --recursive --depth=1
+  patch -p1 -i "${srcdir}/0001-libav-utils-fix-non-multiplane-fmt-bit_shift-in-pl_m.patch"
+}
+
+build() {
+  export PKG_CONFIG_PATH="${FF_MINGW_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH}"
+
+  mkdir -p "${srcdir}"/build-static-${MSYSTEM} && cd "${srcdir}"/build-static-${MSYSTEM}
+
+  MSYS2_ARG_CONV_EXCL="--prefix=" \
+    meson setup \
+      --prefix="${FF_MINGW_PREFIX}" \
+      --buildtype=plain \
+      --default-library=static \
+      --prefer-static \
+      -Dvulkan=enabled \
+      -Dd3d11=enabled \
+      -Dvk-proc-addr=enabled \
+      -Dvulkan-registry="${FF_MINGW_PREFIX}/share/vulkan/registry/vk.xml" \
+      -Dshaderc=enabled \
+      -Dglslang=disabled \
+      -Dlcms=disabled \
+      -Dlibdovi=disabled \
+      -Ddemos=false \
+      -Dtests=false \
+      -Dbench=false \
+      -Dfuzz=false \
+      -Dunwind=disabled \
+      -Dxxhash=disabled \
+      "../${_realname}"
+
+  meson compile
+}
+
+package() {
+  cd "${srcdir}/build-static-${MSYSTEM}"
+  DESTDIR="${pkgdir}" meson install
+
+  sed -i '/^Libs.private:/ s/$/ -lstdc++/' "${pkgdir}${FF_MINGW_PREFIX}/lib/pkgconfig/libplacebo.pc"
+
+  install -Dm644 "${srcdir}/${_realname}/LICENSE" "${pkgdir}${FF_MINGW_PREFIX}/share/licenses/${_realname}/LICENSE"
+}
