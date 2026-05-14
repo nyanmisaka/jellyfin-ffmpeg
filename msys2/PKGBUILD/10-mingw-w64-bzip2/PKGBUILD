@@ -14,7 +14,7 @@ msys2_references=(
   "cpe: cpe:/a:bzip:bzip2"
 )
 license=("custom")
-depends=("${MINGW_PACKAGE_PREFIX}-gcc-libs")
+depends=("${MINGW_PACKAGE_PREFIX}-cc-libs")
 makedepends=("${MINGW_PACKAGE_PREFIX}-cc" "${MINGW_PACKAGE_PREFIX}-autotools")
 options=('strip' 'staticlibs')
 source=("https://mirrors.edge.kernel.org/sourceware/bzip2/bzip2-${pkgver}.tar.gz"

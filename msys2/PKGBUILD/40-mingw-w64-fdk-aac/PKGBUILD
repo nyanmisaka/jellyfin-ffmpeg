@@ -14,7 +14,7 @@ msys2_references=(
 )
 license=('custom')
 makedepends=("${MINGW_PACKAGE_PREFIX}-autotools" "${MINGW_PACKAGE_PREFIX}-cc")
-_commit="529b87452cd33d45e1d0a5066d20b64f10b38845"
+_commit="9896ddc0d08bb3f764f01d5e372bec1c068ad8f5"
 source=("${_realname}"::"git+https://gitlab.freedesktop.org/wtaymans/${_realname}.git#commit=${_commit}")
 sha256sums=('SKIP')
 
