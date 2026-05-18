@@ -96,7 +96,7 @@ Index: FFmpeg/libavfilter/colorspace.c
  void ff_matrix_mul_3x3(double dst[3][3],
                 const double src1[3][3], const double src2[3][3])
  {
-@@ -191,3 +203,159 @@ void ff_update_hdr_metadata(AVFrame *in,
+@@ -191,3 +203,149 @@ void ff_update_hdr_metadata(AVFrame *in,
              metadata->max_luminance = av_d2q(peak * REFERENCE_WHITE, 10000);
      }
  }
@@ -220,36 +220,26 @@ Index: FFmpeg/libavfilter/colorspace.c
 +    return ff_inverse_eotf_st2084_common(x);
 +}
 +
-+float ff_ootf_1_2(float x) {
-+    return x > 0.0f ? powf(x, 1.2f) : x;
-+}
-+
-+float ff_inverse_ootf_1_2(float x) {
-+    return x > 0.0f ? powf(x, 1.0f / 1.2f) : x;
-+}
-+
-+float ff_oetf_arib_b67(float x) {
-+    x = FFMAX(x, 0.0f);
-+    return x <= (1.0f / 12.0f)
-+           ? sqrtf(3.0f * x)
-+           : (ARIB_B67_A * logf(12.0f * x - ARIB_B67_B) + ARIB_B67_C);
-+}
-+
-+float ff_inverse_oetf_arib_b67(float x) {
-+    x = FFMAX(x, 0.0f);
-+    return x <= 0.5f
-+           ? (x * x) * (1.0f / 3.0f)
-+           : (expf((x - ARIB_B67_C) / ARIB_B67_A) + ARIB_B67_B) * (1.0f / 12.0f);
-+}
-+
 +// linearizer for HLG/ARIB-B67
-+float ff_eotf_arib_b67(float x) {
-+    return ff_ootf_1_2(ff_inverse_oetf_arib_b67(x)) * (12.0f / REFERENCE_WHITE_HLG);
-+}
++float ff_eotf_arib_b67(float x, float ref_white)
++{
++    const AVLumaCoefficients *coeffs;
++    const float peak = ARIB_B67_MAX_LUMINANCE / ref_white;
++    const float gamma = 1.2f;
++    float luma, a, b;
 +
-+// delinearizer for HLG/ARIB-B67
-+float ff_inverse_eotf_arib_b67(float x) {
-+    return ff_oetf_arib_b67(ff_inverse_ootf_1_2(x / (12.0f / REFERENCE_WHITE_HLG)));
++    if (!(coeffs = av_csp_luma_coeffs_from_avcsp(AVCOL_SPC_BT2020_NCL)))
++        return x;
++
++    a = 4.0f * x * x;
++    b = expf((x - ARIB_B67_C) * (1.0f / ARIB_B67_A)) + ARIB_B67_B;
++    x = (x > 0.5f ? b : a) * (1.0f / 12.0f);
++
++    luma = av_q2d(coeffs->cr) * x +
++           av_q2d(coeffs->cg) * x +
++           av_q2d(coeffs->cb) * x;
++
++    return x * peak * powf(FFMAX(luma, 0.0f), gamma - 1.0f);
 +}
 +
 +// delinearizer for BT709, BT2020-10
@@ -260,7 +250,7 @@ Index: FFmpeg/libavfilter/colorspace.h
 ===================================================================
 --- FFmpeg.orig/libavfilter/colorspace.h
 +++ FFmpeg/libavfilter/colorspace.h
-@@ -23,10 +23,67 @@
+@@ -23,10 +23,68 @@
  #include "libavutil/csp.h"
  #include "libavutil/frame.h"
  #include "libavutil/pixfmt.h"
@@ -270,6 +260,7 @@ Index: FFmpeg/libavfilter/colorspace.h
 +#define REFERENCE_WHITE_ALT 203.0f
 +#define REFERENCE_WHITE_HLG 3.17955f
 +#define ST2084_MAX_LUMINANCE 10000.0f
++#define ARIB_B67_MAX_LUMINANCE 1000.0f
 +#define ST2084_M1 0.1593017578125f
 +#define ST2084_M2 78.84375f
 +#define ST2084_C1 0.8359375f
@@ -328,7 +319,7 @@ Index: FFmpeg/libavfilter/colorspace.h
  void ff_matrix_mul_3x3(double dst[3][3],
                 const double src1[3][3], const double src2[3][3]);
  void ff_matrix_mul_3x3_vec(double dst[3], const double vec[3], const double mat[3][3]);
-@@ -38,4 +95,19 @@ void ff_fill_rgb2yuv_table(const AVLumaC
+@@ -38,4 +96,14 @@ void ff_fill_rgb2yuv_table(const AVLumaC
  double ff_determine_signal_peak(AVFrame *in);
  void ff_update_hdr_metadata(AVFrame *in, double peak);
  
@@ -339,12 +330,7 @@ Index: FFmpeg/libavfilter/colorspace.h
 +float ff_eotf_st2084(float x, float ref_white);
 +float ff_inverse_eotf_st2084_common(float x);
 +float ff_inverse_eotf_st2084(float x, float ref_white);
-+float ff_ootf_1_2(float x);
-+float ff_inverse_ootf_1_2(float x);
-+float ff_oetf_arib_b67(float x);
-+float ff_inverse_oetf_arib_b67(float x);
-+float ff_eotf_arib_b67(float x);
-+float ff_inverse_eotf_arib_b67(float x);
++float ff_eotf_arib_b67(float x, float ref_white);
 +float ff_inverse_eotf_bt1886(float x);
 +
  #endif
@@ -352,7 +338,7 @@ Index: FFmpeg/libavfilter/cuda/colorspace_common.h
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/cuda/colorspace_common.h
-@@ -0,0 +1,341 @@
+@@ -0,0 +1,349 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -381,6 +367,7 @@ Index: FFmpeg/libavfilter/cuda/colorspace_common.h
 +#define REFERENCE_WHITE_HLG 3.17955f
 +
 +#define ST2084_MAX_LUMINANCE 10000.0f
++#define ARIB_B67_MAX_LUMINANCE 1000.0f
 +
 +#define ST2084_M1 0.1593017578125f
 +#define ST2084_M2 78.84375f
@@ -394,6 +381,7 @@ Index: FFmpeg/libavfilter/cuda/colorspace_common.h
 +
 +#define FLOAT_EPS 1e-6f
 +
++extern __constant__ const float3 luma_src;
 +extern __constant__ const float3 luma_dst;
 +extern __constant__ const float3 ycc2rgb_offset;
 +extern __constant__ const enum AVColorTransferCharacteristic trc_src, trc_dst;
@@ -410,16 +398,13 @@ Index: FFmpeg/libavfilter/cuda/colorspace_common.h
 +extern __constant__ const float output_quantization_factor;
 +extern __constant__ const float output_quantization_scale;
 +
++static __inline__ __device__ float get_luma_src(float3 c, const float3& luma_src) {
++    return luma_src.x * c.x + luma_src.y * c.y + luma_src.z * c.z;
++}
 +
 +static __inline__ __device__ float get_luma_dst(float3 c, const float3& luma_dst) {
 +    return luma_dst.x * c.x + luma_dst.y * c.y + luma_dst.z * c.z;
 +}
-+
-+/*
-+static __inline__ __device__ float get_luma_src(float3 c, const float3& luma_src) {
-+    return luma_src.x * c.x + luma_src.y * c.y + luma_src.z * c.z;
-+}
-+*/
 +
 +static __inline__ __device__ float3 get_chroma_sample(float3 a, float3 b, float3 c, float3 d) {
 +    switch (chroma_loc_dst) {
@@ -450,8 +435,18 @@ Index: FFmpeg/libavfilter/cuda/colorspace_common.h
 +    return x;
 +}
 +
-+static __inline__ __device__ float eotf_st2084(float x) {
++template<typename T>
++static __inline__ __device__ T eotf_st2084(T x) {
 +    return eotf_st2084_common(x) * ST2084_MAX_LUMINANCE / REFERENCE_WHITE_ALT;
++}
++
++template<>
++__inline__ __device__ float3 eotf_st2084<float3>(float3 x) {
++    return make_float3(
++        eotf_st2084(x.x),
++        eotf_st2084(x.y),
++        eotf_st2084(x.z)
++    );
 +}
 +
 +// delinearizer for PQ/ST2084
@@ -471,49 +466,55 @@ Index: FFmpeg/libavfilter/cuda/colorspace_common.h
 +#endif
 +}
 +
-+static __inline__ __device__ float inverse_eotf_st2084(float x) {
-+    x *= REFERENCE_WHITE_ALT / ST2084_MAX_LUMINANCE;
-+    return inverse_eotf_st2084_common(x);
++template<typename T>
++static __inline__ __device__ T inverse_eotf_st2084(T x) {
++    return inverse_eotf_st2084_common(x * REFERENCE_WHITE_ALT / ST2084_MAX_LUMINANCE);
 +}
 +
-+static __inline__ __device__ float ootf_1_2(float x) {
-+    return x > 0.0f ? __powf(x, 1.2f) : x;
-+}
-+
-+static __inline__ __device__ float inverse_ootf_1_2(float x) {
-+    return x > 0.0f ? __powf(x, 1.0f / 1.2f) : x;
-+}
-+
-+static __inline__ __device__ float oetf_arib_b67(float x) {
-+    x = max(x, 0.0f);
-+    return x <= (1.0f / 12.0f)
-+           ? sqrtf(3.0f * x)
-+           : (ARIB_B67_A * __logf(12.0f * x - ARIB_B67_B) + ARIB_B67_C);
-+}
-+
-+static __inline__ __device__ float inverse_oetf_arib_b67(float x) {
-+    x = max(x, 0.0f);
-+    return x <= 0.5f
-+           ? (x * x) * (1.0f / 3.0f)
-+           : (__expf((x - ARIB_B67_C) / ARIB_B67_A) + ARIB_B67_B) * (1.0f / 12.0f);
++template<>
++__inline__ __device__ float3 inverse_eotf_st2084<float3>(float3 x) {
++    return make_float3(
++        inverse_eotf_st2084(x.x),
++        inverse_eotf_st2084(x.y),
++        inverse_eotf_st2084(x.z)
++    );
 +}
 +
 +// linearizer for HLG/ARIB-B67
-+static __inline__ __device__ float eotf_arib_b67(float x) {
-+    return ootf_1_2(inverse_oetf_arib_b67(x)) * (12.0f / REFERENCE_WHITE_HLG);
-+}
-+
-+// delinearizer for HLG/ARIB-B67
-+static __inline__ __device__ float inverse_eotf_arib_b67(float x) {
-+    return oetf_arib_b67(inverse_ootf_1_2(x / (12.0f / REFERENCE_WHITE_HLG)));
++static __inline__ __device__ float3 eotf_arib_b67(float3 x) {
++    float peak = ARIB_B67_MAX_LUMINANCE / REFERENCE_WHITE_ALT;
++    float luma, gamma = 1.2f;
++    float3 a = make_float3(4.0f, 4.0f, 4.0f) * x * x;
++    float3 b = make_float3(
++        __expf((x.x - ARIB_B67_C) * (1.0f / ARIB_B67_A)) + ARIB_B67_B,
++        __expf((x.y - ARIB_B67_C) * (1.0f / ARIB_B67_A)) + ARIB_B67_B,
++        __expf((x.z - ARIB_B67_C) * (1.0f / ARIB_B67_A)) + ARIB_B67_B
++    );
++    x = make_float3(
++        (x.x > 0.5f ? b.x : a.x) * (1.0f / 12.0f),
++        (x.y > 0.5f ? b.y : a.y) * (1.0f / 12.0f),
++        (x.z > 0.5f ? b.z : a.z) * (1.0f / 12.0f)
++    );
++    luma = get_luma_src(x, luma_src);
++    return x * peak * __powf(max(luma, 0.0f), gamma - 1.0f);
 +}
 +
 +// delinearizer for BT709, BT2020-10
-+static __inline__ __device__ float inverse_eotf_bt1886(float x) {
++template<typename T>
++static __inline__ __device__ T inverse_eotf_bt1886(T x) {
 +    return x > 0.0f ? __powf(x, 1.0f / 2.4f) : 0.0f;
 +}
 +
-+static __inline__ __device__ float linearize(float x)
++template<>
++__inline__ __device__ float3 inverse_eotf_bt1886<float3>(float3 x) {
++    return make_float3(
++        inverse_eotf_bt1886(x.x),
++        inverse_eotf_bt1886(x.y),
++        inverse_eotf_bt1886(x.z)
++    );
++}
++
++static __inline__ __device__ float3 linearize(float3 x)
 +{
 +    if (trc_src == AVCOL_TRC_SMPTE2084 && trc_dst != AVCOL_TRC_SMPTE2084)
 +        return eotf_st2084(x);
@@ -523,7 +524,7 @@ Index: FFmpeg/libavfilter/cuda/colorspace_common.h
 +        return x;
 +}
 +
-+static __inline__ __device__ float delinearize(float x)
++static __inline__ __device__ float3 delinearize(float3 x)
 +{
 +    if (trc_dst == AVCOL_TRC_BT709 || trc_dst == AVCOL_TRC_BT2020_10)
 +        return inverse_eotf_bt1886(x);
@@ -552,9 +553,7 @@ Index: FFmpeg/libavfilter/cuda/colorspace_common.h
 +
 +static __inline__ __device__ float3 yuv2lrgb(float3 yuv) {
 +    float3 rgb = yuv2rgb(yuv.x, yuv.y, yuv.z);
-+    return make_float3(linearize(rgb.x),
-+                       linearize(rgb.y),
-+                       linearize(rgb.z));
++    return linearize(rgb);
 +}
 +
 +static __inline__ __device__ float3 rgb2yuv(float r, float g, float b) {
@@ -585,10 +584,8 @@ Index: FFmpeg/libavfilter/cuda/colorspace_common.h
 +}
 +
 +static __inline__ __device__ float3 lrgb2yuv(float3 c) {
-+    float r = delinearize(c.x);
-+    float g = delinearize(c.y);
-+    float b = delinearize(c.z);
-+    return rgb2yuv(r, g, b);
++    float3 rgb = delinearize(c);
++    return rgb2yuv(rgb.x, rgb.y, rgb.z);
 +}
 +
 +static __inline__ __device__ float3 lrgb2lrgb(float3 c) {
@@ -604,10 +601,7 @@ Index: FFmpeg/libavfilter/cuda/colorspace_common.h
 +}
 +
 +static __inline__ __device__ float3 rgb2lrgb(float3 c) {
-+    float r = linearize(c.x);
-+    float g = linearize(c.y);
-+    float b = linearize(c.z);
-+    return make_float3(r, g, b);
++    return linearize(c);
 +}
 +
 +static __inline__ __device__ float3 ycc2rgb(float y, float cb, float cr) {
@@ -1993,7 +1987,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_cuda.c
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/vf_tonemap_cuda.c
-@@ -0,0 +1,1281 @@
+@@ -0,0 +1,1282 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -2600,7 +2594,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_cuda.c
 +    if (out_trc == AVCOL_TRC_UNSPECIFIED)
 +        out_trc = AVCOL_TRC_BT709;
 +
-+    if (!s->dovi && in_spc == AVCOL_SPC_UNSPECIFIED)
++    if (in_spc == AVCOL_SPC_UNSPECIFIED)
 +        in_spc = AVCOL_SPC_BT2020_NCL;
 +    if (out_spc == AVCOL_SPC_UNSPECIFIED)
 +        out_spc = AVCOL_SPC_BT709;
@@ -2640,6 +2634,12 @@ Index: FFmpeg/libavfilter/vf_tonemap_cuda.c
 +           av_color_range_name(in_range),
 +           av_color_range_name(out_range));
 +
++    if (!(in_coeffs = av_csp_luma_coeffs_from_avcsp(in_spc)))
++        return AVERROR(EINVAL);
++
++    if (!(out_coeffs = av_csp_luma_coeffs_from_avcsp(out_spc)))
++        return AVERROR(EINVAL);
++
 +    if (s->dovi) {
 +        for (i = 0; i < 3; i++) {
 +            for (j = 0; j < 3; j++)
@@ -2647,15 +2647,9 @@ Index: FFmpeg/libavfilter/vf_tonemap_cuda.c
 +        }
 +        ff_matrix_mul_3x3(lms2rgb_matrix, dovi_lms2rgb_matrix, s->dovi->linear);
 +    } else {
-+        if (!(in_coeffs = av_csp_luma_coeffs_from_avcsp(in_spc)))
-+            return AVERROR(EINVAL);
-+
 +        ff_fill_rgb2yuv_table(in_coeffs, yuv_matrix);
 +        ff_matrix_invert_3x3(yuv_matrix, rgb_matrix);
 +    }
-+
-+    if (!(out_coeffs = av_csp_luma_coeffs_from_avcsp(out_spc)))
-+        return AVERROR(EINVAL);
 +
 +    ff_fill_rgb2yuv_table(out_coeffs, yuv_matrix);
 +
@@ -2730,6 +2724,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_cuda.c
 +    CONSTANT_A(".u8 rgb2rgb_passthrough = %i", 1, in_pri == out_pri);
 +    CONSTANT_M("rgb2rgb_matrix", rgb2rgb_matrix);
 +    CONSTANT_M("lms2rgb_matrix", lms2rgb_matrix);
++    CONSTANT_C("luma_src", av_q2d(in_coeffs->cr), av_q2d(in_coeffs->cg), av_q2d(in_coeffs->cb));
 +    CONSTANT_C("luma_dst", av_q2d(out_coeffs->cr), av_q2d(out_coeffs->cg), av_q2d(out_coeffs->cb));
 +    CONSTANT_C("ycc2rgb_offset", ycc2rgb_offset[0], ycc2rgb_offset[1], ycc2rgb_offset[2]);
 +
