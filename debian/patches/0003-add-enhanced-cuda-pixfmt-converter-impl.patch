@@ -327,7 +327,7 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.c
  #include "filters.h"
  #include "scale_eval.h"
  #include "video.h"
-@@ -108,6 +110,9 @@ typedef struct CUDAScaleContext {
+@@ -121,6 +123,9 @@ typedef struct CUDAScaleContext {
      int interp_as_integer;
  
      float param;
@@ -337,7 +337,7 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.c
  } CUDAScaleContext;
  
  static av_cold int cudascale_init(AVFilterContext *ctx)
-@@ -129,13 +134,23 @@ static av_cold void cudascale_uninit(AVF
+@@ -142,13 +147,23 @@ static av_cold void cudascale_uninit(AVF
  {
      CUDAScaleContext *s = ctx->priv;
  
@@ -364,7 +364,7 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.c
          CHECK_CU(cu->cuCtxPopCurrent(&dummy));
      }
  
-@@ -275,6 +290,69 @@ static av_cold int init_processing_chain
+@@ -294,6 +309,67 @@ static av_cold int init_processing_chain
      return 0;
  }
  
@@ -387,30 +387,28 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.c
 +        .srcPitch      = ff_fruit_dither_size * sizeof(ff_fruit_dither_matrix[0]),
 +        .dstPitch      = ff_fruit_dither_size * sizeof(ff_fruit_dither_matrix[0]),
 +        .WidthInBytes  = ff_fruit_dither_size * sizeof(ff_fruit_dither_matrix[0]),
-+        .Height        = ff_fruit_dither_size,
++        .Height        = ff_fruit_dither_size
 +    };
 +
-+#ifndef CU_TRSF_NORMALIZED_COORDINATES
-+  #define CU_TRSF_NORMALIZED_COORDINATES 2
-+#endif
 +    CUDA_TEXTURE_DESC tex_desc = {
 +        .addressMode = { CU_TR_ADDRESS_MODE_WRAP,
 +                         CU_TR_ADDRESS_MODE_WRAP },
-+        .filterMode = CU_TR_FILTER_MODE_POINT,
-+        .flags = CU_TRSF_NORMALIZED_COORDINATES,
++        .filterMode  = CU_TR_FILTER_MODE_POINT,
++        .flags       = 2 /* CU_TRSF_NORMALIZED_COORDINATES */
 +    };
 +
 +    CUDA_RESOURCE_DESC res_desc = {
-+        .resType = CU_RESOURCE_TYPE_PITCH2D,
-+        .res.pitch2D.format = CU_AD_FORMAT_UNSIGNED_INT16,
-+        .res.pitch2D.numChannels = 1,
-+        .res.pitch2D.width = ff_fruit_dither_size,
-+        .res.pitch2D.height = ff_fruit_dither_size,
++        .resType                  = CU_RESOURCE_TYPE_PITCH2D,
++        .res.pitch2D.format       = CU_AD_FORMAT_UNSIGNED_INT16,
++        .res.pitch2D.numChannels  = 1,
++        .res.pitch2D.width        = ff_fruit_dither_size,
++        .res.pitch2D.height       = ff_fruit_dither_size,
 +        .res.pitch2D.pitchInBytes = ff_fruit_dither_size * sizeof(ff_fruit_dither_matrix[0]),
-+        .res.pitch2D.devPtr = 0,
++        .res.pitch2D.devPtr       = 0
 +    };
 +
-+    av_assert0(sizeof(ff_fruit_dither_matrix) == sizeof(ff_fruit_dither_matrix[0]) * ff_fruit_dither_size * ff_fruit_dither_size);
++    av_assert0(sizeof(ff_fruit_dither_matrix) ==
++        sizeof(ff_fruit_dither_matrix[0]) * ff_fruit_dither_size * ff_fruit_dither_size);
 +
 +    if ((ret = CHECK_CU(cu->cuCtxPushCurrent(cuda_ctx))) < 0)
 +        return ret;
@@ -434,7 +432,7 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.c
  static av_cold int cudascale_load_functions(AVFilterContext *ctx)
  {
      CUDAScaleContext *s = ctx->priv;
-@@ -383,6 +461,11 @@ static av_cold int cudascale_config_prop
+@@ -409,6 +485,11 @@ static av_cold int cudascale_config_prop
      s->hwctx = device_hwctx;
      s->cu_stream = s->hwctx->stream;
  
@@ -443,27 +441,22 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.c
 +            goto fail;
 +    }
 +
-     if (inlink->sample_aspect_ratio.num) {
-         outlink->sample_aspect_ratio = av_mul_q((AVRational){outlink->h*inlink->w,
-                                                              outlink->w*inlink->h},
-@@ -418,11 +501,15 @@ static int call_resize_kernel(AVFilterCo
-         (CUdeviceptr)out_frame->data[2], (CUdeviceptr)out_frame->data[3]
+     if (s->reset_sar)
+         outlink->sample_aspect_ratio = (AVRational){1, 1};
+     else if (inlink->sample_aspect_ratio.num) {
+@@ -457,7 +538,10 @@ static int call_resize_kernel(AVFilterCo
+         .src_width = src_width,
+         .src_height = src_height,
+         .param = s->param,
+-        .mpeg_range = mpeg_range
++        .mpeg_range = mpeg_range,
++        .dither_tex = s->dither_tex,
++        .dither_size = (float)ff_fruit_dither_size,
++        .dither_quantization = (float)((1 << s->out_desc->comp[0].depth) - 1)
      };
  
-+    float dither_size = (float)ff_fruit_dither_size;
-+    float dither_quantization = (float)((1 << s->out_desc->comp[0].depth) - 1);
-+
-     void *args_uchar[] = {
-         &src_tex[0], &src_tex[1], &src_tex[2], &src_tex[3],
-         &dst_devptr[0], &dst_devptr[1], &dst_devptr[2], &dst_devptr[3],
-         &dst_width, &dst_height, &dst_pitch,
--        &src_width, &src_height, &s->param
-+        &src_width, &src_height, &s->param,
-+        &s->dither_tex, &dither_size, &dither_quantization
-     };
- 
-     return CHECK_CU(cu->cuLaunchKernel(func,
-@@ -446,6 +533,7 @@ static int scalecuda_resize(AVFilterCont
+     void *args[] = { &params };
+@@ -487,6 +571,7 @@ static int scalecuda_resize(AVFilterCont
  
      for (i = 0; i < s->in_planes; i++) {
          CUDA_TEXTURE_DESC tex_desc = {
@@ -475,7 +468,7 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.cu
 ===================================================================
 --- FFmpeg.orig/libavfilter/vf_scale_cuda.cu
 +++ FFmpeg/libavfilter/vf_scale_cuda.cu
-@@ -29,6 +29,19 @@ using subsample_function_t = T (*)(cudaT
+@@ -30,6 +30,19 @@ using subsample_function_t = T (*)(cudaT
                                     int src_width, int src_height,
                                     int bit_depth, float param);
  
@@ -495,54 +488,42 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.cu
  // --- CONVERSION LOGIC ---
  
  static const ushort mask_10bit = 0xFFC0;
-@@ -64,7 +77,9 @@ static inline __device__ ushort conv_16t
-              subsample_function_t<in_T_uv> subsample_func_uv>                                  \
+@@ -90,7 +103,9 @@ static inline __device__ ushort conv_16t
      __device__ static inline void N(cudaTextureObject_t src_tex[4], T *dst[4], int xo, int yo, \
                                      int dst_width, int dst_height, int dst_pitch,              \
--                                    int src_width, int src_height, float param)
-+                                    int src_width, int src_height, float param,                \
+                                     int src_left, int src_top, int src_width, int src_height,  \
+-                                    float param, int mpeg_range)
++                                    float param, int mpeg_range,                               \
 +                                    cudaTextureObject_t dither_tex,                            \
 +                                    float dither_size, float dither_quantization)
  
  #define SUB_F(m, plane) \
      subsample_func_##m(src_tex[plane], xo, yo, \
-@@ -477,7 +492,10 @@ struct Convert_p010le_yuv420p
+@@ -248,7 +263,10 @@ struct Convert_planar10_planar8
  
      DEF_F(Convert, out_T)
      {
--        DEFAULT_DST(0) = conv_10to8(SUB_F(y, 0));
+-        DEFAULT_DST(0) = conv_10to8pl(SUB_F(y, 0));
 +        in_T res = SUB_F(y, 0);
 +        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
-+                                   dither_size, dither_quantization, (float)mask_10bit);
-+        DEFAULT_DST(0) = conv_10to8(res);
++                                   dither_size, dither_quantization, (float)0x3FF);
++        DEFAULT_DST(0) = conv_10to8pl(res);
      }
  
      DEF_F(Convert_uv, out_T_uv)
-@@ -498,7 +516,10 @@ struct Convert_p010le_nv12
+@@ -308,7 +326,10 @@ struct Convert_planar10_semiplanar8
  
      DEF_F(Convert, out_T)
      {
--        DEFAULT_DST(0) = conv_10to8(SUB_F(y, 0));
+-        DEFAULT_DST(0) = conv_10to8pl(SUB_F(y, 0));
 +        in_T res = SUB_F(y, 0);
 +        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
-+                                   dither_size, dither_quantization, (float)mask_10bit);
-+        DEFAULT_DST(0) = conv_10to8(res);
++                                   dither_size, dither_quantization, (float)0x3FF);
++        DEFAULT_DST(0) = conv_10to8pl(res);
      }
  
      DEF_F(Convert_uv, out_T_uv)
-@@ -521,7 +542,10 @@ struct Convert_p010le_yuv444p
- 
-     DEF_F(Convert, out_T)
-     {
--        DEFAULT_DST(0) = conv_10to8(SUB_F(y, 0));
-+        in_T res = SUB_F(y, 0);
-+        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
-+                                   dither_size, dither_quantization, (float)mask_10bit);
-+        DEFAULT_DST(0) = conv_10to8(res);
-     }
- 
-     DEF_F(Convert_uv, out_T_uv)
-@@ -607,7 +631,10 @@ struct Convert_p016le_yuv420p
+@@ -376,7 +397,10 @@ struct Convert_planar16_planar8
  
      DEF_F(Convert, out_T)
      {
@@ -554,7 +535,19 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.cu
      }
  
      DEF_F(Convert_uv, out_T_uv)
-@@ -628,7 +655,10 @@ struct Convert_p016le_nv12
+@@ -396,7 +420,10 @@ struct Convert_planar16_planar10
+ 
+     DEF_F(Convert, out_T)
+     {
+-        DEFAULT_DST(0) = conv_16to10pl(SUB_F(y, 0));
++        in_T res = SUB_F(y, 0);
++        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
++                                   dither_size, dither_quantization, (float)mask_16bit);
++        DEFAULT_DST(0) = conv_16to10pl(res);
+     }
+ 
+     DEF_F(Convert_uv, out_T_uv)
+@@ -436,7 +463,10 @@ struct Convert_planar16_semiplanar8
  
      DEF_F(Convert, out_T)
      {
@@ -566,19 +559,7 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.cu
      }
  
      DEF_F(Convert_uv, out_T_uv)
-@@ -651,7 +681,10 @@ struct Convert_p016le_yuv444p
- 
-     DEF_F(Convert, out_T)
-     {
--        DEFAULT_DST(0) = conv_16to8(SUB_F(y, 0));
-+        in_T res = SUB_F(y, 0);
-+        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
-+                                   dither_size, dither_quantization, (float)mask_16bit);
-+        DEFAULT_DST(0) = conv_16to8(res);
-     }
- 
-     DEF_F(Convert_uv, out_T_uv)
-@@ -672,7 +705,10 @@ struct Convert_p016le_p010le
+@@ -458,7 +488,10 @@ struct Convert_planar16_semiplanar10
  
      DEF_F(Convert, out_T)
      {
@@ -590,7 +571,31 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.cu
      }
  
      DEF_F(Convert_uv, out_T_uv)
-@@ -737,7 +773,10 @@ struct Convert_yuv444p16le_yuv420p
+@@ -634,7 +667,10 @@ struct Convert_semiplanar10_planar8
+ 
+     DEF_F(Convert, out_T)
+     {
+-        DEFAULT_DST(0) = conv_10to8(SUB_F(y, 0));
++        in_T res = SUB_F(y, 0);
++        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
++                                   dither_size, dither_quantization, (float)mask_10bit);
++        DEFAULT_DST(0) = conv_10to8(res);
+     }
+ 
+     DEF_F(Convert_uv, out_T_uv)
+@@ -697,7 +733,10 @@ struct Convert_semiplanar10_semiplanar8
+ 
+     DEF_F(Convert, out_T)
+     {
+-        DEFAULT_DST(0) = conv_10to8(SUB_F(y, 0));
++        in_T res = SUB_F(y, 0);
++        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
++                                   dither_size, dither_quantization, (float)mask_10bit);
++        DEFAULT_DST(0) = conv_10to8(res);
+     }
+ 
+     DEF_F(Convert_uv, out_T_uv)
+@@ -765,7 +804,10 @@ struct Convert_semiplanar16_planar8
  
      DEF_F(Convert, out_T)
      {
@@ -602,7 +607,19 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.cu
      }
  
      DEF_F(Convert_uv, out_T_uv)
-@@ -757,7 +796,10 @@ struct Convert_yuv444p16le_nv12
+@@ -786,7 +828,10 @@ struct Convert_semiplanar16_planar10
+ 
+     DEF_F(Convert, out_T)
+     {
+-        DEFAULT_DST(0) = conv_16to10pl(SUB_F(y, 0));
++        in_T res = SUB_F(y, 0);
++        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
++                                   dither_size, dither_quantization, (float)mask_16bit);
++        DEFAULT_DST(0) = conv_16to10pl(res);
+     }
+ 
+     DEF_F(Convert_uv, out_T_uv)
+@@ -828,7 +873,10 @@ struct Convert_semiplanar16_semiplanar8
  
      DEF_F(Convert, out_T)
      {
@@ -614,19 +631,7 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.cu
      }
  
      DEF_F(Convert_uv, out_T_uv)
-@@ -779,7 +821,10 @@ struct Convert_yuv444p16le_yuv444p
- 
-     DEF_F(Convert, out_T)
-     {
--        DEFAULT_DST(0) = conv_16to8(SUB_F(y, 0));
-+        in_T res = SUB_F(y, 0);
-+        res = (in_T)get_dithered_y((float)res, read_dither(dither_tex, dither_size, xo, yo),
-+                                   dither_size, dither_quantization, (float)mask_16bit);
-+        DEFAULT_DST(0) = conv_16to8(res);
-     }
- 
-     DEF_F(Convert_uv, out_T_uv)
-@@ -799,7 +844,10 @@ struct Convert_yuv444p16le_p010le
+@@ -851,7 +899,10 @@ struct Convert_semiplanar16_semiplanar10
  
      DEF_F(Convert, out_T)
      {
@@ -638,7 +643,7 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.cu
      }
  
      DEF_F(Convert_uv, out_T_uv)
-@@ -1015,6 +1063,9 @@ typedef float4 (*coeffs_function_t)(floa
+@@ -1045,6 +1096,9 @@ typedef float4 (*coeffs_function_t)(floa
  
  __device__ static inline float4 lanczos_coeffs(float x, float param)
  {
@@ -648,7 +653,7 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.cu
      const float pi = 3.141592654f;
  
      float4 res = make_float4(
-@@ -1129,12 +1180,15 @@ __device__ static inline T Subsample_Bic
+@@ -1162,12 +1216,15 @@ __device__ static inline T Subsample_Bic
  #define PIX(x, y) tex2D<floatT>(tex, (x), (y))
  
      return from_floatN<T, floatT>(
@@ -670,25 +675,28 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.cu
      );
  
  #undef PIX
-@@ -1147,7 +1201,9 @@ __device__ static inline T Subsample_Bic
-     cudaTextureObject_t src_tex_2, cudaTextureObject_t src_tex_3, \
-     T *dst_0, T *dst_1, T *dst_2, T *dst_3,                       \
-     int dst_width, int dst_height, int dst_pitch,                 \
--    int src_width, int src_height, float param
-+    int src_width, int src_height, float param,                   \
-+    cudaTextureObject_t dither_tex,                               \
-+    float dither_size, float dither_quantization
- 
- #define SUBSAMPLE(Convert, T) \
-     cudaTextureObject_t src_tex[4] =                    \
-@@ -1159,7 +1215,9 @@ __device__ static inline T Subsample_Bic
-     Convert(                                            \
-         src_tex, dst, xo, yo,                           \
-         dst_width, dst_height, dst_pitch,               \
--        src_width, src_height, param);
-+        src_width, src_height, param,                   \
-+        dither_tex,                                     \
-+        dither_size, dither_quantization);
+@@ -1194,7 +1251,8 @@ __device__ static inline T Subsample_Bic
+         params.dst_width, params.dst_height, params.dst_pitch, \
+         params.src_left, params.src_top,                \
+         params.src_width, params.src_height,            \
+-        params.param, params.mpeg_range);
++        params.param, params.mpeg_range,                \
++        params.dither_tex, params.dither_size, params.dither_quantization);
  
  extern "C" {
  
+Index: FFmpeg/libavfilter/vf_scale_cuda.h
+===================================================================
+--- FFmpeg.orig/libavfilter/vf_scale_cuda.h
++++ FFmpeg/libavfilter/vf_scale_cuda.h
+@@ -45,6 +45,10 @@ typedef struct {
+     int src_height;
+     float param;
+     int mpeg_range;
++
++    CUtexObject dither_tex;
++    float dither_size;
++    float dither_quantization;
+ } CUDAScaleKernelParams;
+ 
+ #endif
