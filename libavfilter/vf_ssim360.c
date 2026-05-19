@@ -38,7 +38,7 @@
 
 /*
  * @file
- * Caculate the SSIM between two input 360 videos.
+ * Calculate the SSIM between two input 360 videos.
  */
 
 #include <math.h>
@@ -250,7 +250,7 @@ static const AVOption ssim360_options[] = {
       OFFSET(ref_pad), AV_OPT_TYPE_FLOAT, {.dbl = .0f}, 0, 10, .flags = FLAGS },
 
     { "main_pad",
-      "Expansion (padding) coeffiecient for each cube face of the main video",
+      "Expansion (padding) coefficient for each cube face of the main video",
       OFFSET(main_pad), AV_OPT_TYPE_FLOAT, {.dbl = .0f}, 0, 10, .flags = FLAGS },
 
     { "use_tape",
@@ -1034,10 +1034,16 @@ generate_eye_tape_map(SSIM360Context *s,
     float x_range = end_x - start_x;
 
     // Ensure tape length is a multiple of 4, for full SSIM block coverage
-    int tape_length = s->tape_length[plane] = ((int)ROUNDED_DIV(x_range, 4)) << 2;
+    float tape_length_f = ROUNDED_DIV(x_range, 4);
+    int tape_length;
 
-    s->ref_tape_map[plane][eye]  = av_malloc_array(tape_length * 8, sizeof(BilinearMap));
-    s->main_tape_map[plane][eye] = av_malloc_array(tape_length * 8, sizeof(BilinearMap));
+    if (!(tape_length_f > 0.f) || tape_length_f > INT_MAX / 4.0f)
+        return AVERROR(EINVAL);
+
+    tape_length = s->tape_length[plane] = (int)tape_length_f << 2;
+
+    s->ref_tape_map[plane][eye]  = av_malloc_array(tape_length, 8 * sizeof(BilinearMap));
+    s->main_tape_map[plane][eye] = av_malloc_array(tape_length, 8 * sizeof(BilinearMap));
     if (!s->ref_tape_map[plane][eye] || !s->main_tape_map[plane][eye])
         return AVERROR(ENOMEM);
 
@@ -1745,15 +1751,15 @@ static const AVFilterPad ssim360_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_ssim360 = {
-    .name          = "ssim360",
-    .description   = NULL_IF_CONFIG_SMALL("Calculate the SSIM between two 360 video streams."),
+const FFFilter ff_vf_ssim360 = {
+    .p.name        = "ssim360",
+    .p.description = NULL_IF_CONFIG_SMALL("Calculate the SSIM between two 360 video streams."),
+    .p.priv_class  = &ssim360_class,
     .preinit       = ssim360_framesync_preinit,
     .init          = init,
     .uninit        = uninit,
     .activate      = activate,
     .priv_size     = sizeof(SSIM360Context),
-    .priv_class    = &ssim360_class,
     FILTER_INPUTS(ssim360_inputs),
     FILTER_OUTPUTS(ssim360_outputs),
     FILTER_PIXFMTS_ARRAY(ssim360_pixfmts),

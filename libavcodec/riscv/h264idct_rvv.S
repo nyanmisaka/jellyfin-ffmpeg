@@ -542,7 +542,7 @@ func ff_h264_idct8_dc_add_\depth\()_rvv, zve64x
 endfunc
 .endr
 
-const ff_h264_scan8
+const ff_h264_scan8, align=0
         .byte    014,  015,  024,  025,  016,  017,  026,  027
         .byte    034,  035,  044,  045,  036,  037,  046,  047
         .byte    064,  065,  074,  075,  066,  067,  076,  077
@@ -629,6 +629,7 @@ endfunc
 .endm
 
 .macro idct4_add8 type, depth
+#if (__riscv_xlen == 64)
 func ff_h264_idct4_add\type\()_\depth\()_rvv, zve32x
 .if \depth == 8
         lpad    0
@@ -682,6 +683,7 @@ func ff_h264_idct4_add\type\()_\depth\()_rvv, zve32x
         vsetivli    zero, 4, e8, m1, ta, ma
         j       .Lidct4_add4_\depth\()_rvv
 endfunc
+#endif
 .endm
 
 .irp    depth, 8, 16

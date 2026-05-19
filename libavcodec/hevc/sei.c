@@ -79,6 +79,21 @@ static int decode_nal_sei_pic_timing(HEVCSEI *s, GetBitContext *gb,
     return 0;
 }
 
+static int decode_nal_sei_recovery_point(HEVCSEI *s, GetBitContext *gb)
+{
+    HEVCSEIRecoveryPoint *rec = &s->recovery_point;
+    int recovery_poc_cnt = get_se_golomb(gb);
+
+    if (recovery_poc_cnt > INT16_MAX || recovery_poc_cnt < INT16_MIN)
+        return AVERROR_INVALIDDATA;
+    rec->recovery_poc_cnt = recovery_poc_cnt;
+    rec->exact_match_flag = get_bits1(gb);
+    rec->broken_link_flag = get_bits1(gb);
+    rec->has_recovery_poc = 1;
+
+    return 0;
+}
+
 static int decode_nal_sei_active_parameter_sets(HEVCSEI *s, GetBitContext *gb, void *logctx)
 {
     int num_sps_ids_minus1;
@@ -180,7 +195,7 @@ static int decode_nal_sei_3d_reference_displays_info(HEVCSEITDRDI *s, GetBitCont
         else
             length = FFMAX(0, (int)s->exponent_ref_display_width[i] +
                               (int)s->prec_ref_display_width - 31);
-        s->mantissa_ref_display_width[i] = get_bits_long(gb, length);
+        s->mantissa_ref_display_width[i] = get_bits64(gb, length);
         if (s->ref_viewing_distance_flag) {
             s->exponent_ref_viewing_distance[i] = get_bits(gb, 6);
             if (s->exponent_ref_viewing_distance[i] > 62)
@@ -190,7 +205,7 @@ static int decode_nal_sei_3d_reference_displays_info(HEVCSEITDRDI *s, GetBitCont
             else
                 length = FFMAX(0, (int)s->exponent_ref_viewing_distance[i] +
                                   (int)s->prec_ref_viewing_dist - 31);
-            s->mantissa_ref_viewing_distance[i] = get_bits_long(gb, length);
+            s->mantissa_ref_viewing_distance[i] = get_bits64(gb, length);
         }
         s->additional_shift_present_flag[i] = get_bits1(gb);
         if (s->additional_shift_present_flag[i]) {
@@ -201,6 +216,8 @@ static int decode_nal_sei_3d_reference_displays_info(HEVCSEITDRDI *s, GetBitCont
         }
     }
     s->three_dimensional_reference_displays_extension_flag = get_bits1(gb);
+
+    s->present = 1;
 
     return 0;
 }
@@ -214,6 +231,8 @@ static int decode_nal_sei_prefix(GetBitContext *gb, GetByteContext *gbyte,
         return decode_nal_sei_decoded_picture_hash(&s->picture_hash, gbyte);
     case SEI_TYPE_PIC_TIMING:
         return decode_nal_sei_pic_timing(s, gb, ps, logctx);
+    case SEI_TYPE_RECOVERY_POINT:
+        return decode_nal_sei_recovery_point(s, gb);
     case SEI_TYPE_ACTIVE_PARAMETER_SETS:
         return decode_nal_sei_active_parameter_sets(s, gb, logctx);
     case SEI_TYPE_TIME_CODE:

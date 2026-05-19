@@ -59,7 +59,7 @@ static void sbr_turnoff(SpectralBandReplication *sbr) {
     sbr->start = 0;
     sbr->usac = 0;
     sbr->ready_for_dequant = 0;
-    // Init defults used in pure upsampling mode
+    // Init defaults used in pure upsampling mode
     sbr->kx[1] = 32; //Typo in spec, kx' inits to 32
     sbr->m[1] = 0;
     // Reset values for first SBR header
@@ -1287,6 +1287,8 @@ int ff_aac_sbr_decode_usac_data(AACDecContext *ac, ChannelElement *che,
         if ((sbr->data[0].bs_add_harmonic_flag = get_bits1(gb)))
             get_bits1_vector(gb, sbr->data[0].bs_add_harmonic, sbr->n[1]);
     } else if (get_bits1(gb)) { /* bs_coupling == 1 */
+        sbr->bs_coupling = 1;
+
         /* if (harmonicSBR) ... */
 
         if (read_sbr_grid(ac, sbr, gb, &sbr->data[0]))
@@ -1317,7 +1319,10 @@ int ff_aac_sbr_decode_usac_data(AACDecContext *ac, ChannelElement *che,
         if ((sbr->data[1].bs_add_harmonic_flag = get_bits1(gb)))
             get_bits1_vector(gb, sbr->data[1].bs_add_harmonic, sbr->n[1]);
     } else { /* bs_coupling == 0 */
+        sbr->bs_coupling = 0;
+
         /* if (harmonicSBR) ... */
+
         if (read_sbr_grid(ac, sbr, gb, &sbr->data[0]))
             return -1;
         if (read_sbr_grid(ac, sbr, gb, &sbr->data[1]))

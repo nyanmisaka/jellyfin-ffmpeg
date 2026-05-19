@@ -427,15 +427,21 @@ static int avi_extract_stream_metadata(AVFormatContext *s, AVStream *st)
     tag = bytestream2_get_le32(&gb);
 
     switch (tag) {
-    case MKTAG('A', 'V', 'I', 'F'):
+    case MKTAG('A', 'V', 'I', 'F'): {
+        AVExifMetadata ifd = { 0 };
+        int ret;
         // skip 4 byte padding
         bytestream2_skip(&gb, 4);
         offset = bytestream2_tell(&gb);
 
         // decode EXIF tags from IFD, AVI is always little-endian
-        return avpriv_exif_decode_ifd(s, data + offset, data_size - offset,
-                                      1, 0, &st->metadata);
-        break;
+        ret = av_exif_parse_buffer(s, data + offset, data_size - offset, &ifd, AV_EXIF_ASSUME_LE);
+        if (ret < 0)
+            return ret;
+        ret = av_exif_ifd_to_dict(s, &ifd, &st->metadata);
+        av_exif_free(&ifd);
+        return ret;
+    }
     case MKTAG('C', 'A', 'S', 'I'):
         avpriv_request_sample(s, "RIFF stream data tag type CASI (%u)", tag);
         break;
@@ -556,9 +562,11 @@ static int avi_read_header(AVFormatContext *s)
                     avi->movi_end = avi->fsize;
                 av_log(s, AV_LOG_TRACE, "movi end=%"PRIx64"\n", avi->movi_end);
                 goto end_of_header;
-            } else if (tag1 == MKTAG('I', 'N', 'F', 'O'))
+            } else if (tag1 == MKTAG('I', 'N', 'F', 'O')) {
+                if (size < 4)
+                    return AVERROR_INVALIDDATA;
                 ff_read_riff_info(s, size - 4);
-            else if (tag1 == MKTAG('n', 'c', 'd', 't'))
+            } else if (tag1 == MKTAG('n', 'c', 'd', 't'))
                 avi_read_nikon(s, list_end);
 
             break;
@@ -1828,6 +1836,10 @@ static int avi_load_index(AVFormatContext *s)
             avi->index_loaded=2;
             ret = 0;
         }else if (tag == MKTAG('L', 'I', 'S', 'T')) {
+            if (size < 4) {
+                av_log(s, AV_LOG_WARNING, "Invalid size (%u) LIST in index\n", size);
+                break;
+            }
             uint32_t tag1 = avio_rl32(pb);
 
             if (tag1 == MKTAG('I', 'N', 'F', 'O'))

@@ -828,7 +828,12 @@ static int dxv_decompress_dxt5(AVCodecContext *avctx)
 static int dxv_decompress_lzf(AVCodecContext *avctx)
 {
     DXVContext *ctx = avctx->priv_data;
-    return ff_lzf_uncompress(&ctx->gbc, &ctx->tex_data, &ctx->tex_size, &ctx->tex_data_size);
+    unsigned old_size = ctx->tex_data_size;
+    int ret = ff_lzf_uncompress(&ctx->gbc, &ctx->tex_data, &ctx->tex_size, &ctx->tex_data_size);
+    old_size = FFMAX(old_size, ctx->tex_size);
+    if (ctx->tex_data_size > old_size)
+        memset(ctx->tex_data + old_size, 0, ctx->tex_data_size - old_size);
+    return ret;
 }
 
 static int dxv_decompress_raw(AVCodecContext *avctx)
@@ -1072,7 +1077,7 @@ static int dxv_decode(AVCodecContext *avctx, AVFrame *frame,
     return avpkt->size;
 }
 
-static int dxv_init(AVCodecContext *avctx)
+static av_cold int dxv_init(AVCodecContext *avctx)
 {
     DXVContext *ctx = avctx->priv_data;
     int ret = av_image_check_size(avctx->width, avctx->height, 0, avctx);
@@ -1092,7 +1097,7 @@ static int dxv_init(AVCodecContext *avctx)
     return 0;
 }
 
-static int dxv_close(AVCodecContext *avctx)
+static av_cold int dxv_close(AVCodecContext *avctx)
 {
     DXVContext *ctx = avctx->priv_data;
 

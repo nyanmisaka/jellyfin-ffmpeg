@@ -138,6 +138,8 @@ static int zmbv_decode_xor_8(ZmbvContext *c)
             }
 
             if (d) { /* apply XOR'ed difference */
+                if (c->decomp_len - (src - c->decomp_buf) < bw2 * bh2)
+                    return AVERROR_INVALIDDATA;
                 out = output + x;
                 for (j = 0; j < bh2; j++) {
                     for (i = 0; i < bw2; i++)
@@ -150,7 +152,7 @@ static int zmbv_decode_xor_8(ZmbvContext *c)
         prev += c->width * c->bh;
     }
     if (src - c->decomp_buf != c->decomp_len)
-        av_log(c->avctx, AV_LOG_ERROR, "Used %"PTRDIFF_SPECIFIER" of %i bytes\n",
+        av_log(c->avctx, AV_LOG_ERROR, "Used %td of %i bytes\n",
                src-c->decomp_buf, c->decomp_len);
     return 0;
 }
@@ -212,6 +214,8 @@ static int zmbv_decode_xor_16(ZmbvContext *c)
             }
 
             if (d) { /* apply XOR'ed difference */
+                if (c->decomp_len - (src - c->decomp_buf) < bw2 * bh2 * 2)
+                    return AVERROR_INVALIDDATA;
                 out = output + x;
                 for (j = 0; j < bh2; j++){
                     for (i = 0; i < bw2; i++) {
@@ -226,7 +230,7 @@ static int zmbv_decode_xor_16(ZmbvContext *c)
         prev += c->width * c->bh;
     }
     if (src - c->decomp_buf != c->decomp_len)
-        av_log(c->avctx, AV_LOG_ERROR, "Used %"PTRDIFF_SPECIFIER" of %i bytes\n",
+        av_log(c->avctx, AV_LOG_ERROR, "Used %td of %i bytes\n",
                src-c->decomp_buf, c->decomp_len);
     return 0;
 }
@@ -296,6 +300,8 @@ static int zmbv_decode_xor_24(ZmbvContext *c)
             }
 
             if (d) { /* apply XOR'ed difference */
+                if (c->decomp_len - (src - c->decomp_buf) < bw2 * bh2 * 3)
+                    return AVERROR_INVALIDDATA;
                 out = output + x * 3;
                 for (j = 0; j < bh2; j++) {
                     for (i = 0; i < bw2; i++) {
@@ -311,7 +317,7 @@ static int zmbv_decode_xor_24(ZmbvContext *c)
         prev += stride * c->bh;
     }
     if (src - c->decomp_buf != c->decomp_len)
-        av_log(c->avctx, AV_LOG_ERROR, "Used %"PTRDIFF_SPECIFIER" of %i bytes\n",
+        av_log(c->avctx, AV_LOG_ERROR, "Used %td of %i bytes\n",
                src-c->decomp_buf, c->decomp_len);
     return 0;
 }
@@ -374,6 +380,8 @@ static int zmbv_decode_xor_32(ZmbvContext *c)
             }
 
             if (d) { /* apply XOR'ed difference */
+                if (c->decomp_len - (src - c->decomp_buf) < bw2 * bh2 * 4)
+                    return AVERROR_INVALIDDATA;
                 out = output + x;
                 for (j = 0; j < bh2; j++){
                     for (i = 0; i < bw2; i++) {
@@ -388,7 +396,7 @@ static int zmbv_decode_xor_32(ZmbvContext *c)
         prev   += c->width * c->bh;
     }
     if (src - c->decomp_buf != c->decomp_len)
-        av_log(c->avctx, AV_LOG_ERROR, "Used %"PTRDIFF_SPECIFIER" of %i bytes\n",
+        av_log(c->avctx, AV_LOG_ERROR, "Used %td of %i bytes\n",
                src-c->decomp_buf, c->decomp_len);
     return 0;
 }
@@ -568,8 +576,10 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *frame,
         frame->pict_type = AV_PICTURE_TYPE_P;
         if (c->decomp_len < 2LL * ((c->width + c->bw - 1) / c->bw) * ((c->height + c->bh - 1) / c->bh))
             return AVERROR_INVALIDDATA;
-        if (c->decomp_len)
-            c->decode_xor(c);
+        if (c->decomp_len) {
+            if ((ret = c->decode_xor(c)) < 0)
+                return ret;
+        }
     }
 
     /* update frames */

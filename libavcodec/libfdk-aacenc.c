@@ -530,7 +530,7 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     ff_af_queue_remove(&s->afq, avctx->frame_size, &avpkt->pts,
                        &avpkt->duration);
 
-    discard_padding = avctx->frame_size - avpkt->duration;
+    discard_padding = avctx->frame_size - ff_samples_from_time_base(avctx, avpkt->duration);
     // Check if subtraction resulted in an overflow
     if ((discard_padding < avctx->frame_size) != (avpkt->duration > 0)) {
         av_log(avctx, AV_LOG_ERROR, "discard padding overflow\n");
@@ -607,12 +607,11 @@ const FFCodec ff_libfdk_aac_encoder = {
     FF_CODEC_ENCODE_CB(aac_encode_frame),
     .flush                 = aac_encode_flush,
     .close                 = aac_encode_close,
-    .p.sample_fmts         = (const enum AVSampleFormat[]){ AV_SAMPLE_FMT_S16,
-                                                            AV_SAMPLE_FMT_NONE },
+    CODEC_SAMPLEFMTS(AV_SAMPLE_FMT_S16),
     .p.priv_class          = &aac_enc_class,
     .defaults              = aac_encode_defaults,
     .p.profiles            = profiles,
-    .p.supported_samplerates = aac_sample_rates,
+    CODEC_SAMPLERATES_ARRAY(aac_sample_rates),
     .p.wrapper_name        = "libfdk",
-    .p.ch_layouts          = aac_ch_layouts,
+    CODEC_CH_LAYOUTS_ARRAY(aac_ch_layouts),
 };
