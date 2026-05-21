@@ -40,7 +40,7 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
-@@ -0,0 +1,921 @@
+@@ -0,0 +1,908 @@
 +/*
 + * Copyright (c) 2024 Gnattu OC <gnattuoc@me.com>
 + *
@@ -73,7 +73,13 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 +#define REFERENCE_WHITE_ALT 203.0f
 +#define REFERENCE_WHITE_HLG 3.17955f
 +
++// BT.2446 Method B parameters for HLG to SDR
++#define BT2446B_HLG_LW 291.0f
++#define BT2446B_HLG_GAMMA 1.03f
++
 +#define ST2084_MAX_LUMINANCE 10000.0f
++#define ARIB_B67_MAX_LUMINANCE 1000.0f
++
 +#define ST2084_M1 0.1593017578125f
 +#define ST2084_M2 78.84375f
 +#define ST2084_C1 0.8359375f
@@ -106,23 +112,25 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 +constant float3 rgb2rgb_matrix_1 [[function_constant(17)]];
 +constant float3 rgb2rgb_matrix_2 [[function_constant(18)]];
 +constant float3 rgb2rgb_matrix_3 [[function_constant(19)]];
-+constant bool skip_tonemap [[function_constant(20)]];
-+constant bool dovi_reshape [[function_constant(21)]];
-+constant float3 ycc2rgb_offset [[function_constant(22)]];
-+constant float3 rgb_matrix_1 [[function_constant(23)]];
-+constant float3 rgb_matrix_2 [[function_constant(24)]];
-+constant float3 rgb_matrix_3 [[function_constant(25)]];
-+constant float3 lms2rgb_matrix_1 [[function_constant(26)]];
-+constant float3 lms2rgb_matrix_2 [[function_constant(27)]];
-+constant float3 lms2rgb_matrix_3 [[function_constant(28)]];
-+constant float3 yuv_matrix_1 [[function_constant(29)]];
-+constant float3 yuv_matrix_2 [[function_constant(30)]];
-+constant float3 yuv_matrix_3 [[function_constant(31)]];
-+constant float3 luma_dst [[function_constant(32)]];
-+constant short linearize_type [[function_constant(33)]];
-+constant short delinearize_type [[function_constant(34)]];
-+constant bool map_in_src_space [[function_constant(35)]];
-+constant bool is_tone_mode_itp [[function_constant(36)]];
++constant float3 luma_src [[function_constant(20)]];
++constant float3 luma_dst [[function_constant(21)]];
++constant bool skip_tonemap [[function_constant(22)]];
++constant bool dovi_reshape [[function_constant(23)]];
++constant float3 ycc2rgb_offset [[function_constant(24)]];
++constant float3 rgb_matrix_1 [[function_constant(25)]];
++constant float3 rgb_matrix_2 [[function_constant(26)]];
++constant float3 rgb_matrix_3 [[function_constant(27)]];
++constant float3 lms2rgb_matrix_1 [[function_constant(28)]];
++constant float3 lms2rgb_matrix_2 [[function_constant(29)]];
++constant float3 lms2rgb_matrix_3 [[function_constant(30)]];
++constant float3 yuv_matrix_1 [[function_constant(31)]];
++constant float3 yuv_matrix_2 [[function_constant(32)]];
++constant float3 yuv_matrix_3 [[function_constant(33)]];
++constant short linearize_type [[function_constant(34)]];
++constant short delinearize_type [[function_constant(35)]];
++constant bool map_in_src_space [[function_constant(36)]];
++constant bool is_tone_mode_itp [[function_constant(37)]];
++constant bool hlg_eotf_bt2446b [[function_constant(38)]];
 +
 +enum AVChromaLocation {
 +    AVCHROMA_LOC_UNSPECIFIED,
@@ -148,8 +156,16 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 +    return luma_dst.x * c.x + luma_dst.y * c.y + luma_dst.z * c.z;
 +}
 +
-+float4 get_luma_dst4(float4 r4, float4 g4, float4 b4) {
++float4 get_luma_dstx4(float4 r4, float4 g4, float4 b4) {
 +    return luma_dst.x * r4 + luma_dst.y * g4 + luma_dst.z * b4;
++}
++
++float get_luma_src(float3 c) {
++    return luma_src.x * c.x + luma_src.y * c.y + luma_src.z * c.z;
++}
++
++float4 get_luma_srcx4(float4 r4, float4 g4, float4 b4) {
++    return luma_src.x * r4 + luma_src.y * g4 + luma_src.z * b4;
 +}
 +
 +//------------
@@ -167,6 +183,13 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 +
 +float eotf_st2084(float x) {
 +    return eotf_st2084_common(x) * ST2084_MAX_LUMINANCE / REFERENCE_WHITE_ALT;
++}
++
++float3 eotf_st2084x3(float3 x) {
++    x.x = eotf_st2084_common(x.x);
++    x.y = eotf_st2084_common(x.y);
++    x.z = eotf_st2084_common(x.z);
++    return x * ST2084_MAX_LUMINANCE / REFERENCE_WHITE_ALT;
 +}
 +
 +float4 eotf_st2084x4(float4 x) {
@@ -200,52 +223,19 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 +    return x;
 +}
 +
-+float ootf_1_2(float x) {
-+    return x > 0.0f ? powr(x, 1.2f) : x;
-+}
-+
-+float inverse_ootf_1_2(float x) {
-+    return x > 0.0f ? powr(x, 1.0f / 1.2f) : x;
-+}
-+
-+float oetf_arib_b67(float x) {
-+    x = fmax(x, 0.0f);
-+    return x <= (1.0f / 12.0f)
-+           ? sqrt(3.0f * x)
-+           : (ARIB_B67_A * log(12.0f * x - ARIB_B67_B) + ARIB_B67_C);
-+}
-+
-+float inverse_oetf_arib_b67(float x) {
-+    x = fmax(x, 0.0f);
-+    return x <= 0.5f
-+           ? (x * x) * (1.0f / 3.0f)
-+           : (exp((x - ARIB_B67_C) / ARIB_B67_A) + ARIB_B67_B) * (1.0f / 12.0f);
-+}
-+
 +// linearizer for HLG/ARIB-B67
-+float eotf_arib_b67(float x) {
-+    return ootf_1_2(inverse_oetf_arib_b67(x)) * (12.0f / REFERENCE_WHITE_HLG);
-+}
-+
-+// delinearizer for HLG/ARIB-B67
-+float inverse_eotf_arib_b67(float x) {
-+    return oetf_arib_b67(inverse_ootf_1_2(x / (12.0f / REFERENCE_WHITE_HLG)));
-+}
-+
-+float4 oetf_arib_b67x4(float4 x) {
-+    x.x = oetf_arib_b67(x.x);
-+    x.y = oetf_arib_b67(x.y);
-+    x.z = oetf_arib_b67(x.z);
-+    x.w = oetf_arib_b67(x.w);
-+    return x;
-+}
-+
-+float4 inverse_oetf_arib_b67x4(float4 x) {
-+    x.x = inverse_oetf_arib_b67(x.x);
-+    x.y = inverse_oetf_arib_b67(x.y);
-+    x.z = inverse_oetf_arib_b67(x.z);
-+    x.w = inverse_oetf_arib_b67(x.w);
-+    return x;
++float3 eotf_arib_b67x3(float3 x) {
++    float peak = ARIB_B67_MAX_LUMINANCE / REFERENCE_WHITE_ALT;
++    float gamma = 1.2f;
++    if (hlg_eotf_bt2446b) {
++        peak = BT2446B_HLG_LW / REFERENCE_WHITE_ALT;
++        gamma = BT2446B_HLG_GAMMA;
++    }
++    float3 a = 4.0f * x * x;
++    float3 b = exp((x - ARIB_B67_C) * (1.0f / ARIB_B67_A)) + ARIB_B67_B;
++    x = select(a, b, x > float3(0.5f)) * (1.0f / 12.0f);
++    float luma = get_luma_src(x);
++    return x * peak * powr(fmax(luma, 0.0f), gamma - 1.0f);
 +}
 +
 +// delinearizer for BT709, BT2020-10
@@ -253,18 +243,25 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 +    return x > 0.0f ? powr(x, 1.0f / 2.4f) : 0.0f;
 +}
 +
-+float linearize(float x) {
-+    if (linearize_type == 1) {
-+        return eotf_st2084(x);
-+    }
-+    if (linearize_type == 2) {
-+        return eotf_arib_b67(x);
-+    }
-+    return eotf_st2084(x);
++float3 inverse_eotf_bt1886x3(float3 x) {
++    x.x = inverse_eotf_bt1886(x.x);
++    x.y = inverse_eotf_bt1886(x.y);
++    x.z = inverse_eotf_bt1886(x.z);
++    return x;
 +}
 +
-+float delinearize(float x) {
-+    return inverse_eotf_bt1886(x);
++float3 linearize(float3 x) {
++    if (linearize_type == 1) {
++        return eotf_st2084x3(x);
++    }
++    if (linearize_type == 2) {
++        return eotf_arib_b67x3(x);
++    }
++    return eotf_st2084x3(x);
++}
++
++float3 delinearize(float3 x) {
++    return inverse_eotf_bt1886x3(x);
 +}
 +
 +// ------------
@@ -294,10 +291,7 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 +    if (skip_tonemap) {
 +        return rgb;
 +    }
-+    float r = linearize(rgb.x);
-+    float g = linearize(rgb.y);
-+    float b = linearize(rgb.z);
-+    return float3(r, g, b);
++    return linearize(rgb);
 +}
 +
 +float3 rgb2yuv(float r, float g, float b) {
@@ -347,20 +341,16 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 +    if (skip_tonemap) {
 +        return rgb2yuv(c.x, c.y, c.z);
 +    }
-+    float r = delinearize(c.x);
-+    float g = delinearize(c.y);
-+    float b = delinearize(c.z);
-+    return rgb2yuv(r, g, b);
++    c = delinearize(c);
++    return rgb2yuv(c.x, c.y, c.z);
 +}
 +
 +float lrgb2y(float3 c) {
 +    if (skip_tonemap) {
 +        return rgb2y(c.x, c.y, c.z);
 +    }
-+    float r = delinearize(c.x);
-+    float g = delinearize(c.y);
-+    float b = delinearize(c.z);
-+    return rgb2y(r, g, b);
++    c = delinearize(c);
++    return rgb2y(c.x, c.y, c.z);
 +}
 +
 +float3 lrgb2lrgb(float3 c) {
@@ -378,10 +368,7 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 +    if (skip_tonemap) {
 +        return lrgb2lrgb(float3(c.x, c.y, c.z));
 +    }
-+    float r = linearize(c.x);
-+    float g = linearize(c.y);
-+    float b = linearize(c.z);
-+    return float3(r, g, b);
++    return linearize(c);
 +}
 +
 +float3 ycc2rgb(float y, float cb, float cr) {
@@ -596,7 +583,7 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 +        // Desaturate the color using a coefficient dependent on the signal level
 +        if (desat_param > 0.0f) {
 +            float4 sig = fmax(fmax(*r4, fmax(*g4, *b4)), FLOAT_EPS);
-+            float4 luma = get_luma_dst4(*r4, *g4, *b4);
++            float4 luma = get_luma_dstx4(*r4, *g4, *b4);
 +            float4 coeff = fmax(sig - 0.18f, FLOAT_EPS) / fmax(sig, FLOAT_EPS);
 +            coeff = powr(coeff, 10.0f / desat_param);
 +            *r4 = mix(*r4, luma, coeff);
@@ -669,7 +656,7 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 +        if (desat_param > 0.0f) {
 +            float4 luma;
 +            if (is_tone_mode_max) {
-+                luma = get_luma_dst4(*r4, *g4, *b4);
++                luma = get_luma_dstx4(*r4, *g4, *b4);
 +            } else {
 +                luma = sig;
 +            }
@@ -966,7 +953,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_videotoolbox.m
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/vf_tonemap_videotoolbox.m
-@@ -0,0 +1,1221 @@
+@@ -0,0 +1,1230 @@
 +/*
 + * Copyright (c) 2024 Gnattu OC <gnattuoc@me.com>
 + *
@@ -1302,7 +1289,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_videotoolbox.m
 +    float rgb_matrix_1[3], rgb_matrix_2[3], rgb_matrix_3[3];
 +    float yuv_matrix_1[3], yuv_matrix_2[3], yuv_matrix_3[3];
 +    float lms2rgb_matrix_1[3], lms2rgb_matrix_2[3], lms2rgb_matrix_3[3];
-+    float mtl_luma_dst[3];
++    float mtl_luma_src[3], mtl_luma_dst[3];
 +    const AVLumaCoefficients *luma_src, *luma_dst;
 +
 +    MTLFunctionConstantValues* constant_values = [MTLFunctionConstantValues new];
@@ -1325,6 +1312,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_videotoolbox.m
 +    bool is_full_range_out;
 +    int chroma_loc;
 +    bool skip_tonemap;
++    bool hlg_eotf_bt2446b;
 +    bool dovi_reshape;
 +    bool map_in_src_space;
 +
@@ -1339,24 +1327,24 @@ Index: FFmpeg/libavfilter/vf_tonemap_videotoolbox.m
 +    }
 +
 +    switch(ctx->tonemap) {
-+        case TONEMAP_GAMMA:
-+            if (isnan(ctx->param))
-+                ctx->final_param = 1.8f;
-+            break;
-+        case TONEMAP_REINHARD:
-+            if (!isnan(ctx->param))
-+                ctx->final_param = (1.0f - ctx->param) / ctx->param;
-+            break;
-+        case TONEMAP_MOBIUS:
-+            if (isnan(ctx->param))
-+                ctx->final_param = 0.3f;
-+            break;
-+        case TONEMAP_BT2390:
-+            if (isnan(ctx->param))
-+                ctx->final_param = 1.0f; // diff from the spec-defined 0.5f
-+            else
-+                ctx->final_param = FFMIN(FFMAX(ctx->param, 0.5f), 2.0f);
-+            break;
++    case TONEMAP_GAMMA:
++        if (isnan(ctx->param))
++            ctx->final_param = 1.8f;
++        break;
++    case TONEMAP_REINHARD:
++        if (!isnan(ctx->param))
++            ctx->final_param = (1.0f - ctx->param) / ctx->param;
++        break;
++    case TONEMAP_MOBIUS:
++        if (isnan(ctx->param))
++            ctx->final_param = 0.3f;
++        break;
++    case TONEMAP_BT2390:
++        if (isnan(ctx->param))
++            ctx->final_param = 1.0f; // diff from the spec-defined 0.5f
++        else
++            ctx->final_param = FFMIN(FFMAX(ctx->param, 0.5f), 2.0f);
++        break;
 +    }
 +
 +    if (isnan(ctx->final_param))
@@ -1468,6 +1456,8 @@ Index: FFmpeg/libavfilter/vf_tonemap_videotoolbox.m
 +    is_full_range_out = ctx->range_out == AVCOL_RANGE_JPEG;
 +    chroma_loc = (int)ctx->chroma_loc;
 +    skip_tonemap = ctx->trc_out == AVCOL_TRC_SMPTE2084;
++    hlg_eotf_bt2446b = ctx->trc_in == AVCOL_TRC_ARIB_STD_B67 &&
++                       ctx->trc_out != AVCOL_TRC_SMPTE2084;
 +    dovi_reshape = !!ctx->dovi;
 +    map_in_src_space = !is_tone_mode_rgb && !is_tone_mode_max;
 +
@@ -1512,7 +1502,34 @@ Index: FFmpeg/libavfilter/vf_tonemap_videotoolbox.m
 +        [constant_values setConstantValue:&rgb2rgb_matrix_3 type:MTLDataTypeFloat3 withName:@"rgb2rgb_matrix_3"];
 +    }
 +
++    luma_src = av_csp_luma_coeffs_from_avcsp(ctx->colorspace_in);
++    if (!luma_src) {
++        err = AVERROR(EINVAL);
++        av_log(avctx, AV_LOG_ERROR, "Unsupported input colorspace %d (%s)\n",
++               ctx->colorspace_in, av_color_space_name(ctx->colorspace_in));
++        goto fail;
++    }
++
++    mtl_luma_src[0] = (float)av_q2d(luma_src->cr);
++    mtl_luma_src[1] = (float)av_q2d(luma_src->cg);
++    mtl_luma_src[2] = (float)av_q2d(luma_src->cb);
++    [constant_values setConstantValue:&mtl_luma_src type:MTLDataTypeFloat3 withName:@"luma_src"];
++
++    luma_dst = av_csp_luma_coeffs_from_avcsp(ctx->colorspace_out);
++    if (!luma_dst) {
++        err = AVERROR(EINVAL);
++        av_log(avctx, AV_LOG_ERROR, "Unsupported output colorspace %d (%s)\n",
++               ctx->colorspace_out, av_color_space_name(ctx->colorspace_out));
++        goto fail;
++    }
++
++    mtl_luma_dst[0] = (float)av_q2d(luma_dst->cr);
++    mtl_luma_dst[1] = (float)av_q2d(luma_dst->cg);
++    mtl_luma_dst[2] = (float)av_q2d(luma_dst->cb);
++    [constant_values setConstantValue:&mtl_luma_dst type:MTLDataTypeFloat3 withName:@"luma_dst"];
++
 +    [constant_values setConstantValue:&skip_tonemap type:MTLDataTypeBool withName:@"skip_tonemap"];
++    [constant_values setConstantValue:&hlg_eotf_bt2446b type:MTLDataTypeBool withName:@"hlg_eotf_bt2446b"];
 +    [constant_values setConstantValue:&dovi_reshape type:MTLDataTypeBool withName:@"dovi_reshape"];
 +    if (dovi_reshape) {
 +        for (i = 0; i < 3; i++) {
@@ -1554,14 +1571,6 @@ Index: FFmpeg/libavfilter/vf_tonemap_videotoolbox.m
 +        [constant_values setConstantValue:&lms2rgb_matrix_2 type:MTLDataTypeFloat3 withName:@"lms2rgb_matrix_2"];
 +        [constant_values setConstantValue:&lms2rgb_matrix_3 type:MTLDataTypeFloat3 withName:@"lms2rgb_matrix_3"];
 +    } else {
-+        luma_src = av_csp_luma_coeffs_from_avcsp(ctx->colorspace_in);
-+        if (!luma_src) {
-+            err = AVERROR(EINVAL);
-+            av_log(avctx, AV_LOG_ERROR, "Unsupported input colorspace %d (%s)\n",
-+                   ctx->colorspace_in, av_color_space_name(ctx->colorspace_in));
-+            goto fail;
-+        }
-+
 +        ff_fill_rgb2yuv_table(luma_src, rgb2yuv);
 +        ff_matrix_invert_3x3(rgb2yuv, yuv2rgb);
 +
@@ -1582,14 +1591,6 @@ Index: FFmpeg/libavfilter/vf_tonemap_videotoolbox.m
 +        [constant_values setConstantValue:&rgb_matrix_3 type:MTLDataTypeFloat3 withName:@"rgb_matrix_3"];
 +    }
 +
-+    luma_dst = av_csp_luma_coeffs_from_avcsp(ctx->colorspace_out);
-+    if (!luma_dst) {
-+        err = AVERROR(EINVAL);
-+        av_log(avctx, AV_LOG_ERROR, "Unsupported output colorspace %d (%s)\n",
-+               ctx->colorspace_out, av_color_space_name(ctx->colorspace_out));
-+        goto fail;
-+    }
-+
 +    ff_fill_rgb2yuv_table(luma_dst, rgb2yuv);
 +    yuv_matrix_1[0] = (float)rgb2yuv[0][0];
 +    yuv_matrix_1[1] = (float)rgb2yuv[0][1];
@@ -1606,11 +1607,6 @@ Index: FFmpeg/libavfilter/vf_tonemap_videotoolbox.m
 +    [constant_values setConstantValue:&yuv_matrix_1 type:MTLDataTypeFloat3 withName:@"yuv_matrix_1"];
 +    [constant_values setConstantValue:&yuv_matrix_2 type:MTLDataTypeFloat3 withName:@"yuv_matrix_2"];
 +    [constant_values setConstantValue:&yuv_matrix_3 type:MTLDataTypeFloat3 withName:@"yuv_matrix_3"];
-+
-+    mtl_luma_dst[0] = (float)av_q2d(luma_dst->cr);
-+    mtl_luma_dst[1] = (float)av_q2d(luma_dst->cg);
-+    mtl_luma_dst[2] = (float)av_q2d(luma_dst->cb);
-+    [constant_values setConstantValue:&mtl_luma_dst type:MTLDataTypeFloat3 withName:@"luma_dst"];
 +
 +    if (ctx->trc_out != AVCOL_TRC_SMPTE2084) {
 +        [constant_values setConstantValue:&linearize_funcs[ctx->trc_in] type:MTLDataTypeShort withName:@"linearize_type"];
