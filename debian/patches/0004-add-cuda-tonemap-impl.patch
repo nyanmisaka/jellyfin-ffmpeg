@@ -338,7 +338,7 @@ Index: FFmpeg/libavfilter/cuda/colorspace_common.h
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/cuda/colorspace_common.h
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,354 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -480,10 +480,15 @@ Index: FFmpeg/libavfilter/cuda/colorspace_common.h
 +    );
 +}
 +
++#define BT2446B_HLG_LW 291.0f
++#define BT2446B_HLG_GAMMA 1.03f
++
 +// linearizer for HLG/ARIB-B67
 +static __inline__ __device__ float3 eotf_arib_b67(float3 x) {
-+    float peak = ARIB_B67_MAX_LUMINANCE / REFERENCE_WHITE_ALT;
-+    float luma, gamma = 1.2f;
++    float peak = hlg_eotf_bt2446b ? (BT2446B_HLG_LW / REFERENCE_WHITE_ALT)
++                                  : (ARIB_B67_MAX_LUMINANCE / REFERENCE_WHITE_ALT);
++    float luma;
++    float gamma = hlg_eotf_bt2446b ? BT2446B_HLG_GAMMA : 1.2f;
 +    float3 a = make_float3(4.0f, 4.0f, 4.0f) * x * x;
 +    float3 b = make_float3(
 +        __expf((x.x - ARIB_B67_C) * (1.0f / ARIB_B67_A)) + ARIB_B67_B,
@@ -1164,7 +1169,7 @@ Index: FFmpeg/libavfilter/cuda/tonemap.cu
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/cuda/tonemap.cu
-@@ -0,0 +1,663 @@
+@@ -0,0 +1,664 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -1195,6 +1200,7 @@ Index: FFmpeg/libavfilter/cuda/tonemap.cu
 +extern __constant__ const int enable_dither;
 +extern __constant__ const float dither_size;
 +extern __constant__ const float dither_quantization;
++extern __constant__ const unsigned char hlg_eotf_bt2446b;
 +
 +#define clamp(a, b, c) min(max((a), (b)), (c))
 +#define mix(x, y, a) ((x) + ((y) - (x)) * (a))
@@ -1987,7 +1993,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_cuda.c
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/vf_tonemap_cuda.c
-@@ -0,0 +1,1282 @@
+@@ -0,0 +1,1284 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -2727,6 +2733,8 @@ Index: FFmpeg/libavfilter/vf_tonemap_cuda.c
 +    CONSTANT_C("luma_src", av_q2d(in_coeffs->cr), av_q2d(in_coeffs->cg), av_q2d(in_coeffs->cb));
 +    CONSTANT_C("luma_dst", av_q2d(out_coeffs->cr), av_q2d(out_coeffs->cg), av_q2d(out_coeffs->cb));
 +    CONSTANT_C("ycc2rgb_offset", ycc2rgb_offset[0], ycc2rgb_offset[1], ycc2rgb_offset[2]);
++    CONSTANT_A(".u8 hlg_eotf_bt2446b = %i", 1,
++               in_trc == AVCOL_TRC_ARIB_STD_B67 && out_trc != AVCOL_TRC_SMPTE2084);
 +
 +    ret = CHECK_CU(cu->cuCtxPushCurrent(cuda_ctx));
 +    if (ret < 0)

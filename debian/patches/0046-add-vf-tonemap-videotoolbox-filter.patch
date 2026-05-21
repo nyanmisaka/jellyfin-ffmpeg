@@ -40,7 +40,7 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
-@@ -0,0 +1,899 @@
+@@ -0,0 +1,907 @@
 +/*
 + * Copyright (c) 2024 Gnattu OC <gnattuoc@me.com>
 + *
@@ -72,6 +72,8 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 +
 +#define REFERENCE_WHITE_ALT 203.0f
 +#define REFERENCE_WHITE_HLG 3.17955f
++#define BT2446B_HLG_LW 291.0f
++#define BT2446B_HLG_GAMMA 1.03f
 +
 +#define ST2084_MAX_LUMINANCE 10000.0f
 +#define ARIB_B67_MAX_LUMINANCE 1000.0f
@@ -126,6 +128,7 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 +constant short delinearize_type [[function_constant(35)]];
 +constant bool map_in_src_space [[function_constant(36)]];
 +constant bool is_tone_mode_itp [[function_constant(37)]];
++constant bool hlg_eotf_bt2446b [[function_constant(38)]];
 +
 +enum AVChromaLocation {
 +    AVCHROMA_LOC_UNSPECIFIED,
@@ -221,7 +224,12 @@ Index: FFmpeg/libavfilter/metal/vf_tonemap_videotoolbox.metal
 +// linearizer for HLG/ARIB-B67
 +float3 eotf_arib_b67x3(float3 x) {
 +    float peak = ARIB_B67_MAX_LUMINANCE / REFERENCE_WHITE_ALT;
-+    float luma, gamma = 1.2f;
++    float luma;
++    float gamma = 1.2f;
++    if (hlg_eotf_bt2446b) {
++        peak = BT2446B_HLG_LW / REFERENCE_WHITE_ALT;
++        gamma = BT2446B_HLG_GAMMA;
++    }
 +    float3 a = 4.0f * x * x;
 +    float3 b = exp((x - ARIB_B67_C) * (1.0f / ARIB_B67_A)) + ARIB_B67_B;
 +    x = select(a, b, x > float3(0.5f)) * (1.0f / 12.0f);
@@ -944,7 +952,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_videotoolbox.m
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/vf_tonemap_videotoolbox.m
-@@ -0,0 +1,1226 @@
+@@ -0,0 +1,1230 @@
 +/*
 + * Copyright (c) 2024 Gnattu OC <gnattuoc@me.com>
 + *
@@ -1303,6 +1311,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_videotoolbox.m
 +    bool is_full_range_out;
 +    int chroma_loc;
 +    bool skip_tonemap;
++    bool hlg_eotf_bt2446b;
 +    bool dovi_reshape;
 +    bool map_in_src_space;
 +
@@ -1446,6 +1455,8 @@ Index: FFmpeg/libavfilter/vf_tonemap_videotoolbox.m
 +    is_full_range_out = ctx->range_out == AVCOL_RANGE_JPEG;
 +    chroma_loc = (int)ctx->chroma_loc;
 +    skip_tonemap = ctx->trc_out == AVCOL_TRC_SMPTE2084;
++    hlg_eotf_bt2446b = ctx->trc_in == AVCOL_TRC_ARIB_STD_B67 &&
++                       ctx->trc_out != AVCOL_TRC_SMPTE2084;
 +    dovi_reshape = !!ctx->dovi;
 +    map_in_src_space = !is_tone_mode_rgb && !is_tone_mode_max;
 +
@@ -1517,6 +1528,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_videotoolbox.m
 +    [constant_values setConstantValue:&mtl_luma_dst type:MTLDataTypeFloat3 withName:@"luma_dst"];
 +
 +    [constant_values setConstantValue:&skip_tonemap type:MTLDataTypeBool withName:@"skip_tonemap"];
++    [constant_values setConstantValue:&hlg_eotf_bt2446b type:MTLDataTypeBool withName:@"hlg_eotf_bt2446b"];
 +    [constant_values setConstantValue:&dovi_reshape type:MTLDataTypeBool withName:@"dovi_reshape"];
 +    if (dovi_reshape) {
 +        for (i = 0; i < 3; i++) {

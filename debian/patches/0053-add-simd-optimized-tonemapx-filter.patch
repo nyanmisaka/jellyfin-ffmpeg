@@ -2637,7 +2637,7 @@ Index: FFmpeg/libavfilter/vf_tonemapx.c
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/vf_tonemapx.c
-@@ -0,0 +1,1973 @@
+@@ -0,0 +1,2000 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -2701,6 +2701,8 @@ Index: FFmpeg/libavfilter/vf_tonemapx.c
 +#define CLAMP(a, b, c) (FFMIN(FFMAX((a), (b)), (c)))
 +
 +#define REF_WHITE_SCALE (REFERENCE_WHITE / REFERENCE_WHITE_ALT)
++#define BT2446B_HLG_LW 291.0f
++#define BT2446B_HLG_GAMMA 1.03f
 +
 +enum TonemapAlgorithm {
 +    TONEMAP_NONE,
@@ -3182,26 +3184,53 @@ Index: FFmpeg/libavfilter/vf_tonemapx.c
 +        return x;
 +}
 +
++static int hlg_eotf_bt2446b_enabled(enum AVColorTransferCharacteristic trc_src,
++                                    enum AVColorTransferCharacteristic trc_dst)
++{
++    return trc_src == AVCOL_TRC_ARIB_STD_B67 &&
++           trc_dst != AVCOL_TRC_SMPTE2084;
++}
++
++static float inverse_oetf_arib_b67(float x)
++{
++    float a = 4.0f * x * x;
++    float b = expf((x - ARIB_B67_C) * (1.0f / ARIB_B67_A)) + ARIB_B67_B;
++
++    return (x > 0.5f ? b : a) * (1.0f / 12.0f);
++}
++
++static float linearize_hlg_eotf_bt2446b(float x)
++{
++    x = inverse_oetf_arib_b67(x);
++    return FFMAX((BT2446B_HLG_LW / REFERENCE_WHITE_ALT) *
++                 powf(FFMAX(x, 0.0f), BT2446B_HLG_GAMMA), 0.0f);
++}
++
 +static int compute_trc_luts(TonemapxContext *s, enum AVColorTransferCharacteristic trc_src,
 +                            enum AVColorTransferCharacteristic trc_dst)
 +{
 +    int i;
++    int hlg_eotf_bt2446b = hlg_eotf_bt2446b_enabled(trc_src, trc_dst);
 +
 +    if (!s->lin_lut && !(s->lin_lut = av_calloc(32768, sizeof(float))))
 +        return AVERROR(ENOMEM);
 +    if (!s->delin_lut && !(s->delin_lut = av_calloc(32768, sizeof(uint16_t))))
 +        return AVERROR(ENOMEM);
-+
 +    for (i = 0; i < 32768; i++) {
 +        float v = (float)i / JPEG_SCALE;
-+        s->lin_lut[i] = FFMAX(linearize(v, trc_src), 0);
++        if (hlg_eotf_bt2446b) {
++            s->lin_lut[i] = linearize_hlg_eotf_bt2446b(v);
++        } else {
++            s->lin_lut[i] = FFMAX(linearize(v, trc_src), 0);
++        }
 +        s->delin_lut[i] = av_clip_int16((int)rintf(delinearize(v, trc_dst) * JPEG_SCALE));
 +    }
 +
 +    return 0;
 +}
 +
-+static int compute_tonemap_lut(TonemapxContext *s, enum AVColorTransferCharacteristic trc_src)
++static int compute_tonemap_lut(TonemapxContext *s, enum AVColorTransferCharacteristic trc_src,
++                               enum AVColorTransferCharacteristic trc_dst)
 +{
 +    int i;
 +    double peak = s->lut_peak;
@@ -3211,7 +3240,9 @@ Index: FFmpeg/libavfilter/vf_tonemapx.c
 +
 +    for (i = 0; i < 32768; i++) {
 +        float v = (float)i / JPEG_SCALE;
-+        float sig = linearize(v, trc_src);
++        float sig = hlg_eotf_bt2446b_enabled(trc_src, trc_dst)
++                    ? linearize_hlg_eotf_bt2446b(v)
++                    : linearize(v, trc_src);
 +        float mapped = mapsig(s->tonemap, sig, peak, s->param);
 +        s->tonemap_lut[i] = (sig > 0.0f && mapped > 0.0f) ? mapped / sig : 0.0f;
 +    }
@@ -3347,8 +3378,7 @@ Index: FFmpeg/libavfilter/vf_tonemapx.c
 +                                 double (*rgb2rgb)[3][3],
 +                                 int rgb2rgb_passthrough)
 +{
-+    int16_t sig;
-+    float mapval, r_lin, g_lin, b_lin;
++    float r_lin, g_lin, b_lin;
 +
 +    r_in = av_clip_uintp2(r_in, 15);
 +    g_in = av_clip_uintp2(g_in, 15);
@@ -3358,13 +3388,6 @@ Index: FFmpeg/libavfilter/vf_tonemapx.c
 +    *r_out = r_in;
 +    *g_out = g_in;
 +    *b_out = b_in;
-+
-+    /* pick the brightest component, reducing the value range as necessary
-+     * to keep the entire signal in range and preventing discoloration due to
-+     * out-of-bounds clipping */
-+    sig = FFMAX3(r_in, g_in, b_in);
-+
-+    mapval = tonemap_lut[sig];
 +
 +    r_lin = lin_lut[r_in];
 +    g_lin = lin_lut[g_in];
@@ -3386,6 +3409,10 @@ Index: FFmpeg/libavfilter/vf_tonemapx.c
 +        b_lin = MIX(b_lin, luma, overbright);
 +    }
 +
++    /* pick the brightest component, reducing the value range as necessary
++     * to keep the entire signal in range and preventing discoloration due to
++     * out-of-bounds clipping */
++    float mapval = tonemap_lut[FFMAX3(r_in, g_in, b_in)];
 +    r_lin *= mapval;
 +    g_lin *= mapval;
 +    b_lin *= mapval;
@@ -4233,7 +4260,7 @@ Index: FFmpeg/libavfilter/vf_tonemapx.c
 +
 +    if (!s->tonemap_lut || s->lut_peak != s->src_peak) {
 +        s->lut_peak = s->src_peak;
-+        if ((ret = compute_tonemap_lut(s, in->color_trc)) < 0)
++        if ((ret = compute_tonemap_lut(s, in->color_trc, out->color_trc)) < 0)
 +            goto fail;
 +    }
 +

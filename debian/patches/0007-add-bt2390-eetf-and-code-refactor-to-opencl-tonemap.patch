@@ -161,7 +161,7 @@ Index: FFmpeg/libavfilter/opencl/colorspace_common.cl
  
  #if chroma_loc == 1
      #define chroma_sample(a,b,c,d) (((a) + (c)) * 0.5f)
-@@ -33,88 +48,119 @@
+@@ -33,88 +48,128 @@
      #define chroma_sample(a,b,c,d) (((a) + (b) + (c) + (d)) * 0.25f)
  #endif
  
@@ -301,10 +301,19 @@ Index: FFmpeg/libavfilter/opencl/colorspace_common.cl
 +    return x;
 +}
 +
++// BT.2446 Method B parameters for HLG to SDR.
++#define BT2446B_HLG_LW 291.0f
++#define BT2446B_HLG_GAMMA 1.03f
++
 +// linearizer for HLG/ARIB-B67
 +float3 eotf_arib_b67x3(float3 x) {
 +    float peak = ARIB_B67_MAX_LUMINANCE / REFERENCE_WHITE_ALT;
-+    float luma, gamma = 1.2f;
++    float luma;
++    float gamma = 1.2f;
++#ifdef HLG_EOTF_BT2446B
++    peak = BT2446B_HLG_LW / REFERENCE_WHITE_ALT;
++    gamma = BT2446B_HLG_GAMMA;
++#endif
 +    float3 a = 4.0f * x * x;
 +    float3 b = native_exp((x - ARIB_B67_C) * (1.0f / ARIB_B67_A)) + ARIB_B67_B;
 +    x = select(a, b, isgreater(x, (float3)(0.5f))) * (1.0f / 12.0f);
@@ -342,7 +351,7 @@ Index: FFmpeg/libavfilter/opencl/colorspace_common.cl
  #endif
      float r = y * rgb_matrix[0] + u * rgb_matrix[1] + v * rgb_matrix[2];
      float g = y * rgb_matrix[3] + u * rgb_matrix[4] + v * rgb_matrix[5];
-@@ -125,10 +171,7 @@ float3 yuv2rgb(float y, float u, float v
+@@ -125,10 +180,7 @@ float3 yuv2rgb(float y, float u, float v
  float3 yuv2lrgb(float3 yuv) {
      float3 rgb = yuv2rgb(yuv.x, yuv.y, yuv.z);
  #ifdef linearize
@@ -354,7 +363,7 @@ Index: FFmpeg/libavfilter/opencl/colorspace_common.cl
  #else
      return rgb;
  #endif
-@@ -138,42 +181,50 @@ float3 rgb2yuv(float r, float g, float b
+@@ -138,42 +190,50 @@ float3 rgb2yuv(float r, float g, float b
      float y = r*yuv_matrix[0] + g*yuv_matrix[1] + b*yuv_matrix[2];
      float u = r*yuv_matrix[3] + g*yuv_matrix[4] + b*yuv_matrix[5];
      float v = r*yuv_matrix[6] + g*yuv_matrix[7] + b*yuv_matrix[8];
@@ -423,7 +432,7 @@ Index: FFmpeg/libavfilter/opencl/colorspace_common.cl
  }
  
  float3 lrgb2lrgb(float3 c) {
-@@ -188,18 +239,94 @@ float3 lrgb2lrgb(float3 c) {
+@@ -188,18 +248,94 @@ float3 lrgb2lrgb(float3 c) {
  #endif
  }
  
@@ -2559,12 +2568,16 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
      av_bprintf(&header, "#define chroma_loc %d\n", (int)ctx->chroma_loc);
  
      if (rgb2rgb_passthrough)
-@@ -200,44 +695,60 @@ static int tonemap_opencl_init(AVFilterC
+@@ -200,44 +695,64 @@ static int tonemap_opencl_init(AVFilterC
      else
          ff_opencl_print_const_matrix_3x3(&header, "rgb2rgb", rgb2rgb);
  
 +    if (ctx->trc_out == AVCOL_TRC_SMPTE2084)
 +        av_bprintf(&header, "#define SKIP_TONEMAP\n");
++
++    if (ctx->trc_in == AVCOL_TRC_ARIB_STD_B67 &&
++        ctx->trc_out != AVCOL_TRC_SMPTE2084)
++        av_bprintf(&header, "#define HLG_EOTF_BT2446B\n");
  
      luma_src = av_csp_luma_coeffs_from_avcsp(ctx->colorspace_in);
      if (!luma_src) {
@@ -2640,7 +2653,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
  
      av_log(avctx, AV_LOG_DEBUG, "Generated OpenCL header:\n%s\n", header.str);
      opencl_sources[0] = header.str;
-@@ -255,50 +766,291 @@ static int tonemap_opencl_init(AVFilterC
+@@ -255,50 +770,291 @@ static int tonemap_opencl_init(AVFilterC
      CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to create OpenCL "
                       "command queue %d.\n", cle);
  
@@ -2954,7 +2967,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
      return 0;
  }
  
-@@ -309,13 +1061,50 @@ static int launch_kernel(AVFilterContext
+@@ -309,13 +1065,50 @@ static int launch_kernel(AVFilterContext
      size_t global_work[2];
      size_t local_work[2];
      cl_int cle;
@@ -3011,7 +3024,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
  
      local_work[0]  = 16;
      local_work[1]  = 16;
-@@ -339,12 +1128,10 @@ static int tonemap_opencl_filter_frame(A
+@@ -339,12 +1132,10 @@ static int tonemap_opencl_filter_frame(A
      AVFilterContext    *avctx = inlink->dst;
      AVFilterLink     *outlink = avctx->outputs[0];
      TonemapOpenCLContext *ctx = avctx->priv;
@@ -3025,7 +3038,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
  
      av_log(ctx, AV_LOG_DEBUG, "Filter input: %s, %ux%u (%"PRId64").\n",
             av_get_pix_fmt_name(input->format),
-@@ -352,7 +1139,6 @@ static int tonemap_opencl_filter_frame(A
+@@ -352,7 +1143,6 @@ static int tonemap_opencl_filter_frame(A
  
      if (!input->hw_frames_ctx)
          return AVERROR(EINVAL);
@@ -3033,7 +3046,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
  
      output = ff_get_video_buffer(outlink, outlink->w, outlink->h);
      if (!output) {
-@@ -364,17 +1150,66 @@ static int tonemap_opencl_filter_frame(A
+@@ -364,17 +1154,66 @@ static int tonemap_opencl_filter_frame(A
      if (err < 0)
          goto fail;
  
@@ -3106,7 +3119,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
  
      ctx->trc_in = input->color_trc;
      ctx->trc_out = output->color_trc;
-@@ -386,72 +1221,50 @@ static int tonemap_opencl_filter_frame(A
+@@ -386,72 +1225,50 @@ static int tonemap_opencl_filter_frame(A
      ctx->range_out = output->color_range;
      ctx->chroma_loc = output->chroma_location;
  
@@ -3202,7 +3215,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
      av_frame_free(&input);
      av_frame_free(&output);
      return err;
-@@ -459,62 +1272,101 @@ fail:
+@@ -459,62 +1276,101 @@ fail:
  
  static av_cold void tonemap_opencl_uninit(AVFilterContext *avctx)
  {
@@ -3351,7 +3364,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
      { NULL }
  };
  
-@@ -540,13 +1392,14 @@ static const AVFilterPad tonemap_opencl_
+@@ -540,13 +1396,14 @@ static const AVFilterPad tonemap_opencl_
  const FFFilter ff_vf_tonemap_opencl = {
      .p.name         = "tonemap_opencl",
      .p.description  = NULL_IF_CONFIG_SMALL("Perform HDR to SDR conversion with tonemapping."),
