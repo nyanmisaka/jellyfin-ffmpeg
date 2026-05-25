@@ -25,7 +25,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Configure
         run: |
           ./configure --enable-gpl --enable-nonfree --enable-memory-poisoning --assert-level=2 \
@@ -67,7 +67,7 @@ jobs:
     container: ${{ matrix.image }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Configure
         run: |
           ./configure --pkg-config-flags="--static" $FFBUILD_TARGET_FLAGS $FF_CONFIGURE \
