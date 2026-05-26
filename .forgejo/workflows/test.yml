@@ -38,7 +38,7 @@ jobs:
         run: make -j$(nproc)
       - name: Restore Cached Fate-Suite
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: fate-suite
           key: fate-suite
@@ -50,7 +50,7 @@ jobs:
           make fate-rsync SAMPLES=$PWD/fate-suite
           echo "hash=$(find fate-suite -type f -printf "%P %s %T@\n" | sort | sha256sum | cut -d' ' -f1)" >> $FORGEJO_OUTPUT
       - name: Cache Fate-Suite
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         if: ${{ format('fate-suite-{0}', steps.fate.outputs.hash) != steps.cache.outputs.cache-matched-key }}
         with:
           path: fate-suite
