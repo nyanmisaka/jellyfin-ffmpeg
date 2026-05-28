@@ -8,6 +8,8 @@ ffbuild_enabled() {
 }
 
 ffbuild_dockerbuild() {
-    rm "$FFBUILD_PREFIX"/lib/lib*.so* || true
-    rm "$FFBUILD_PREFIX"/lib/*.la || true
+    if [[ $TARGET == linux* ]]; then
+        rm "$FFBUILD_PREFIX"/lib/lib*.so* || true
+        rm "$FFBUILD_PREFIX"/lib/*.la || true
+    fi
 }

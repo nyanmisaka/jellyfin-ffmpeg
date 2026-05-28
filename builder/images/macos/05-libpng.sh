@@ -2,7 +2,7 @@
 ffbuild_macbase() {
   git clone https://github.com/glennrp/libpng.git
   cd libpng
-  git checkout v1.6.43
+  git checkout v1.6.58
   mkdir build
   cd build
 

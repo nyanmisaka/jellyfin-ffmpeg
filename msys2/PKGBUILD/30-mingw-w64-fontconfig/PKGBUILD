@@ -4,7 +4,7 @@
 _realname=fontconfig
 pkgbase=mingw-w64-jellyfin-${_realname}
 pkgname="${MINGW_PACKAGE_PREFIX}-jellyfin-${_realname}"
-pkgver=2.17.0
+pkgver=2.17.1
 pkgrel=1
 pkgdesc="A library for configuring and customizing font access (mingw-w64)"
 arch=('any')
@@ -16,7 +16,7 @@ makedepends=("${MINGW_PACKAGE_PREFIX}-cc"
              "${MINGW_PACKAGE_PREFIX}-meson"
              "${MINGW_PACKAGE_PREFIX}-gperf"
              "${MINGW_PACKAGE_PREFIX}-gettext-runtime")
-depends=("${MINGW_PACKAGE_PREFIX}-gcc-libs"
+depends=("${MINGW_PACKAGE_PREFIX}-cc-libs"
          "${MINGW_PACKAGE_PREFIX}-jellyfin-freetype"
          "${MINGW_PACKAGE_PREFIX}-jellyfin-libxml2"
          "${MINGW_PACKAGE_PREFIX}-jellyfin-libiconv")
@@ -24,7 +24,7 @@ options=('staticlibs' 'strip')
 install=${_realname}-${MSYSTEM}.install
 source=("https://gitlab.freedesktop.org/fontconfig/fontconfig/-/archive/${pkgver}/fontconfig-${pkgver}.tar.gz"
         0011-conf-copy-instead-of-symlink.patch)
-sha256sums=('741416e1cc5132f5df533a96070453c0e0fdd137de60e0adb684bb52d06f0e05'
+sha256sums=('82e73b26adad651b236e5f5d4b3074daf8ff0910188808496326bd3449e5261d'
             '73ed74a1f4624466084d219e2fbc0d5780da9f63763f1307629251e58cccf2cd')
 
 export MINGW_TOOLCHAIN_PREFIX="${MINGW_PREFIX}"

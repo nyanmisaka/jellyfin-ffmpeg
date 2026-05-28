@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_REPO="https://bitbucket.org/multicoreware/x265_git.git"
-SCRIPT_COMMIT="fa2770934b8f3d88aa866c77f27cb63f69a9ed39"
+SCRIPT_COMMIT="e444744c03978c1fb4e037168967020cf2648427"
 
 ffbuild_enabled() {
     [[ $VARIANT == lgpl* ]] && return -1
@@ -16,26 +16,6 @@ ffbuild_dockerbuild() {
     # Unbreak GCC 15
     if [[ $TARGET != mac* ]]; then
         sed -i '1i#include <cstdint>' source/dynamicHDR10/json11/json11.cpp
-    fi
-
-    # Unbreak build compat with CMake 4.0+
-    if [[ $TARGET == mac* ]]; then
-        gsed -i 's/CMP0025 OLD/CMP0025 NEW/g' source/CMakeLists.txt
-        gsed -i 's/CMP0054 OLD/CMP0054 NEW/g' source/CMakeLists.txt
-        gsed -i 's/STREQUAL \"Clang\"/MATCHES \"Clang\"/g' source/CMakeLists.txt
-    else
-        sed -i 's/CMP0025 OLD/CMP0025 NEW/g' source/CMakeLists.txt
-        sed -i 's/CMP0054 OLD/CMP0054 NEW/g' source/CMakeLists.txt
-        sed -i 's/STREQUAL \"Clang\"/MATCHES \"Clang\"/g' source/CMakeLists.txt
-    fi
-
-    # Fix naming conflicts: https://bitbucket.org/multicoreware/x265_git/issues/984/illegal-instruction-neon_dotprod-crashes
-    if [[ $TARGET == mac* ]]; then
-        gsed -i 's/interp8_horiz_pp_dotprod/interp8_horiz_pp_dotprod_i8mm/g' source/common/aarch64/filter-neon-i8mm.cpp
-        gsed -i 's/interp8_horiz_ps_dotprod/interp8_horiz_ps_dotprod_i8mm/g' source/common/aarch64/filter-neon-i8mm.cpp
-    else
-        sed -i 's/interp8_horiz_pp_dotprod/interp8_horiz_pp_dotprod_i8mm/g' source/common/aarch64/filter-neon-i8mm.cpp
-        sed -i 's/interp8_horiz_ps_dotprod/interp8_horiz_ps_dotprod_i8mm/g' source/common/aarch64/filter-neon-i8mm.cpp
     fi
 
     local common_config=(

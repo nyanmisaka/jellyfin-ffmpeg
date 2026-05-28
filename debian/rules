@@ -5,18 +5,18 @@ export V=1
 ORIG_VERSION := $(shell dpkg-parsechangelog -S version)
 VERSION_SUFFIX := $(shell lsb_release -c -s)
 PACKAGE_VERSION := "$(ORIG_VERSION)-$(VERSION_SUFFIX)"
-FLTO_OPTIONS := auto
 
 CONFIG := --prefix=${TARGET_DIR} \
 	--target-os=linux \
 	--extra-version=Jellyfin \
+	--disable-unstable \
 	--disable-doc \
 	--disable-ffplay \
 	--disable-static \
 	--disable-libxcb \
 	--disable-sdl2 \
 	--disable-xlib \
-	--enable-lto=${FLTO_OPTIONS} \
+	--enable-lto=auto \
 	--enable-gpl \
 	--enable-version3 \
 	--enable-shared \
@@ -46,34 +46,26 @@ CONFIG := --prefix=${TARGET_DIR} \
 	--enable-libzvbi \
 	--enable-libzimg \
 	--enable-libfdk-aac \
+	--enable-ffnvcodec \
+	--enable-cuda \
+	--enable-cuda-llvm \
+	--enable-cuvid \
+	--enable-nvdec \
+	--enable-nvenc \
 
 CONFIG_x86 := --arch=amd64 \
 	--enable-libshaderc \
 	--enable-libplacebo \
 	--enable-vulkan \
 	--enable-vaapi \
-	--enable-amf \
 	--enable-libvpl \
-	--enable-ffnvcodec \
-	--enable-cuda \
-	--enable-cuda-llvm \
-	--enable-cuvid \
-	--enable-nvdec \
-	--enable-nvenc \
-
-CONFIG_ARM_COMMON := --enable-cross-compile \
-	--enable-rkmpp \
-	--enable-rkrga \
+	--enable-amf \
 
 CONFIG_ARM64 := --arch=arm64 \
 	--cross-prefix=/usr/bin/aarch64-linux-gnu- \
-	${CONFIG_ARM_COMMON} \
-	--enable-ffnvcodec \
-	--enable-cuda \
-	--enable-cuda-llvm \
-	--enable-cuvid \
-	--enable-nvdec \
-	--enable-nvenc \
+	--enable-cross-compile \
+	--enable-rkmpp \
+	--enable-rkrga \
 
 HOST_ARCH := $(shell arch)
 BUILD_ARCH := ${DEB_HOST_MULTIARCH}

@@ -32,12 +32,22 @@ if [[ -f "debian/patches/series" ]]; then
     quilt push -a
 fi
 
-PKG_CONFIG_PATH=/clang64/ffbuild/lib/pkgconfig ./configure --cc=clang \
+# On Windows, included headers are usually case-insensitive:
+# ffmpeg's VERSION and libc++'s "#include <version>"
+if [[ -f "VERSION" && -f "ffbuild/version.sh" ]]; then
+    mv VERSION{,.bak}
+    sed -i "s/cat VERSION/&.bak/g" ffbuild/version.sh
+fi
+
+PKG_CONFIG_PATH=/clang64/ffbuild/lib/pkgconfig ./configure \
+    --cc=clang \
+    --cxx=clang++ \
     --pkg-config-flags=--static \
     --extra-cflags=-I/clang64/ffbuild/include \
     --extra-ldflags=-L/clang64/ffbuild/lib \
     --prefix=/clang64/ffbuild/jellyfin-ffmpeg \
     --extra-version=Jellyfin \
+    --disable-unstable \
     --disable-ffplay \
     --disable-debug \
     --disable-doc \

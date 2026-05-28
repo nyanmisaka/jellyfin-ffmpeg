@@ -5,7 +5,6 @@ SCRIPT_COMMIT="dbf83dc3b1ce6bad46e1628aaf2da5ef731157b8"
 
 ffbuild_enabled() {
     [[ $TARGET != linux* ]] && return -1
-    [[ $TARGET == linuxarm64 ]] && return -1
     return 0
 }
 
@@ -13,25 +12,44 @@ ffbuild_dockerbuild() {
     git-mini-clone "$SCRIPT_REPO" "$SCRIPT_COMMIT" libva
     cd libva
 
-    autoreconf -i
+    # This works around an issue of our libxcb-dri3 implib-wrapper not exporting data symbols.
+    # Under normal circumstances, this would break horribly.
+    # But we only want to generate another import lib for libva, so it doesn't matter.
+    echo "#include <xcb/xcbext.h>" >> va/x11/va_dri3.c
+    echo "xcb_extension_t xcb_dri3_id;" >> va/x11/va_dri3.c
+
+    # Allow to actually toggle static linking
+    sed -i "s/shared_library/library/g" va/meson.build
+
+    mkdir mybuild && cd mybuild
 
     local myconf=(
         --prefix="$FFBUILD_PREFIX"
-        --enable-shared
-        --disable-static
-        --with-pic
-        --disable-docs
-        --enable-drm
-        --enable-x11
-        --disable-glx
-        --disable-wayland
+        --buildtype=release
+        -Denable_docs=false
     )
 
     if [[ $TARGET == linux64 ]]; then
         myconf+=(
-            --host="$FFBUILD_TOOLCHAIN"
-            --with-drivers-path="/usr/lib/x86_64-linux-gnu/dri"
+            --cross-file=/cross.meson
+            --default-library=shared
             --sysconfdir="/etc"
+            -Ddriverdir="/usr/lib/x86_64-linux-gnu/dri"
+            -Ddisable_drm=false
+            -Dwith_x11=yes
+            -Dwith_glx=no
+            -Dwith_wayland=no
+        )
+    elif [[ $TARGET == linuxarm64 ]]; then
+        myconf+=(
+            --cross-file=/cross.meson
+            --default-library=shared
+            --sysconfdir="/etc"
+            -Ddriverdir="/usr/lib/aarch64-linux-gnu/dri"
+            -Ddisable_drm=false
+            -Dwith_x11=yes
+            -Dwith_glx=no
+            -Dwith_wayland=no
         )
     else
         echo "Unknown target"
@@ -41,22 +59,24 @@ ffbuild_dockerbuild() {
     export CFLAGS="$RAW_CFLAGS"
     export LDFLAFS="$RAW_LDFLAGS"
 
-    ./configure "${myconf[@]}"
-    make -j$(nproc)
-    make install
+    meson setup "${myconf[@]}" ..
+    ninja -j$(nproc)
+    ninja install
 
-    gen-implib "$FFBUILD_PREFIX"/lib/{libva.so.2,libva.a}
-    gen-implib "$FFBUILD_PREFIX"/lib/{libva-drm.so.2,libva-drm.a}
-    gen-implib "$FFBUILD_PREFIX"/lib/{libva-x11.so.2,libva-x11.a}
-    rm "$FFBUILD_PREFIX"/lib/libva{,-drm,-x11}{.so*,.la}
+    if [[ $TARGET == linux* ]]; then
+        gen-implib "$FFBUILD_PREFIX"/lib/{libva.so.2,libva.a}
+        gen-implib "$FFBUILD_PREFIX"/lib/{libva-drm.so.2,libva-drm.a}
+        gen-implib "$FFBUILD_PREFIX"/lib/{libva-x11.so.2,libva-x11.a}
+        rm "$FFBUILD_PREFIX"/lib/libva{,-drm,-x11}.so*
 
-    echo "Libs: -ldl" >> "$FFBUILD_PREFIX"/lib/pkgconfig/libva.pc
+        echo "Libs: -ldl" >> "$FFBUILD_PREFIX"/lib/pkgconfig/libva.pc
+    fi
 }
 
 ffbuild_configure() {
-    [[ $TARGET == linux* ]] && [[ $TARGET != linuxarm64 ]] && echo --enable-vaapi
+    [[ $TARGET == linux* ]] && echo --enable-vaapi
 }
 
 ffbuild_unconfigure() {
-    [[ $TARGET == linux* ]] && [[ $TARGET != linuxarm64 ]] && echo --disable-vaapi
+    [[ $TARGET == linux* ]] && echo --disable-vaapi
 }

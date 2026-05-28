@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_REPO="https://github.com/google/shaderc.git"
-SCRIPT_COMMIT="c4b0af6c3664cd8b33ffddf452514e02a173b4d6"
+SCRIPT_COMMIT="301b4ede53d59b68bf55f95bb26412d9233c8187"
 
 ffbuild_enabled() {
     [[ $TARGET == mac* ]] && return -1
@@ -12,13 +12,13 @@ ffbuild_dockerbuild() {
     git-mini-clone "$SCRIPT_REPO" "$SCRIPT_COMMIT" shaderc
     cd shaderc
 
-    ./utils/git-sync-deps
+    ./utils/git-sync-deps || exit $?
 
     mkdir build && cd build
 
     cmake -GNinja -DCMAKE_TOOLCHAIN_FILE="$FFBUILD_CMAKE_TOOLCHAIN" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$FFBUILD_PREFIX" \
         -DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON -DSHADERC_SKIP_COPYRIGHT_CHECK=ON \
-        -DENABLE_EXCEPTIONS=ON -DENABLE_CTEST=OFF -DENABLE_GLSLANG_BINARIES=OFF -DSPIRV_SKIP_EXECUTABLES=ON \
+        -DENABLE_EXCEPTIONS=ON -DENABLE_GLSLANG_BINARIES=OFF -DSPIRV_SKIP_EXECUTABLES=ON \
         -DSPIRV_TOOLS_BUILD_STATIC=ON -DBUILD_SHARED_LIBS=OFF ..
     ninja -j$(nproc)
     ninja install
@@ -39,6 +39,17 @@ ffbuild_dockerbuild() {
         echo "Unknown target"
         return -1
     fi
+
+    # prepare native glslc for compilation time glsl->spv
+    mkdir ../native_build && cd ../native_build
+
+    unset CC CXX CFLAGS CXXFLAGS LD LDFLAGS AR RANLIB NM DLLTOOL PKG_CONFIG_LIBDIR
+    cmake -GNinja -DCMAKE_BUILD_TYPE=Release \
+        -DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON -DSHADERC_SKIP_COPYRIGHT_CHECK=ON \
+        -DENABLE_EXCEPTIONS=ON -DSPIRV_TOOLS_BUILD_STATIC=ON -DBUILD_SHARED_LIBS=OFF ..
+    ninja -j$(nproc) glslc/glslc
+
+    cp glslc/glslc /opt/glslc
 }
 
 ffbuild_configure() {
@@ -46,6 +57,5 @@ ffbuild_configure() {
 }
 
 ffbuild_unconfigure() {
-    [[ $ADDINS_STR == *4.4* ]] && return 0
     echo --disable-libshaderc
 }
