@@ -34,6 +34,7 @@
 #include "libavutil/mem.h"
 #include "libavutil/time_internal.h"
 #include "avformat.h"
+#include "avio_internal.h"
 #include "demux.h"
 #include "internal.h"
 #include "wtv.h"
@@ -760,7 +761,7 @@ static int recover(WtvContext *wtv, uint64_t broken_pos)
             return 0;
          }
      }
-     return AVERROR(EIO);
+     return AVERROR_INVALIDDATA;
 }
 
 /**
@@ -774,6 +775,7 @@ static int parse_chunks(AVFormatContext *s, int mode, int64_t seekts, int *len_p
 {
     WtvContext *wtv = s->priv_data;
     AVIOContext *pb = wtv->pb;
+    int ret;
     while (!avio_feof(pb)) {
         ff_asf_guid g;
         int len, sid, consumed;
@@ -846,10 +848,11 @@ static int parse_chunks(AVFormatContext *s, int mode, int64_t seekts, int *len_p
                 }
 
                 buf_size = FFMIN(len - consumed, sizeof(buf));
-                if (avio_read(pb, buf, buf_size) != buf_size)
-                    return AVERROR_INVALIDDATA;
+                ret = ffio_read_size(pb, buf, buf_size);
+                if (ret < 0)
+                    return ret;
                 consumed += buf_size;
-                ff_parse_mpeg2_descriptor(s, st, 0, &pbuf, buf + buf_size, NULL, 0, 0, NULL);
+                ff_parse_mpeg2_descriptor(s, st, 0, -1, &pbuf, buf + buf_size, NULL, 0, 0, NULL);
             }
         } else if (!ff_guidcmp(g, EVENTID_AudioTypeSpanningEvent)) {
             int stream_index = ff_find_stream_index(s, sid);

@@ -1,0 +1,86 @@
+# Maintainer: Biswapriyo Nath <nathbappai@gmail.com>
+
+_realname=spirv-cross
+pkgbase=mingw-w64-jellyfin-${_realname}
+pkgname="${MINGW_PACKAGE_PREFIX}-jellyfin-${_realname}"
+epoch=1
+pkgver=1.4.341.0
+pkgrel=1
+pkgdesc="A tool and library for parsing and converting SPIR-V to other shader languages (mingw-w64)"
+arch=('any')
+mingw_arch=('mingw64' 'ucrt64' 'clang64' 'clangarm64')
+url='https://github.com/KhronosGroup/SPIRV-Cross/'
+msys2_repository_url='https://github.com/KhronosGroup/SPIRV-Cross'
+msys2_references=(
+  'anitya: 379798'
+  'aur: spirv-cross'
+  'cpe: cpe:2.3:a:khronos:vulkan'
+)
+license=('spdx:Apache-2.0')
+depends=("${MINGW_PACKAGE_PREFIX}-cc-libs")
+makedepends=("${MINGW_PACKAGE_PREFIX}-cc"
+             "${MINGW_PACKAGE_PREFIX}-cmake"
+             "${MINGW_PACKAGE_PREFIX}-ninja"
+	     "${MINGW_PACKAGE_PREFIX}-python")
+source=(https://github.com/KhronosGroup/SPIRV-Cross/archive/vulkan-sdk-${pkgver}/${_realname}-${pkgver}.tar.gz)
+sha256sums=('SKIP')
+
+export MINGW_TOOLCHAIN_PREFIX="${MINGW_PREFIX}"
+export FF_MINGW_PREFIX="${MINGW_TOOLCHAIN_PREFIX}/ffbuild"
+
+build() {
+  mkdir -p "${srcdir}/build-${MSYSTEM}" && cd "${srcdir}/build-${MSYSTEM}"
+
+  declare -a _extra_config
+  if check_option "debug" "n"; then
+    _extra_config+=("-DCMAKE_BUILD_TYPE=Release")
+  else
+    _extra_config+=("-DCMAKE_BUILD_TYPE=Debug")
+  fi
+
+  MSYS2_ARG_CONV_EXCL="-DCMAKE_INSTALL_PREFIX=" \
+  ${MINGW_TOOLCHAIN_PREFIX}/bin/cmake.exe \
+    -G "Ninja" \
+    -DCMAKE_INSTALL_PREFIX=${FF_MINGW_PREFIX} \
+    "${_extra_config[@]}" \
+    -DSPIRV_CROSS_SHARED=OFF \
+    -DSPIRV_CROSS_STATIC=ON \
+    -DSPIRV_CROSS_CLI=OFF \
+    -DSPIRV_CROSS_ENABLE_TESTS=OFF \
+    -DSPIRV_CROSS_FORCE_PIC=ON \
+    -DSPIRV_CROSS_ENABLE_CPP=OFF \
+    "../SPIRV-Cross-vulkan-sdk-${pkgver}"
+
+  ${MINGW_TOOLCHAIN_PREFIX}/bin/cmake.exe --build ./
+}
+
+package() {
+  cd "${srcdir}/build-${MSYSTEM}"
+  DESTDIR="${pkgdir}" ${MINGW_TOOLCHAIN_PREFIX}/bin/cmake.exe --install .
+
+  pushd "${srcdir}/SPIRV-Cross-vulkan-sdk-${pkgver}"
+  VER_MAJ="$(grep 'set(spirv-cross-abi-major' CMakeLists.txt | sed -re 's/.* ([0-9]+)\)/\1/')"
+  VER_MIN="$(grep 'set(spirv-cross-abi-minor' CMakeLists.txt | sed -re 's/.* ([0-9]+)\)/\1/')"
+  VER_PCH="$(grep 'set(spirv-cross-abi-patch' CMakeLists.txt | sed -re 's/.* ([0-9]+)\)/\1/')"
+  VER_FULL="$VER_MAJ.$VER_MIN.$VER_PCH"
+  popd
+
+  # Used by libplacebo d3d11_deps
+  cat > "${pkgdir}${FF_MINGW_PREFIX}/lib/pkgconfig/spirv-cross-c-shared.pc" <<EOF
+prefix=$FFBUILD_PREFIX
+exec_prefix=\${prefix}
+libdir=\${prefix}/lib
+sharedlibdir=\${prefix}/lib
+includedir=\${prefix}/include/spirv_cross
+
+Name: spirv-cross-c-shared
+Description: C API for SPIRV-Cross
+Version: $VER_FULL
+
+Requires:
+Libs: -L\${libdir} -L\${sharedlibdir} -lspirv-cross-c -lspirv-cross-glsl -lspirv-cross-hlsl -lspirv-cross-reflect -lspirv-cross-msl -lspirv-cross-util -lspirv-cross-core -lstdc++
+Cflags: -I\${includedir}
+EOF
+
+  install -Dm644 "${srcdir}/SPIRV-Cross-vulkan-sdk-${pkgver}/LICENSE" "${pkgdir}${FF_MINGW_PREFIX}/share/licenses/${_realname}/LICENSE"
+}

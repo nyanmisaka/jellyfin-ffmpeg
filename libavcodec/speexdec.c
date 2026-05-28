@@ -54,6 +54,7 @@
 #include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
 #include "libavutil/float_dsp.h"
+#include "libavutil/intfloat.h"
 #include "libavutil/mem.h"
 #include "avcodec.h"
 #include "bytestream.h"
@@ -1298,7 +1299,7 @@ static int sb_decode(AVCodecContext *avctx, void *ptr_st,
         lsp_interpolate(st->old_qlsp, qlsp, interp_qlsp, st->lpc_size, sub, st->nb_subframes, 0.05f);
         lsp_to_lpc(interp_qlsp, ak, st->lpc_size);
 
-        /* Calculate reponse ratio between the low and high filter in the middle
+        /* Calculate response ratio between the low and high filter in the middle
            of the band (4000 Hz) */
         st->pi_gain[sub] = 1.f;
         rh = 1.f;
@@ -1424,10 +1425,10 @@ static int parse_speex_extradata(AVCodecContext *avctx,
         return AVERROR_INVALIDDATA;
     s->bitrate = bytestream_get_le32(&buf);
     s->frame_size = bytestream_get_le32(&buf);
-    if (s->frame_size < NB_FRAME_SIZE << (s->mode > 0) ||
-        s->frame_size >     INT32_MAX >> (s->mode > 0))
+    if (s->frame_size < NB_FRAME_SIZE << (s->mode > 1) ||
+        s->frame_size >     INT32_MAX >> (s->mode > 1))
         return AVERROR_INVALIDDATA;
-    s->frame_size <<= (s->mode > 0);
+    s->frame_size = FFMIN(s->frame_size << (s->mode > 1), NB_FRAME_SIZE << s->mode);
     s->vbr = bytestream_get_le32(&buf);
     s->frames_per_packet = bytestream_get_le32(&buf);
     if (s->frames_per_packet <= 0 ||

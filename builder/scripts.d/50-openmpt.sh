@@ -1,14 +1,14 @@
 #!/bin/bash
 
-SCRIPT_REPO="https://source.openmpt.org/svn/openmpt/trunk/OpenMPT"
-SCRIPT_REV="24747"
+SCRIPT_REPO="https://github.com/OpenMPT/openmpt.git"
+SCRIPT_COMMIT="a2b251c67ca757bb181a0cd4cc97e9e94bfe2608"
 
 ffbuild_enabled() {
     return 0
 }
 
 ffbuild_dockerbuild() {
-    retry-tool sh -c "rm -rf openmpt && svn checkout '${SCRIPT_REPO}@${SCRIPT_REV}' openmpt"
+    git-mini-clone "$SCRIPT_REPO" "$SCRIPT_COMMIT" openmpt
     cd openmpt
 
     local myconf=(

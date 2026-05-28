@@ -1,8 +1,8 @@
 #!/bin/bash
 
 SCRIPT_REPO="https://github.com/openssl/openssl.git"
-SCRIPT_COMMIT="openssl-3.4.3"
-SCRIPT_TAGFILTER="openssl-3.4.*"
+SCRIPT_COMMIT="openssl-3.6.2"
+SCRIPT_TAGFILTER="openssl-3.6.*"
 
 ffbuild_enabled() {
     return 0

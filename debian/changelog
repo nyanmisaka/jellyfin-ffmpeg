@@ -1,3 +1,10 @@
+jellyfin-ffmpeg (8.1.1-1) unstable; urgency=medium
+
+  * New upstream version 8.1.1
+  * Rename package to jellyin-ffmpeg8
+
+ -- nyanmisaka <nst799610810@gmail.com>  Thu, 28 May 2026 10:55:42 +0800
+
 jellyfin-ffmpeg (7.1.4-1) unstable; urgency=medium
 
   * New upstream version 7.1.4

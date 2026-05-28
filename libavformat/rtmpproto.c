@@ -362,7 +362,8 @@ static int gen_connect(URLContext *s, RTMPContext *rt)
         // check the string, fourcc + ',' + ...  + end fourcc correct length should be (4+1)*n+4
         if ((fourcc_str_len + 1) % 5 != 0) {
             av_log(s, AV_LOG_ERROR, "Malformed rtmp_enhanched_codecs, "
-                   "should be of the form hvc1[,av01][,vp09][,...]\n");
+                   "should be of the form hvc1[,av01][,vp09][,vvc1][,...]\n");
+            ff_rtmp_packet_destroy(&pkt);
             return AVERROR(EINVAL);
         }
 
@@ -372,13 +373,22 @@ static int gen_connect(URLContext *s, RTMPContext *rt)
 
         while(fourcc_data - rt->enhanced_codecs < fourcc_str_len) {
             unsigned char fourcc[5];
-            if (!strncmp(fourcc_data, "hvc1", 4) ||
+            if (!strncmp(fourcc_data, "ac-3", 4) ||
                 !strncmp(fourcc_data, "av01", 4) ||
+                !strncmp(fourcc_data, "avc1", 4) ||
+                !strncmp(fourcc_data, "ec-3", 4) ||
+                !strncmp(fourcc_data, "fLaC", 4) ||
+                !strncmp(fourcc_data, "hvc1", 4) ||
+                !strncmp(fourcc_data, "vvc1", 4) ||
+                !strncmp(fourcc_data, ".mp3", 4) ||
+                !strncmp(fourcc_data, "mp4a", 4) ||
+                !strncmp(fourcc_data, "Opus", 4) ||
                 !strncmp(fourcc_data, "vp09", 4)) {
                     av_strlcpy(fourcc, fourcc_data, sizeof(fourcc));
                     ff_amf_write_string(&p, fourcc);
             } else {
                     av_log(s, AV_LOG_ERROR, "Unsupported codec fourcc, %.*s\n", 4, fourcc_data);
+                    ff_rtmp_packet_destroy(&pkt);
                     return AVERROR_PATCHWELCOME;
             }
 
@@ -1267,7 +1277,10 @@ static int rtmp_handshake(URLContext *s, RTMPContext *rt)
     int i;
     int server_pos, client_pos;
     uint8_t digest[32], signature[32];
-    int ret, type = 0;
+    int ret;
+#if CONFIG_FFRTMPCRYPT_PROTOCOL
+    int type = 0;
+#endif
 
     av_log(s, AV_LOG_DEBUG, "Handshaking...\n");
 
@@ -1276,7 +1289,8 @@ static int rtmp_handshake(URLContext *s, RTMPContext *rt)
     for (i = 9; i <= RTMP_HANDSHAKE_PACKET_SIZE; i++)
         tosend[i] = av_lfg_get(&rnd) >> 24;
 
-    if (CONFIG_FFRTMPCRYPT_PROTOCOL && rt->encrypted) {
+#if CONFIG_FFRTMPCRYPT_PROTOCOL
+    if (rt->encrypted) {
         /* When the client wants to use RTMPE, we have to change the command
          * byte to 0x06 which means to use encrypted data and we have to set
          * the flash version to at least 9.0.115.0. */
@@ -1291,6 +1305,7 @@ static int rtmp_handshake(URLContext *s, RTMPContext *rt)
         if ((ret = ff_rtmpe_gen_pub_key(rt->stream, tosend + 1)) < 0)
             return ret;
     }
+#endif
 
     client_pos = rtmp_handshake_imprint_with_digest(tosend + 1, rt->encrypted);
     if (client_pos < 0)
@@ -1324,7 +1339,9 @@ static int rtmp_handshake(URLContext *s, RTMPContext *rt)
             return server_pos;
 
         if (!server_pos) {
+#if CONFIG_FFRTMPCRYPT_PROTOCOL
             type = 1;
+#endif
             server_pos = rtmp_validate_digest(serverdata + 1, 8);
             if (server_pos < 0)
                 return server_pos;
@@ -1354,7 +1371,8 @@ static int rtmp_handshake(URLContext *s, RTMPContext *rt)
         if (ret < 0)
             return ret;
 
-        if (CONFIG_FFRTMPCRYPT_PROTOCOL && rt->encrypted) {
+#if CONFIG_FFRTMPCRYPT_PROTOCOL
+        if (rt->encrypted) {
             /* Compute the shared secret key sent by the server and initialize
              * the RC4 encryption. */
             if ((ret = ff_rtmpe_compute_secret_key(rt->stream, serverdata + 1,
@@ -1364,6 +1382,7 @@ static int rtmp_handshake(URLContext *s, RTMPContext *rt)
             /* Encrypt the signature received by the server. */
             ff_rtmpe_encrypt_sig(rt->stream, signature, digest, serverdata[0]);
         }
+#endif
 
         if (memcmp(signature, clientdata + RTMP_HANDSHAKE_PACKET_SIZE - 32, 32)) {
             av_log(s, AV_LOG_ERROR, "Signature mismatch\n");
@@ -1384,25 +1403,30 @@ static int rtmp_handshake(URLContext *s, RTMPContext *rt)
         if (ret < 0)
             return ret;
 
-        if (CONFIG_FFRTMPCRYPT_PROTOCOL && rt->encrypted) {
+#if CONFIG_FFRTMPCRYPT_PROTOCOL
+        if (rt->encrypted) {
             /* Encrypt the signature to be send to the server. */
             ff_rtmpe_encrypt_sig(rt->stream, tosend +
                                  RTMP_HANDSHAKE_PACKET_SIZE - 32, digest,
                                  serverdata[0]);
         }
+#endif
 
         // write reply back to the server
         if ((ret = ffurl_write(rt->stream, tosend,
                                RTMP_HANDSHAKE_PACKET_SIZE)) < 0)
             return ret;
 
-        if (CONFIG_FFRTMPCRYPT_PROTOCOL && rt->encrypted) {
+#if CONFIG_FFRTMPCRYPT_PROTOCOL
+        if (rt->encrypted) {
             /* Set RC4 keys for encryption and update the keystreams. */
             if ((ret = ff_rtmpe_update_keystream(rt->stream)) < 0)
                 return ret;
         }
+#endif
     } else {
-        if (CONFIG_FFRTMPCRYPT_PROTOCOL && rt->encrypted) {
+#if CONFIG_FFRTMPCRYPT_PROTOCOL
+        if (rt->encrypted) {
             /* Compute the shared secret key sent by the server and initialize
              * the RC4 encryption. */
             if ((ret = ff_rtmpe_compute_secret_key(rt->stream, serverdata + 1,
@@ -1415,16 +1439,19 @@ static int rtmp_handshake(URLContext *s, RTMPContext *rt)
                                      serverdata[0]);
             }
         }
+#endif
 
         if ((ret = ffurl_write(rt->stream, serverdata + 1,
                                RTMP_HANDSHAKE_PACKET_SIZE)) < 0)
             return ret;
 
-        if (CONFIG_FFRTMPCRYPT_PROTOCOL && rt->encrypted) {
+#if CONFIG_FFRTMPCRYPT_PROTOCOL
+        if (rt->encrypted) {
             /* Set RC4 keys for encryption and update the keystreams. */
             if ((ret = ff_rtmpe_update_keystream(rt->stream)) < 0)
                 return ret;
         }
+#endif
     }
 
     return 0;
@@ -2019,7 +2046,7 @@ static int send_invoke_response(URLContext *s, RTMPPacket *pkt)
         pp = spkt.data;
         ff_amf_write_string(&pp, "onFCPublish");
     } else if (!strcmp(command, "publish")) {
-        char statusmsg[128];
+        char statusmsg[sizeof(filename) + 32];
         snprintf(statusmsg, sizeof(statusmsg), "%s is now published", filename);
         ret = write_begin(s);
         if (ret < 0)
@@ -3082,7 +3109,12 @@ static int rtmp_write(URLContext *s, const uint8_t *buf, int size)
                                              pkttype, ts, pktsize)) < 0)
                 return ret;
 
-            rt->out_pkt.extra = rt->stream_id;
+            // If rt->listen, then we're running as a a server and should
+            // use the ID that we've sent in Stream Begin and in the
+            // _result to createStream.
+            // Otherwise, we're running as a client and should use the ID
+            // that we've received in the createStream from the server.
+            rt->out_pkt.extra = (rt->listen) ? rt->nb_streamid : rt->stream_id;
             rt->flv_data = rt->out_pkt.data;
         }
 

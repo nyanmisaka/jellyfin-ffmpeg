@@ -5,21 +5,6 @@
 set -o errexit
 set -o xtrace
 
-# Update mingw-w64 headers
-mingw_commit="6b2176247a83644113aa209acbeeaf8cdc78a8fa"
-git clone https://github.com/mingw-w64/mingw-w64.git
-pushd mingw-w64/mingw-w64-headers
-git checkout ${mingw_commit}
-./configure \
-    --prefix=/usr/${FF_TOOLCHAIN} \
-    --host=${FF_TOOLCHAIN} \
-    --with-default-win32-winnt="0x0601" \
-    --with-default-msvcrt="msvcrt" \
-    --enable-idl
-make -j$(nproc)
-make install
-popd
-
 # mingw-std-threads
 mingw_threads_commit="c931bac289dd431f1dd30fc4a5d1a7be36668073"
 git clone https://github.com/meganz/mingw-std-threads.git
@@ -32,7 +17,7 @@ popd
 # ICONV
 mkdir iconv
 pushd iconv
-iconv_ver="1.18"
+iconv_ver="1.19"
 iconv_link="https://mirrors.edge.kernel.org/gnu/libiconv/libiconv-${iconv_ver}.tar.gz"
 wget ${iconv_link} -O iconv.tar.gz
 tar xaf iconv.tar.gz
@@ -49,7 +34,7 @@ popd
 popd
 
 # LIBXML2
-git clone -b v2.15.1 --depth=1 https://github.com/GNOME/libxml2.git
+git clone -b v2.15.3 --depth=1 https://github.com/GNOME/libxml2.git
 pushd libxml2
 ./autogen.sh \
     --prefix=${FF_DEPS_PREFIX} \
@@ -62,25 +47,12 @@ make install
 popd
 
 # ZLIB
-git clone -b v1.3.1 --depth=1 https://github.com/madler/zlib.git
+git clone -b v1.3.2 --depth=1 https://github.com/madler/zlib.git
 pushd zlib
 ./configure \
     --prefix=${FF_DEPS_PREFIX} \
     --static
 make -j$(nproc) CC=${FF_CROSS_PREFIX}gcc AR=${FF_CROSS_PREFIX}ar
-make install
-popd
-
-# FREETYPE
-git clone -b VER-2-14-1 --depth=1 https://github.com/freetype/freetype.git
-pushd freetype
-./autogen.sh
-./configure \
-    --prefix=${FF_DEPS_PREFIX} \
-    --host=${FF_TOOLCHAIN} \
-    --disable-shared \
-    --enable-static
-make -j$(nproc)
 make install
 popd
 
@@ -95,6 +67,19 @@ meson setup fribidi fribidi_build \
 meson configure fribidi_build
 ninja -j$(nproc) -C fribidi_build install
 sed -i 's/Cflags:/Cflags: -DFRIBIDI_LIB_STATIC/' ${FF_DEPS_PREFIX}/lib/pkgconfig/fribidi.pc
+
+# FREETYPE
+git clone -b VER-2-14-3 --depth=1 https://github.com/freetype/freetype.git
+pushd freetype
+./autogen.sh
+./configure \
+    --prefix=${FF_DEPS_PREFIX} \
+    --host=${FF_TOOLCHAIN} \
+    --disable-shared \
+    --enable-static
+make -j$(nproc)
+make install
+popd
 
 # GMP
 mkdir gmp
@@ -118,7 +103,7 @@ popd
 # FFTW3
 mkdir fftw3
 pushd fftw3
-fftw3_ver="3.3.10"
+fftw3_ver="3.3.11"
 fftw3_link="https://fftw.org/fftw-${fftw3_ver}.tar.gz"
 wget ${fftw3_link} -O fftw3.tar.gz
 tar xaf fftw3.tar.gz
@@ -158,7 +143,7 @@ popd
 popd
 
 # LZMA
-git clone -b v5.8.2 --depth=1 https://github.com/tukaani-project/xz.git
+git clone -b v5.8.3 --depth=1 https://github.com/tukaani-project/xz.git
 pushd xz
 ./autogen.sh --no-po4a --no-doxygen
 ./configure \
@@ -180,26 +165,28 @@ fc_ver="2.17.1"
 fc_link="https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/${fc_ver}/fontconfig-${fc_ver}.tar.xz"
 wget ${fc_link} -O fc.tar.xz
 tar xaf fc.tar.xz
-pushd fontconfig-${fc_ver}
-./configure \
+meson setup fontconfig-${fc_ver} fontconfig_build \
     --prefix=${FF_DEPS_PREFIX} \
-    --host=${FF_TOOLCHAIN} \
-    --disable-{shared,docs} \
-    --enable-{static,libxml2,iconv}
-make -j$(nproc)
-make install
-popd
+    --cross-file=${FF_MESON_TOOLCHAIN} \
+    --buildtype=release \
+    --wrap-mode=nofallback \
+    --default-library=static \
+    -Diconv=enabled \
+    -Dxml-backend=libxml2 \
+    -D{cache-build,doc,tests,tools}=disabled
+meson configure fontconfig_build
+ninja -j$(nproc) -C fontconfig_build install
 popd
 
 # HARFBUZZ
-git clone -b 10.4.0 --depth=1 https://github.com/harfbuzz/harfbuzz.git
+git clone -b 14.2.0 --depth=1 https://github.com/harfbuzz/harfbuzz.git
 meson setup harfbuzz harfbuzz_build \
     --prefix=${FF_DEPS_PREFIX} \
     --cross-file=${FF_MESON_TOOLCHAIN} \
     --buildtype=release \
     --default-library=static \
     -Dfreetype=enabled \
-    -D{glib,gobject,cairo,chafa,icu}=disabled \
+    -D{gpu,glib,gobject,cairo,chafa,icu}=disabled \
     -D{tests,introspection,docs,utilities}=disabled
 meson configure harfbuzz_build
 ninja -j$(nproc) -C harfbuzz_build install
@@ -217,7 +204,7 @@ meson configure libudfread_build
 ninja -j$(nproc) -C libudfread_build install
 
 # UNIBREAK
-git clone -b libunibreak_6_1 --depth=1 https://github.com/adah1972/libunibreak.git
+git clone -b libunibreak_7_0 --depth=1 https://github.com/adah1972/libunibreak.git
 pushd libunibreak
 ./bootstrap
 ./configure \
@@ -334,7 +321,7 @@ popd
 # OPENMPT
 mkdir mpt
 pushd mpt
-mpt_ver="0.8.4"
+mpt_ver="0.8.6"
 mpt_link="https://lib.openmpt.org/files/libopenmpt/src/libopenmpt-${mpt_ver}+release.autotools.tar.gz"
 wget ${mpt_link} -O mpt.tar.gz
 tar xaf mpt.tar.gz
@@ -406,12 +393,12 @@ make install
 popd
 
 # X265
-x265_commit="fa2770934b8f3d88aa866c77f27cb63f69a9ed39"
+x265_commit="e444744c03978c1fb4e037168967020cf2648427"
 git clone https://bitbucket.org/multicoreware/x265_git.git
 pushd x265_git
 git checkout ${x265_commit}
-# Wa for https://bitbucket.org/multicoreware/x265_git/issues/624
-rm -rf .git
+# Unbreak GCC 15
+sed -i '1i#include <cstdint>' source/dynamicHDR10/json11/json11.cpp
 x265_conf="
     -DCMAKE_TOOLCHAIN_FILE=${FF_CMAKE_TOOLCHAIN}
     -DCMAKE_INSTALL_PREFIX=${FF_DEPS_PREFIX}
@@ -473,7 +460,7 @@ popd
 popd
 
 # SVT-AV1
-git clone -b v3.1.2 --depth=1 https://gitlab.com/AOMediaCodec/SVT-AV1.git
+git clone -b v4.1.0 --depth=1 https://gitlab.com/AOMediaCodec/SVT-AV1.git
 pushd SVT-AV1
 mkdir build
 pushd build
@@ -489,7 +476,7 @@ popd
 popd
 
 # DAV1D
-git clone -b 1.5.2 --depth=1 https://code.videolan.org/videolan/dav1d.git
+git clone -b 1.5.3 --depth=1 https://code.videolan.org/videolan/dav1d.git
 meson setup dav1d dav1d_build \
     --prefix=${FF_DEPS_PREFIX} \
     --cross-file=${FF_MESON_TOOLCHAIN} \
@@ -501,7 +488,7 @@ meson configure dav1d_build
 ninja -j$(nproc) -C dav1d_build install
 
 # FDK-AAC-STRIPPED
-git clone -b stripped4 --depth=1 https://gitlab.freedesktop.org/wtaymans/fdk-aac-stripped.git
+git clone -b stripped5 --depth=1 https://gitlab.freedesktop.org/wtaymans/fdk-aac-stripped.git
 pushd fdk-aac-stripped
 ./autogen.sh
 ./configure \
@@ -562,7 +549,7 @@ popd
 # AMF
 mkdir amf-headers
 pushd amf-headers
-amf_ver="1.4.36"
+amf_ver="1.5.0"
 amf_link="https://github.com/GPUOpen-LibrariesAndSDKs/AMF/releases/download/v${amf_ver}/AMF-headers-v${amf_ver}.tar.gz"
 wget ${amf_link} -O amf.tar.gz
 tar xaf amf.tar.gz
@@ -602,6 +589,7 @@ fi
     --prefix=${FF_PREFIX} \
     ${FF_TARGET_FLAGS} \
     --extra-version=Jellyfin \
+    --disable-unstable \
     --disable-ffplay \
     --disable-debug \
     --disable-doc \
@@ -640,7 +628,6 @@ fi
     --enable-opencl \
     --enable-dxva2 \
     --enable-d3d11va \
-    --enable-d3d12va \
     --enable-amf \
     --enable-libvpl \
     --enable-ffnvcodec \

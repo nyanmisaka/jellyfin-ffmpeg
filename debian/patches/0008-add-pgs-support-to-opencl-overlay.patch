@@ -321,7 +321,8 @@ Index: FFmpeg/libavfilter/vf_overlay_opencl.c
  
 -    av_log(avctx, AV_LOG_DEBUG, "Using kernel %s.\n", kernel);
 +    av_bprint_init(&header, 2048, AV_BPRINT_SIZE_UNLIMITED);
-+
+ 
+-    err = ff_opencl_filter_load_program(avctx, &source, 1);
 +    if (ctx->alpha && ctx->alpha_format == 1)
 +        av_bprintf(&header, "#define NEED_UNPREMUL\n");
 +
@@ -329,8 +330,7 @@ Index: FFmpeg/libavfilter/vf_overlay_opencl.c
 +    opencl_sources[0] = header.str;
 +    opencl_sources[1] = ff_source_overlay_cl;
 +    err = ff_opencl_filter_load_program(avctx, opencl_sources, OPENCL_SOURCE_NB);
- 
--    err = ff_opencl_filter_load_program(avctx, &source, 1);
++
 +    av_bprint_finalize(&header, NULL);
      if (err < 0)
          goto fail;
@@ -685,3 +685,20 @@ Index: FFmpeg/libavfilter/vf_overlay_opencl.c
      { NULL },
  };
  
+@@ -313,9 +514,8 @@ static const AVFilterPad overlay_opencl_
+ const FFFilter ff_vf_overlay_opencl = {
+     .p.name          = "overlay_opencl",
+     .p.description   = NULL_IF_CONFIG_SMALL("Overlay one video on top of another"),
+-    .p.priv_class    = &overlay_opencl_class,
+-    .p.flags         = AVFILTER_FLAG_HWDEVICE,
+     .priv_size       = sizeof(OverlayOpenCLContext),
++    .p.priv_class    = &overlay_opencl_class,
+     .init            = &overlay_opencl_init,
+     .uninit          = &overlay_opencl_uninit,
+     .activate        = &overlay_opencl_activate,
+@@ -323,4 +523,5 @@ const FFFilter ff_vf_overlay_opencl = {
+     FILTER_OUTPUTS(overlay_opencl_outputs),
+     FILTER_SINGLE_PIXFMT(AV_PIX_FMT_OPENCL),
+     .flags_internal  = FF_FILTER_FLAG_HWFRAME_AWARE,
++    .p.flags         = AVFILTER_FLAG_HWDEVICE,
+ };

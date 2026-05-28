@@ -3,7 +3,7 @@
 _realname=opus
 pkgbase=mingw-w64-jellyfin-${_realname}
 pkgname=("${MINGW_PACKAGE_PREFIX}-jellyfin-${_realname}")
-pkgver=1.6
+pkgver=1.6.1
 pkgrel=1
 pkgdesc="Codec designed for interactive speech and audio transmission over the Internet (mingw-w64)"
 arch=('any')
@@ -22,7 +22,7 @@ makedepends=(
 )
 source=("https://downloads.xiph.org/releases/opus/opus-${pkgver}.tar.gz"
         001-aarch64-features.patch)
-sha256sums=('b7637334527201fdfd6dd6a02e67aceffb0e5e60155bbd89175647a80301c92c'
+sha256sums=('6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1'
             'a579c6d0e80632bfc144e4338a560f1a4f45b1a9b431aa71d0ea4c7259bdbe05')
 
 export MINGW_TOOLCHAIN_PREFIX="${MINGW_PREFIX}"

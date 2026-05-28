@@ -136,15 +136,21 @@ Index: FFmpeg/libavfilter/opencl/colorspace_common.cl
 ===================================================================
 --- FFmpeg.orig/libavfilter/opencl/colorspace_common.cl
 +++ FFmpeg/libavfilter/opencl/colorspace_common.cl
-@@ -16,8 +16,21 @@
+@@ -16,8 +16,27 @@
   * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
   */
  
 +#define REFERENCE_WHITE_ALT 203.0f
 +#define REFERENCE_WHITE_HLG 3.17955f
 +
++// BT.2446 Method B parameters for HLG to SDR
++#define BT2446B_HLG_LW 291.0f
++#define BT2446B_HLG_GAMMA 1.03f
++
  #define ST2084_MAX_LUMINANCE 10000.0f
 -#define REFERENCE_WHITE 100.0f
++#define ARIB_B67_MAX_LUMINANCE 1000.0f
++
 +#define ST2084_M1 0.1593017578125f
 +#define ST2084_M2 78.84375f
 +#define ST2084_C1 0.8359375f
@@ -159,7 +165,7 @@ Index: FFmpeg/libavfilter/opencl/colorspace_common.cl
  
  #if chroma_loc == 1
      #define chroma_sample(a,b,c,d) (((a) + (c)) * 0.5f)
-@@ -33,88 +46,128 @@
+@@ -33,88 +52,123 @@
      #define chroma_sample(a,b,c,d) (((a) + (b) + (c) + (d)) * 0.25f)
  #endif
  
@@ -173,19 +179,17 @@ Index: FFmpeg/libavfilter/opencl/colorspace_common.cl
      return luma_dst.x * c.x + luma_dst.y * c.y + luma_dst.z * c.z;
  }
  
-+float4 get_luma_dst4(float4 r4, float4 g4, float4 b4) {
++float4 get_luma_dstx4(float4 r4, float4 g4, float4 b4) {
 +    return luma_dst.x * r4 + luma_dst.y * g4 + luma_dst.z * b4;
 +}
 +
-+/*
  float get_luma_src(float3 c) {
      return luma_src.x * c.x + luma_src.y * c.y + luma_src.z * c.z;
  }
  
-+float4 get_luma_src4(float4 r4, float4 g4, float4 b4) {
++float4 get_luma_srcx4(float4 r4, float4 g4, float4 b4) {
 +    return luma_src.x * r4 + luma_src.y * g4 + luma_src.z * b4;
 +}
-+*/
 +
  float3 get_chroma_sample(float3 a, float3 b, float3 c, float3 d) {
      return chroma_sample(a, b, c, d);
@@ -241,8 +245,10 @@ Index: FFmpeg/libavfilter/opencl/colorspace_common.cl
 -    c /= powr(get_luma_dst(c), (gamma - 1.0f) / gamma);
 -    return c;
 +    return eotf_st2084_common(x) * ST2084_MAX_LUMINANCE / REFERENCE_WHITE_ALT;
-+}
-+
+ }
+ 
+-float inverse_eotf_bt1886(float c) {
+-    return c < 0.0f ? 0.0f : powr(c, 1.0f / 2.4f);
 +// delinearizer for PQ/ST2084
 +float inverse_eotf_st2084_common(float x) {
 +    x = fmax(x, 0.0f);
@@ -258,11 +264,28 @@ Index: FFmpeg/libavfilter/opencl/colorspace_common.cl
 +    float den = 1.0f + ST2084_C3 * xpow;
 +    return native_powr(1.0f + num / den, ST2084_M2);
 +#endif
-+}
-+
+ }
+ 
+-float oetf_bt709(float c) {
+-    c = c < 0.0f ? 0.0f : c;
+-    float r1 = 4.5f * c;
+-    float r2 = 1.099f * powr(c, 0.45f) - 0.099f;
+-    return c < 0.018f ? r1 : r2;
+-}
+-float inverse_oetf_bt709(float c) {
+-    float r1 = c / 4.5f;
+-    float r2 = powr((c + 0.099f) / 1.099f, 1.0f / 0.45f);
+-    return c < 0.081f ? r1 : r2;
 +float inverse_eotf_st2084(float x) {
 +    x *= REFERENCE_WHITE_ALT / ST2084_MAX_LUMINANCE;
 +    return inverse_eotf_st2084_common(x);
++}
++
++float3 eotf_st2084x3(float3 x) {
++    x.x = eotf_st2084_common(x.x);
++    x.y = eotf_st2084_common(x.y);
++    x.z = eotf_st2084_common(x.z);
++    return x * ST2084_MAX_LUMINANCE / REFERENCE_WHITE_ALT;
 +}
 +
 +float4 eotf_st2084x4(float4 x) {
@@ -282,53 +305,31 @@ Index: FFmpeg/libavfilter/opencl/colorspace_common.cl
 +    return x;
 +}
 +
-+float ootf_1_2(float x) {
-+    return x > 0.0f ? native_powr(x, 1.2f) : x;
-+}
-+
-+float inverse_ootf_1_2(float x) {
-+    return x > 0.0f ? native_powr(x, 1.0f / 1.2f) : x;
- }
- 
--float inverse_eotf_bt1886(float c) {
--    return c < 0.0f ? 0.0f : powr(c, 1.0f / 2.4f);
-+float oetf_arib_b67(float x) {
-+    x = fmax(x, 0.0f);
-+    return x <= (1.0f / 12.0f)
-+           ? native_sqrt(3.0f * x)
-+           : (ARIB_B67_A * native_log(12.0f * x - ARIB_B67_B) + ARIB_B67_C);
- }
- 
--float oetf_bt709(float c) {
--    c = c < 0.0f ? 0.0f : c;
--    float r1 = 4.5f * c;
--    float r2 = 1.099f * powr(c, 0.45f) - 0.099f;
--    return c < 0.018f ? r1 : r2;
--}
--float inverse_oetf_bt709(float c) {
--    float r1 = c / 4.5f;
--    float r2 = powr((c + 0.099f) / 1.099f, 1.0f / 0.45f);
--    return c < 0.081f ? r1 : r2;
-+float inverse_oetf_arib_b67(float x) {
-+    x = fmax(x, 0.0f);
-+    return x <= 0.5f
-+           ? (x * x) * (1.0f / 3.0f)
-+           : (native_exp((x - ARIB_B67_C) / ARIB_B67_A) + ARIB_B67_B) * (1.0f / 12.0f);
-+}
-+
 +// linearizer for HLG/ARIB-B67
-+float eotf_arib_b67(float x) {
-+    return ootf_1_2(inverse_oetf_arib_b67(x)) * (12.0f / REFERENCE_WHITE_HLG);
-+}
-+
-+// delinearizer for HLG/ARIB-B67
-+float inverse_eotf_arib_b67(float x) {
-+    return oetf_arib_b67(inverse_ootf_1_2(x / (12.0f / REFERENCE_WHITE_HLG)));
++float3 eotf_arib_b67x3(float3 x) {
++    float peak = ARIB_B67_MAX_LUMINANCE / REFERENCE_WHITE_ALT;
++    float gamma = 1.2f;
++#ifdef HLG_EOTF_BT2446B
++    peak = BT2446B_HLG_LW / REFERENCE_WHITE_ALT;
++    gamma = BT2446B_HLG_GAMMA;
++#endif
++    float3 a = 4.0f * x * x;
++    float3 b = native_exp((x - ARIB_B67_C) * (1.0f / ARIB_B67_A)) + ARIB_B67_B;
++    x = select(a, b, isgreater(x, (float3)(0.5f))) * (1.0f / 12.0f);
++    float luma = get_luma_src(x);
++    return x * peak * native_powr(max(luma, 0.0f), gamma - 1.0f);
 +}
 +
 +// delinearizer for BT709, BT2020-10
 +float inverse_eotf_bt1886(float x) {
 +    return x > 0.0f ? native_powr(x, 1.0f / 2.4f) : 0.0f;
++}
++
++float3 inverse_eotf_bt1886x3(float3 x) {
++    x.x = inverse_eotf_bt1886(x.x);
++    x.y = inverse_eotf_bt1886(x.y);
++    x.z = inverse_eotf_bt1886(x.z);
++    return x;
  }
  
  float3 yuv2rgb(float y, float u, float v) {
@@ -349,7 +350,19 @@ Index: FFmpeg/libavfilter/opencl/colorspace_common.cl
  #endif
      float r = y * rgb_matrix[0] + u * rgb_matrix[1] + v * rgb_matrix[2];
      float g = y * rgb_matrix[3] + u * rgb_matrix[4] + v * rgb_matrix[5];
-@@ -138,19 +191,35 @@ float3 rgb2yuv(float r, float g, float b
+@@ -125,10 +179,7 @@ float3 yuv2rgb(float y, float u, float v
+ float3 yuv2lrgb(float3 yuv) {
+     float3 rgb = yuv2rgb(yuv.x, yuv.y, yuv.z);
+ #ifdef linearize
+-    float r = linearize(rgb.x);
+-    float g = linearize(rgb.y);
+-    float b = linearize(rgb.z);
+-    return (float3)(r, g, b);
++    return linearize(rgb);
+ #else
+     return rgb;
+ #endif
+@@ -138,42 +189,50 @@ float3 rgb2yuv(float r, float g, float b
      float y = r*yuv_matrix[0] + g*yuv_matrix[1] + b*yuv_matrix[2];
      float u = r*yuv_matrix[3] + g*yuv_matrix[4] + b*yuv_matrix[5];
      float v = r*yuv_matrix[6] + g*yuv_matrix[7] + b*yuv_matrix[8];
@@ -391,7 +404,34 @@ Index: FFmpeg/libavfilter/opencl/colorspace_common.cl
      return y;
  }
  
-@@ -188,18 +257,97 @@ float3 lrgb2lrgb(float3 c) {
+ float3 lrgb2yuv(float3 c) {
+ #ifdef delinearize
+-    float r = delinearize(c.x);
+-    float g = delinearize(c.y);
+-    float b = delinearize(c.z);
+-    return rgb2yuv(r, g, b);
+-#else
+-    return rgb2yuv(c.x, c.y, c.z);
++    c = delinearize(c);
+ #endif
++    return rgb2yuv(c.x, c.y, c.z);
+ }
+ 
+ float lrgb2y(float3 c) {
+ #ifdef delinearize
+-    float r = delinearize(c.x);
+-    float g = delinearize(c.y);
+-    float b = delinearize(c.z);
+-    return rgb2y(r, g, b);
+-#else
+-    return rgb2y(c.x, c.y, c.z);
++    c = delinearize(c);
+ #endif
++    return rgb2y(c.x, c.y, c.z);
+ }
+ 
+ float3 lrgb2lrgb(float3 c) {
+@@ -188,18 +247,94 @@ float3 lrgb2lrgb(float3 c) {
  #endif
  }
  
@@ -400,10 +440,7 @@ Index: FFmpeg/libavfilter/opencl/colorspace_common.cl
 -    return ootf_impl(c, peak);
 +float3 rgb2lrgb(float3 c) {
 +#ifdef linearize
-+    float r = linearize(c.x);
-+    float g = linearize(c.y);
-+    float b = linearize(c.z);
-+    return (float3)(r, g, b);
++    return linearize(c);
  #else
      return c;
  #endif
@@ -501,7 +538,7 @@ Index: FFmpeg/libavfilter/opencl/tonemap.cl
 ===================================================================
 --- FFmpeg.orig/libavfilter/opencl/tonemap.cl
 +++ FFmpeg/libavfilter/opencl/tonemap.cl
-@@ -16,54 +16,89 @@
+@@ -16,54 +16,88 @@
   * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
   */
  
@@ -528,7 +565,6 @@ Index: FFmpeg/libavfilter/opencl/tonemap.cl
 +#endif
 +
 +#define FLOAT_EPS 1e-6f
-+#define LUT_SIZE 65
 +
  extern float3 lrgb2yuv(float3);
  extern float  lrgb2y(float3);
@@ -540,7 +576,7 @@ Index: FFmpeg/libavfilter/opencl/tonemap.cl
 -extern float3 inverse_ootf(float3 c, float peak);
 +extern float  eotf_st2084(float);
 +extern float  inverse_eotf_st2084(float);
-+extern float4 get_luma_dst4(float4, float4, float4);
++extern float4 get_luma_dstx4(float4, float4, float4);
  extern float3 get_chroma_sample(float3, float3, float3, float3);
 -
 -struct detection_result {
@@ -612,7 +648,7 @@ Index: FFmpeg/libavfilter/opencl/tonemap.cl
      float j = tone_param;
      float a, b;
  
-@@ -71,202 +106,1016 @@ float mobius(float s, float peak) {
+@@ -71,202 +105,1040 @@ float mobius(float s, float peak) {
          return s;
  
      a = -j * j * (peak - 1.0f) / (j * j - 2.0f * j + peak);
@@ -717,7 +753,7 @@ Index: FFmpeg/libavfilter/opencl/tonemap.cl
 +        float4 sig = fmax(fmax(*r4, fmax(*g4, *b4)), FLOAT_EPS);
 +#endif
 +#ifdef MAP_IN_DST_SPACE
-+        float4 luma = get_luma_dst4(*r4, *g4, *b4);
++        float4 luma = get_luma_dstx4(*r4, *g4, *b4);
 +#else // only LUM mode currently
 +        float4 luma = sig;
 +#endif
@@ -1565,59 +1601,83 @@ Index: FFmpeg/libavfilter/opencl/tonemap.cl
 +#endif
 +}
 +
-+float3 apply_lut3d(__global const float3 *restrict lut, float3 color)
++#undef lut3d_read_t
++#ifdef LUT_PERF_IMAGE3D
++  #define lut3d_read_t __read_only image3d_t
++#else
++  #define lut3d_read_t __global const float4 *restrict
++#endif
++
++float3 apply_lut3d(lut3d_read_t lut, float3 color)
 +{
 +    color = clamp(color, 0.0f, 1.0f);
 +
-+    // Scale the color to the LUT grid.
++    // Scale the color to the LUT grid
 +    float3 pos = color * (float)(LUT_SIZE - 1);
 +
-+    // Get the integer base indices in the LUT.
-+    int3 base = convert_int3(floor(pos));
-+    // Compute the fractional part within the cell.
++    // Get the integer base indices in the LUT
++    int3 base = clamp(convert_int3(floor(pos)), 0, LUT_SIZE - 2);
++
++    // Compute the fractional part within the cell
 +    float3 f = pos - convert_float3(base);
 +
-+    // Compute the base linear index.
-+    uint base_idx = base.x + base.y * LUT_SIZE + base.z * LUT_SIZE * LUT_SIZE;
-+
-+    // Sort the fraction offsets, so that we always have a>=b>=c
-+    float a = fmax(f.x, fmax(f.y, f.z));
-+    float c = fmin(f.x, fmin(f.y, f.z));
-+    float b = f.x + f.y + f.z - a - c;
-+
-+#define LUT_IDX_MAX (LUT_SIZE * LUT_SIZE * LUT_SIZE - 1)
++    // Sort the fraction offsets, so that we always have f_max>=f_mid>=f_min
++    float f_max = fmax(f.x, fmax(f.y, f.z));
++    float f_min = fmin(f.x, fmin(f.y, f.z));
++    float f_mid = f.x + f.y + f.z - f_max - f_min;
 +
 +    // The initial and the last corner values of current cube will always be fetched
-+    float3 c000 = lut[min(base_idx, (uint)LUT_IDX_MAX)];
-+    float3 c111 = lut[min(base_idx + 1 + LUT_SIZE + LUT_SIZE * LUT_SIZE, (uint)LUT_IDX_MAX)];
++#ifdef LUT_PERF_IMAGE3D
++    float3 c000 = read_imagef(lut, n_sampler, (int4)(base + 0, 0)).xyz;
++    float3 c111 = read_imagef(lut, n_sampler, (int4)(base + 1, 0)).xyz;
++#else
++    // Compute the base linear index
++    uint base_idx = base.x + base.y * LUT_SIZE + base.z * LUT_SIZE * LUT_SIZE;
++    uint last_idx = base_idx + 1 + LUT_SIZE + LUT_SIZE * LUT_SIZE;
++    float3 c000 = lut[base_idx].xyz;
++    float3 c111 = lut[last_idx].xyz;
++#endif
 +
-+    // Select the index for vertices of the tetrahedron.
++    // Select the index for vertices of the tetrahedron:
++    // Although we have f_max and f_min values, we cannot use them in the
++    // following selection as float equality comparison is not accurate on GPU
++#ifdef LUT_PERF_IMAGE3D
++    int3 y_max = (int3)(-(f.y >= f.z && f.y >= f.x));
++    int3 x_max = (int3)(-(f.x >= f.y && f.x >= f.z));
++    int3 d0 = select(select((int3)(0, 0, 1), (int3)(0, 1, 0), y_max), (int3)(1, 0, 0), x_max);
++    int3 y_min = (int3)(-(f.y <= f.z && f.y <= f.x));
++    int3 x_min = (int3)(-(f.x <= f.y && f.x <= f.z));
++    int3 d1 = select(select((int3)(1, 1, 0), (int3)(1, 0, 1), y_min), (int3)(0, 1, 1), x_min);
++#else
 +    uint idx100 = base_idx + 1;
 +    uint idx010 = base_idx + LUT_SIZE;
 +    uint idx110 = base_idx + 1 + LUT_SIZE;
 +    uint idx001 = base_idx + LUT_SIZE * LUT_SIZE;
 +    uint idx101 = base_idx + 1 + LUT_SIZE * LUT_SIZE;
 +    uint idx011 = base_idx + LUT_SIZE + LUT_SIZE * LUT_SIZE;
-+
-+    // Although we have a and c as max and min value, we cannot use them in the
-+    // following selection as float equality comparison is not accurate on GPU.
-+    uint idx0 = select(select(idx001, idx010, (f.y >= f.z && f.y >= f.x)), idx100, (f.x >= f.y && f.x >= f.z));
-+    uint idx1 = select(select(idx110, idx101, (f.y <= f.z && f.y <= f.x)), idx011, (f.x <= f.y && f.x <= f.z));
++    uint y_max = f.y >= f.z && f.y >= f.x;
++    uint x_max = f.x >= f.y && f.x >= f.z;
++    uint idx0 = select(select(idx001, idx010, y_max), idx100, x_max);
++    uint y_min = f.y <= f.z && f.y <= f.x;
++    uint x_min = f.x <= f.y && f.x <= f.z;
++    uint idx1 = select(select(idx110, idx101, y_min), idx011, x_min);
++#endif
 +
 +    // Fetch LUT value with determined tetrahedron
-+    float3 c0 = lut[min(idx0, (uint)LUT_IDX_MAX)];
-+    float3 c1 = lut[min(idx1, (uint)LUT_IDX_MAX)];
++#ifdef LUT_PERF_IMAGE3D
++    float3 c0 = read_imagef(lut, n_sampler, (int4)(base + d0, 0)).xyz;
++    float3 c1 = read_imagef(lut, n_sampler, (int4)(base + d1, 0)).xyz;
++#else
++    float3 c0 = lut[idx0].xyz;
++    float3 c1 = lut[idx1].xyz;
++#endif
 +
-+    float3 ca = c0 - c000;
-+    float3 cb = c1 - c0;
-+    float3 cc = c111 - c1;
-+
-+    float3 result = c000 + a * ca + b * cb + c * cc;
-+
-+    return clamp(result, 0.0f, 1.0f);
++    return clamp(c000 + f_max * (c0   - c000)
++                      + f_mid * (c1   - c0)
++                      + f_min * (c111 - c1), 0.0f, 1.0f);
 +}
 +
-+__kernel void tonemap_lut(__global const float3 *restrict lut,
++__kernel void tonemap_lut(          lut3d_read_t  lut,
 +                          __write_only image2d_t dst1,
 +                          __read_only  image2d_t src1,
 +                          __write_only image2d_t dst2,
@@ -1753,7 +1813,7 @@ Index: FFmpeg/libavfilter/opencl/tonemap.cl
 +#endif
 +}
 +
-+__kernel void build_lut(__global float3 *lut, float peak)
++__kernel void build_lut(__global float4 *lut, float peak)
 +{
 +    const int total_entries = LUT_SIZE * LUT_SIZE * LUT_SIZE;
 +    int idx = get_global_id(0);
@@ -1790,7 +1850,7 @@ Index: FFmpeg/libavfilter/opencl/tonemap.cl
 +    c = clamp(c, 0.0f, 1.0f);
 +#endif
 +    c = lrgb2yuv(c);
-+    lut[idx] = clamp(c, 0.0f, 1.0f);
++    lut[idx] = clamp((float4)(c, 0.0f), 0.0f, 1.0f);
  }
 Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 ===================================================================
@@ -1802,13 +1862,14 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
   * This file is part of FFmpeg.
   *
   * FFmpeg is free software; you can redistribute it and/or
-@@ -15,27 +15,49 @@
+@@ -15,27 +15,50 @@
   * License along with FFmpeg; if not, write to the Free Software
   * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
   */
 +
  #include <float.h>
  
++#define CL_USE_DEPRECATED_OPENCL_1_2_APIS
 +#ifdef __APPLE__
 +#include <OpenCL/cl_ext.h>
 +#else
@@ -1858,7 +1919,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
  
  enum TonemapAlgorithm {
      TONEMAP_NONE,
-@@ -45,7 +67,17 @@ enum TonemapAlgorithm {
+@@ -45,7 +68,17 @@ enum TonemapAlgorithm {
      TONEMAP_REINHARD,
      TONEMAP_HABLE,
      TONEMAP_MOBIUS,
@@ -1877,7 +1938,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
  };
  
  typedef struct TonemapOpenCLContext {
-@@ -56,23 +88,48 @@ typedef struct TonemapOpenCLContext {
+@@ -56,32 +89,61 @@ typedef struct TonemapOpenCLContext {
      enum AVColorPrimaries primaries, primaries_in, primaries_out;
      enum AVColorRange range, range_in, range_out;
      enum AVChromaLocation chroma_loc;
@@ -1893,14 +1954,17 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +#define pivots_sz pivots_cnt*sizeof(cl_float)
 +#define coeffs_sz coeffs_cnt*sizeof(cl_float)
 +#define mmr_sz mmr_cnt*sizeof(cl_float)
-+    struct DoviMetadata *dovi;
++    struct FFDOVIMetadataRemap *dovi;
 +    cl_mem dovi_buf;
 +    unsigned dovi_use_fp16;
 +    unsigned is_pure_dovi;
++    unsigned is_hlg_dovi;
  
-+#define LUT_SIZE (65 * 65 * 65)
-     enum TonemapAlgorithm tonemap;
-+    enum TonemapMode      tonemap_mode;
++#define LUT_SIZE 65
+     /* enum TonemapAlgorithm */
+     int                   tonemap;
++    /* enum TonemapMode */
++    int                   tonemap_mode;
      enum AVPixelFormat    format;
 +    int                   apply_dovi;
      double                peak;
@@ -1912,26 +1976,30 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 -    double                target_peak;
      double                scene_threshold;
 +    int                   tradeoff;
++    int                   use_image3d;
      int                   initialised;
 +    int                   init_with_dovi;
      cl_kernel             kernel;
 +    cl_kernel             lut_generation_kernel;
 +    cl_mem                dither_image;
 +    cl_mem                lut_buffer;
++    cl_mem                lut_image;
      cl_command_queue      command_queue;
 -    cl_mem                util_mem;
  } TonemapOpenCLContext;
  
- static const char *const linearize_funcs[AVCOL_TRC_NB] = {
+ static const char *const linearize_funcs[] = {
 -    [AVCOL_TRC_SMPTE2084] = "eotf_st2084",
 -    [AVCOL_TRC_ARIB_STD_B67] = "inverse_oetf_hlg",
-+    [AVCOL_TRC_SMPTE2084]    = "eotf_st2084",
-+    [AVCOL_TRC_ARIB_STD_B67] = "eotf_arib_b67",
++    [AVCOL_TRC_SMPTE2084]    = "eotf_st2084x3",
++    [AVCOL_TRC_ARIB_STD_B67] = "eotf_arib_b67x3",
  };
  
- static const char *const delinearize_funcs[AVCOL_TRC_NB] = {
-@@ -80,7 +137,7 @@ static const char *const delinearize_fun
-     [AVCOL_TRC_BT2020_10] = "inverse_eotf_bt1886",
+ static const char *const delinearize_funcs[] = {
+-    [AVCOL_TRC_BT709]     = "inverse_eotf_bt1886",
+-    [AVCOL_TRC_BT2020_10] = "inverse_eotf_bt1886",
++    [AVCOL_TRC_BT709]     = "inverse_eotf_bt1886x3",
++    [AVCOL_TRC_BT2020_10] = "inverse_eotf_bt1886x3",
  };
  
 -static const char *const tonemap_func[TONEMAP_MAX] = {
@@ -1939,7 +2007,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
      [TONEMAP_NONE]     = "direct",
      [TONEMAP_LINEAR]   = "linear",
      [TONEMAP_GAMMA]    = "gamma",
-@@ -88,6 +145,14 @@ static const char *const tonemap_func[TO
+@@ -89,6 +151,14 @@ static const char *const tonemap_func[TO
      [TONEMAP_REINHARD] = "reinhard",
      [TONEMAP_HABLE]    = "hable",
      [TONEMAP_MOBIUS]   = "mobius",
@@ -1954,7 +2022,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
  };
  
  static int get_rgb2rgb_matrix(enum AVColorPrimaries in, enum AVColorPrimaries out,
-@@ -108,90 +173,453 @@ static int get_rgb2rgb_matrix(enum AVCol
+@@ -109,90 +179,515 @@ static int get_rgb2rgb_matrix(enum AVCol
      return 0;
  }
  
@@ -1995,7 +2063,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +    cl_float mmr_packed_dataf[8*6][4] = {0};
 +    cl_half coeffs_datah[8][4] = {0};
 +    cl_half mmr_packed_datah[8*6][4] = {0};
-+    int c, i, j, k, err;
++    int c, i, j, k, err av_unused;
 +    cl_int cle;
 +
 +    pbuf = clEnqueueMapBuffer(ctx->command_queue, ctx->dovi_buf,
@@ -2008,7 +2076,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +    for (c = 0; c < 3; c++) {
 +        int has_poly = 0, has_mmr = 0, mmr_single = 1;
 +        int mmr_idx = 0, min_order = 3, max_order = 1;
-+        const struct ReshapeData *comp = &ctx->dovi->comp[c];
++        const struct FFDOVIReshapeData *comp = &ctx->dovi->comp[c];
 +        if (!comp->num_pivots)
 +            continue;
 +        av_assert0(comp->num_pivots >= 2 && comp->num_pivots <= 9);
@@ -2150,24 +2218,20 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
      TonemapOpenCLContext *ctx = avctx->priv;
 +    AVBPrint header;
 +    const char *opencl_sources[OPENCL_SOURCE_NB];
-+    size_t m_origin[3] = {0};
-+    size_t m_region[3] = {ff_fruit_dither_size, ff_fruit_dither_size, 1};
-+    size_t m_row_pitch = ff_fruit_dither_size * sizeof(ff_fruit_dither_matrix[0]);
      int rgb2rgb_passthrough = 1;
      double rgb2rgb[3][3], rgb2yuv[3][3], yuv2rgb[3][3];
      const AVLumaCoefficients *luma_src, *luma_dst;
-+    cl_event event = NULL;
-+    cl_bool device_is_integrated;
-+    cl_uint max_compute_units, device_vendor_id;
++    cl_event event_in = NULL, event_out = NULL;
++    cl_mem_flags dovi_buf_flags = CL_MEM_ALLOC_HOST_PTR | CL_MEM_HOST_WRITE_ONLY | CL_MEM_READ_ONLY;
++    cl_uint device_vendor_id;
      cl_int cle;
 -    int err;
 -    AVBPrint header;
 -    const char *opencl_sources[OPENCL_SOURCE_NB];
-+    cl_mem_flags dovi_buf_flags = CL_MEM_ALLOC_HOST_PTR | CL_MEM_HOST_WRITE_ONLY | CL_MEM_READ_ONLY;
 +    char *device_vendor = NULL;
 +    char *device_name = NULL;
 +    char *device_exts = NULL;
-+    int is_device_qualcomm = 0;
++    int is_qcom_proprietary = 0;
 +    int i, j, err;
  
 -    av_bprint_init(&header, 1024, AV_BPRINT_SIZE_AUTOMATIC);
@@ -2214,72 +2278,145 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
      ctx->target_peak = 1.0f;
 -    av_log(ctx, AV_LOG_DEBUG, "tone mapping transfer from %s to %s\n",
 +
-+    cle = clGetDeviceInfo(ctx->ocf.hwctx->device_id, CL_DEVICE_VENDOR_ID,
-+                          sizeof(cl_uint), &device_vendor_id,
-+                          NULL);
++    cle = clGetDeviceInfo(ctx->ocf.hwctx->device_id,
++                          CL_DEVICE_VENDOR_ID,
++                          sizeof(cl_uint), &device_vendor_id, NULL);
 +    CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to check OpenCL "
 +                     "device vendor id %d.\n", cle);
 +
-+    if (ctx->tradeoff == -1) {
-+        ctx->tradeoff = 1;
-+        cle = clGetDeviceInfo(ctx->ocf.hwctx->device_id, CL_DEVICE_HOST_UNIFIED_MEMORY,
-+                              sizeof(cl_bool), &device_is_integrated,
-+                              NULL);
++    device_exts = check_opencl_device_str(ctx->ocf.hwctx->device_id,
++                                          CL_DEVICE_EXTENSIONS);
++
++    ctx->use_image3d = 0;
++    if (ctx->tradeoff) {
++        cl_bool device_is_uma = 0;
++        int is_intel = 0, is_arm = 0, is_qcom = 0;
++        int is_tradeoff_auto = ctx->tradeoff == -1;
++
++        cle = clGetDeviceInfo(ctx->ocf.hwctx->device_id,
++                              CL_DEVICE_HOST_UNIFIED_MEMORY,
++                              sizeof(cl_bool), &device_is_uma, NULL);
 +        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to check if OpenCL "
-+                         "device is integrated %d.\n", cle);
-+        cle = clGetDeviceInfo(ctx->ocf.hwctx->device_id, CL_DEVICE_MAX_COMPUTE_UNITS,
-+                              sizeof(cl_uint), &max_compute_units,
-+                              NULL);
-+        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to check OpenCL "
-+                         "device max compute units %d.\n", cle);
-+        if (device_vendor_id == 0x8086 && device_is_integrated == CL_TRUE) {
++                         "device is UMA %d.\n", cle);
++
++        device_vendor = check_opencl_device_str(ctx->ocf.hwctx->device_id,
++                                                CL_DEVICE_VENDOR);
++        device_name = check_opencl_device_str(ctx->ocf.hwctx->device_id,
++                                              CL_DEVICE_NAME);
++
++        is_intel = device_vendor_id == 0x8086;
++        is_arm   = device_vendor_id == 0x13b5 ||
++                   (device_vendor && strstr(device_vendor, "ARM")) ||
++                   (device_name && strstr(device_name, "Mali"));
++        is_qcom  = device_vendor_id == 0x5143 ||
++                   device_vendor_id == MKTAG('Q', 'C', 'O', 'M');
++
++        ctx->tradeoff = 1;
++        if (is_intel && device_is_uma && is_tradeoff_auto) {
++            // Use tradeoff on low perf Intel iGPUs
++            cl_uint max_compute_units = 0;
++
++            cle = clGetDeviceInfo(ctx->ocf.hwctx->device_id,
++                                  CL_DEVICE_MAX_COMPUTE_UNITS,
++                                  sizeof(cl_uint), &max_compute_units, NULL);
++            CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to check OpenCL "
++                             "device max compute units %d.\n", cle);
++
 +            if (max_compute_units >= 40)
 +                ctx->tradeoff = 0;
-+            if (device_name = check_opencl_device_str(ctx->ocf.hwctx->device_id, CL_DEVICE_NAME)) {
++	    else if (device_name) {
 +                const char *excluded_devices[5] = { "Arc", "Iris", "Xe", "770", "750" };
 +                for (i = 0; i < FF_ARRAY_ELEMS(excluded_devices); i++) {
 +                    if (strstr(device_name, excluded_devices[i])) {
-+                        ctx->tradeoff = 0;
-+                        break;
++                        ctx->tradeoff = 0; break;
 +                    }
 +                }
-+                av_freep(&device_name);
 +            }
-+        } else if (device_vendor_id == 0x5143 || device_vendor_id == MKTAG('Q', 'C', 'O', 'M')) {
++        } else if (is_arm && device_is_uma) {
++            // Use tradeoff and check image3d_t support for lut on ARM Mali Valhall+
++            cl_uint nb_formats = 0;
++            cl_image_format *formats = NULL;
++
++            if (!(device_exts && strstr(device_exts, "cl_arm_job_slot_selection"))) {
++                cle = clGetSupportedImageFormats(ctx->ocf.hwctx->context,
++                                                 CL_MEM_READ_ONLY,
++                                                 CL_MEM_OBJECT_IMAGE3D,
++                                                 0, NULL, &nb_formats);
++                if (cle == CL_SUCCESS && nb_formats > 0) {
++                    formats = av_malloc_array(nb_formats, sizeof(*formats));
++                    if (!formats) {
++                        err = AVERROR(ENOMEM);
++                        goto fail;
++                    }
++                    cle = clGetSupportedImageFormats(ctx->ocf.hwctx->context,
++                                                     CL_MEM_READ_ONLY,
++                                                     CL_MEM_OBJECT_IMAGE3D,
++                                                     nb_formats, formats, NULL);
++                    for (i = 0; cle == CL_SUCCESS && i < nb_formats; i++) {
++                        if (formats[i].image_channel_order == CL_RGBA &&
++                            formats[i].image_channel_data_type == CL_FLOAT) {
++                            ctx->use_image3d = 1; break;
++                        }
++                    }
++                }
++                av_freep(&formats);
++            }
++            if (ctx->use_image3d) {
++                size_t value = 0;
++                cl_device_info params[] = {
++                    CL_DEVICE_IMAGE3D_MAX_WIDTH,
++                    CL_DEVICE_IMAGE3D_MAX_HEIGHT,
++                    CL_DEVICE_IMAGE3D_MAX_DEPTH
++                };
++
++                for (i = 0; i < FF_ARRAY_ELEMS(params); i++) {
++                    cle = clGetDeviceInfo(ctx->ocf.hwctx->device_id, params[i],
++                                          sizeof(value), &value, NULL);
++                    if (cle != CL_SUCCESS || value < LUT_SIZE) {
++                        ctx->use_image3d = 0; break;
++                    }
++                }
++            }
++            if (!ctx->use_image3d)
++                av_log(avctx, AV_LOG_DEBUG,
++                       "Disabled image3d for lut due to lack of support.\n");
++        } else if (is_qcom) {
 +            // Always use tradeoff on Qualcomm due to inconsistent performance
-+            ctx->tradeoff = 1;
-+        } else if (device_is_integrated == CL_TRUE) {
-+            device_vendor = check_opencl_device_str(ctx->ocf.hwctx->device_id, CL_DEVICE_VENDOR);
-+            device_name = check_opencl_device_str(ctx->ocf.hwctx->device_id, CL_DEVICE_NAME);
-+            if (!strstr(device_vendor, "ARM") &&
-+                !strstr(device_name, "Mali"))
-+                ctx->tradeoff = 0;
-+            av_freep(&device_vendor);
-+            av_freep(&device_name);
-+        } else {
++        } else if (is_tradeoff_auto) {
 +            ctx->tradeoff = 0;
 +        }
 +
-+        if (!ctx->tradeoff)
-+            av_log(avctx, AV_LOG_DEBUG, "Disabled tradeoffs on high performance device.\n");
++        if (is_tradeoff_auto && !ctx->tradeoff)
++            av_log(avctx, AV_LOG_DEBUG,
++                   "Disabled tradeoffs on high performance device.\n");
++
++        av_freep(&device_vendor);
++        av_freep(&device_name);
 +    }
 +
 +    // for low perf device, only do reshaping for pure dovi
 +    if (ctx->tradeoff && ctx->dovi && !ctx->is_pure_dovi) {
 +        av_freep(&ctx->dovi);
 +        ctx->apply_dovi = 0;
++        if (ctx->is_hlg_dovi) {
++            ctx->trc_in = AVCOL_TRC_ARIB_STD_B67;
++            ctx->colorspace_in = AVCOL_SPC_BT2020_NCL;
++            ctx->primaries_in = AVCOL_PRI_BT2020;
++        }
 +    }
-+
-+    device_exts = check_opencl_device_str(ctx->ocf.hwctx->device_id, CL_DEVICE_EXTENSIONS);
 +
 +    // use FP16 for dovi reshaping only when tradeoff is enabled and it's supported
 +    ctx->dovi_use_fp16 = 0;
-+    if (ctx->tradeoff && ctx->dovi) {
-+        if (device_exts && strstr(device_exts, "cl_khr_fp16")) {
-+            ctx->dovi_use_fp16 = 1;
-+            av_log(avctx, AV_LOG_DEBUG, "FP16 is enabled for DOVI reshaping.\n");
-+        }
++    if (ctx->tradeoff && ctx->dovi && device_exts && strstr(device_exts, "cl_khr_fp16")) {
++        ctx->dovi_use_fp16 = 1;
++        av_log(avctx, AV_LOG_DEBUG, "FP16 is enabled for DOVI reshaping.\n");
 +    }
++
++    // zero-copy buffer requires this extension on Intel dGPUs
++    if (device_vendor_id == 0x8086 && device_exts && strstr(device_exts, "cl_intel_mem_force_host_memory"))
++        dovi_buf_flags |= (1 << 20); /* CL_MEM_FORCE_HOST_MEMORY_INTEL */
++
++    av_freep(&device_exts);
 +
 +    if (device_vendor_id == 0x5143) {
 +        // Qualcomm has two device IDs: 0x5143 and 0x4d4f4351 ('Q' | 'C' << 8 | 'O' << 16 | 'M' << 24)
@@ -2288,20 +2425,9 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +        // The former has better performance if the kernel is written in a way its compiler handles properly
 +        // The latter one has more predictable performance and compiler behaves a bit more like other GPU
 +        // Only use the workaround on Qualcomm native OpenCL driver
++        is_qcom_proprietary = 1;
 +        av_log(avctx, AV_LOG_DEBUG, "Qualcomm driver in use, vendor specific workarounds applied.\n");
-+        is_device_qualcomm = 1;
 +    }
-+
-+#ifndef CL_MEM_FORCE_HOST_MEMORY_INTEL
-+  #define CL_MEM_FORCE_HOST_MEMORY_INTEL (1 << 20)
-+#endif
-+    // zero-copy buffer requires this extension on Intel dGPUs
-+    if (device_vendor_id == 0x8086) {
-+        if (device_exts && strstr(device_exts, "cl_intel_mem_force_host_memory"))
-+            dovi_buf_flags |= CL_MEM_FORCE_HOST_MEMORY_INTEL;
-+    }
-+
-+    av_freep(&device_exts);
 +
 +    av_log(ctx, AV_LOG_DEBUG, "Tonemapping transfer from %s to %s\n",
             av_color_transfer_name(ctx->trc_in),
@@ -2319,7 +2445,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +    av_log(ctx, AV_LOG_DEBUG, "Mapping range from %s to %s\n",
             av_color_range_name(ctx->range_in),
             av_color_range_name(ctx->range_out));
--    // checking valid value just because of limited implementaion
+-    // checking valid value just because of limited implementation
 -    // please remove when more functionalities are implemented
 +
      av_assert0(ctx->trc_out == AVCOL_TRC_BT709 ||
@@ -2353,8 +2479,12 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +
 +    av_bprint_init(&header, 2048, AV_BPRINT_SIZE_UNLIMITED);
 +
-+    if (is_device_qualcomm)
++    if (is_qcom_proprietary)
 +        av_bprintf(&header, "#define IS_QCOM_GPU\n");
++
++    av_bprintf(&header, "#define LUT_SIZE %d\n", LUT_SIZE);
++    if (ctx->use_image3d)
++        av_bprintf(&header, "#define LUT_PERF_IMAGE3D\n");
 +
 +    av_bprintf(&header, "__constant float tone_param = %.4ff;\n",
 +               ctx->final_param);
@@ -2437,20 +2567,55 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
      av_bprintf(&header, "#define chroma_loc %d\n", (int)ctx->chroma_loc);
  
      if (rgb2rgb_passthrough)
-@@ -199,19 +627,41 @@ static int tonemap_opencl_init(AVFilterC
+@@ -200,44 +695,64 @@ static int tonemap_opencl_init(AVFilterC
      else
          ff_opencl_print_const_matrix_3x3(&header, "rgb2rgb", rgb2rgb);
  
 +    if (ctx->trc_out == AVCOL_TRC_SMPTE2084)
 +        av_bprintf(&header, "#define SKIP_TONEMAP\n");
++
++    if (ctx->trc_in == AVCOL_TRC_ARIB_STD_B67 &&
++        ctx->trc_out != AVCOL_TRC_SMPTE2084)
++        av_bprintf(&header, "#define HLG_EOTF_BT2446B\n");
  
--    luma_src = av_csp_luma_coeffs_from_avcsp(ctx->colorspace_in);
--    if (!luma_src) {
--        err = AVERROR(EINVAL);
+     luma_src = av_csp_luma_coeffs_from_avcsp(ctx->colorspace_in);
+     if (!luma_src) {
+         err = AVERROR(EINVAL);
 -        av_log(avctx, AV_LOG_ERROR, "unsupported input colorspace %d (%s)\n",
--               ctx->colorspace_in, av_color_space_name(ctx->colorspace_in));
--        goto fail;
++        av_log(avctx, AV_LOG_ERROR, "Unsupported input colorspace %d (%s)\n",
+                ctx->colorspace_in, av_color_space_name(ctx->colorspace_in));
+         goto fail;
+     }
++    av_bprintf(&header, "__constant float3 luma_src = {%.13ff, %.13ff, %.13ff};\n",
++               av_q2d(luma_src->cr), av_q2d(luma_src->cg), av_q2d(luma_src->cb));
+ 
+     luma_dst = av_csp_luma_coeffs_from_avcsp(ctx->colorspace_out);
+     if (!luma_dst) {
+         err = AVERROR(EINVAL);
+-        av_log(avctx, AV_LOG_ERROR, "unsupported output colorspace %d (%s)\n",
++        av_log(avctx, AV_LOG_ERROR, "Unsupported output colorspace %d (%s)\n",
+                ctx->colorspace_out, av_color_space_name(ctx->colorspace_out));
+         goto fail;
+     }
+-
+-    ff_fill_rgb2yuv_table(luma_dst, rgb2yuv);
+-    ff_opencl_print_const_matrix_3x3(&header, "yuv_matrix", rgb2yuv);
+-
+-    ff_fill_rgb2yuv_table(luma_src, rgb2yuv);
+-    ff_matrix_invert_3x3(rgb2yuv, yuv2rgb);
+-    ff_opencl_print_const_matrix_3x3(&header, "rgb_matrix", yuv2rgb);
+-
+-    av_bprintf(&header, "constant float3 luma_src = {%.4ff, %.4ff, %.4ff};\n",
+-               av_q2d(luma_src->cr), av_q2d(luma_src->cg), av_q2d(luma_src->cb));
+-    av_bprintf(&header, "constant float3 luma_dst = {%.4ff, %.4ff, %.4ff};\n",
++    av_bprintf(&header, "__constant float3 luma_dst = {%.13ff, %.13ff, %.13ff};\n",
+                av_q2d(luma_dst->cr), av_q2d(luma_dst->cg), av_q2d(luma_dst->cb));
+ 
+-    av_bprintf(&header, "#define linearize %s\n", linearize_funcs[ctx->trc_in]);
+-    av_bprintf(&header, "#define delinearize %s\n",
+-               delinearize_funcs[ctx->trc_out]);
 +    if (ctx->dovi) {
++        const size_t buf_sz = 3*(params_sz+pivots_sz+coeffs_sz+mmr_sz) >> !!ctx->dovi_use_fp16;
 +        double ycc2rgb_offset[3] = {0};
 +        double lms2rgb[3][3];
 +        av_bprintf(&header, "#define DOVI_RESHAPE\n");
@@ -2465,48 +2630,19 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +        ff_matrix_mul_3x3(lms2rgb, dovi_lms2rgb_matrix, ctx->dovi->linear);
 +        ff_opencl_print_const_matrix_3x3(&header, "rgb_matrix", ctx->dovi->nonlinear); //ycc2rgb
 +        ff_opencl_print_const_matrix_3x3(&header, "lms2rgb_matrix", lms2rgb); //lms2rgb
++
++        CL_CREATE_BUFFER_FLAGS(ctx, dovi_buf, dovi_buf_flags, buf_sz, NULL);
 +    } else {
-+        luma_src = av_csp_luma_coeffs_from_avcsp(ctx->colorspace_in);
-+        if (!luma_src) {
-+            err = AVERROR(EINVAL);
-+            av_log(avctx, AV_LOG_ERROR, "Unsupported input colorspace %d (%s)\n",
-+                   ctx->colorspace_in, av_color_space_name(ctx->colorspace_in));
-+            goto fail;
-+        }
 +        ff_fill_rgb2yuv_table(luma_src, rgb2yuv);
 +        ff_matrix_invert_3x3(rgb2yuv, yuv2rgb);
 +        ff_opencl_print_const_matrix_3x3(&header, "rgb_matrix", yuv2rgb);
-     }
++    }
  
-     luma_dst = av_csp_luma_coeffs_from_avcsp(ctx->colorspace_out);
-     if (!luma_dst) {
-         err = AVERROR(EINVAL);
--        av_log(avctx, AV_LOG_ERROR, "unsupported output colorspace %d (%s)\n",
-+        av_log(avctx, AV_LOG_ERROR, "Unsupported output colorspace %d (%s)\n",
-                ctx->colorspace_out, av_color_space_name(ctx->colorspace_out));
-         goto fail;
-     }
-@@ -219,24 +669,13 @@ static int tonemap_opencl_init(AVFilterC
-     ff_fill_rgb2yuv_table(luma_dst, rgb2yuv);
-     ff_opencl_print_const_matrix_3x3(&header, "yuv_matrix", rgb2yuv);
- 
--    ff_fill_rgb2yuv_table(luma_src, rgb2yuv);
--    ff_matrix_invert_3x3(rgb2yuv, yuv2rgb);
--    ff_opencl_print_const_matrix_3x3(&header, "rgb_matrix", yuv2rgb);
--
--    av_bprintf(&header, "constant float3 luma_src = {%.4ff, %.4ff, %.4ff};\n",
--               av_q2d(luma_src->cr), av_q2d(luma_src->cg), av_q2d(luma_src->cb));
--    av_bprintf(&header, "constant float3 luma_dst = {%.4ff, %.4ff, %.4ff};\n",
-+    av_bprintf(&header, "__constant float3 luma_dst = {%.13ff, %.13ff, %.13ff};\n",
-                av_q2d(luma_dst->cr), av_q2d(luma_dst->cg), av_q2d(luma_dst->cb));
- 
--    av_bprintf(&header, "#define linearize %s\n", linearize_funcs[ctx->trc_in]);
--    av_bprintf(&header, "#define delinearize %s\n",
--               delinearize_funcs[ctx->trc_out]);
--
 -    if (ctx->trc_in == AVCOL_TRC_ARIB_STD_B67)
 -        av_bprintf(&header, "#define ootf_impl ootf_hlg\n");
--
++    ff_fill_rgb2yuv_table(luma_dst, rgb2yuv);
++    ff_opencl_print_const_matrix_3x3(&header, "yuv_matrix", rgb2yuv);
+ 
 -    if (ctx->trc_out == AVCOL_TRC_ARIB_STD_B67)
 -        av_bprintf(&header, "#define inverse_ootf_impl inverse_ootf_hlg\n");
 +    if (ctx->trc_out != AVCOL_TRC_SMPTE2084) {
@@ -2516,13 +2652,17 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
  
      av_log(avctx, AV_LOG_DEBUG, "Generated OpenCL header:\n%s\n", header.str);
      opencl_sources[0] = header.str;
-@@ -254,46 +693,231 @@ static int tonemap_opencl_init(AVFilterC
+@@ -255,50 +770,291 @@ static int tonemap_opencl_init(AVFilterC
      CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to create OpenCL "
                       "command queue %d.\n", cle);
  
 -    ctx->kernel = clCreateKernel(ctx->ocf.program, "tonemap", &cle);
 -    CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to create kernel %d.\n", cle);
 +    if (ctx->in_desc->comp[0].depth > ctx->out_desc->comp[0].depth) {
++        const size_t m_origin[3] = { 0 };
++        const size_t m_region[3] = { ff_fruit_dither_size, ff_fruit_dither_size, 1 };
++        const size_t m_row_pitch = ff_fruit_dither_size * sizeof(ff_fruit_dither_matrix[0]);
++
 +        cl_image_format image_format = {
 +            .image_channel_data_type = CL_UNORM_INT16,
 +            .image_channel_order     = CL_R,
@@ -2534,7 +2674,8 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +            .image_row_pitch = 0,
 +        };
 +
-+        av_assert0(sizeof(ff_fruit_dither_matrix) == sizeof(ff_fruit_dither_matrix[0]) * ff_fruit_dither_size * ff_fruit_dither_size);
++        av_assert0(sizeof(ff_fruit_dither_matrix) ==
++            sizeof(ff_fruit_dither_matrix[0]) * ff_fruit_dither_size * ff_fruit_dither_size);
 +
 +        ctx->dither_image = clCreateImage(ctx->ocf.hwctx->context, CL_MEM_READ_ONLY,
 +                                          &image_format, &image_desc, NULL, &cle);
@@ -2544,59 +2685,92 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +            err = AVERROR(EIO);
 +            goto fail;
 +        }
-+
-+        cle = clEnqueueWriteImage(ctx->command_queue,
-+                                  ctx->dither_image,
-+                                  CL_FALSE, m_origin, m_region,
-+                                  m_row_pitch, 0,
-+                                  ff_fruit_dither_matrix,
-+                                  0, NULL, &event);
-+        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to enqueue write of dither matrix image: %d.\n", cle);
-+
-+        cle = clWaitForEvents(1, &event);
-+        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to wait for event completion: %d.\n", cle);
-+        if (event) {
-+            clReleaseEvent(event);
-+            event = NULL;
-+        }
-+    }
-+
-+    if (ctx->tradeoff) {
-+        const size_t lut_size = LUT_SIZE;
-+        const size_t lut_buffer_size = lut_size * sizeof(cl_float3);
-+        float peak = (float)ctx->src_peak;
-+
-+        ctx->lut_generation_kernel = clCreateKernel(ctx->ocf.program, "build_lut", &cle);
-+        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to create kernel %d.\n", cle);
-+
-+        CL_CREATE_BUFFER_FLAGS(ctx, lut_buffer, CL_MEM_HOST_NO_ACCESS | CL_MEM_READ_WRITE, lut_buffer_size, NULL);
-+        CL_SET_KERNEL_ARG(ctx->lut_generation_kernel, 0, cl_mem, &ctx->lut_buffer);
-+        CL_SET_KERNEL_ARG(ctx->lut_generation_kernel, 1, cl_float, &peak);
-+
-+        cle = clEnqueueNDRangeKernel(ctx->command_queue, ctx->lut_generation_kernel, 1, NULL,
-+                                     &lut_size, NULL,
-+                                     0, NULL, NULL);
-+        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to enqueue build_lut kernel: %d.\n", cle);
-+
-+        cle = clFinish(ctx->command_queue);
-+        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to finish command queue: %d.\n", cle);
-+
-+        ctx->kernel = clCreateKernel(ctx->ocf.program, "tonemap_lut", &cle);
-+        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to create kernel %d.\n", cle);
-+    } else {
-+        ctx->kernel = clCreateKernel(ctx->ocf.program, "tonemap", &cle);
-+        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to create kernel %d.\n", cle);
-+    }
  
 -    ctx->util_mem =
 -        clCreateBuffer(ctx->ocf.hwctx->context, 0,
 -                       (2 * DETECTION_FRAMES + 7) * sizeof(unsigned),
 -                       NULL, &cle);
 -    CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to create util buffer: %d.\n", cle);
-+    if (ctx->dovi) {
-+        const size_t buf_sz = 3*(params_sz+pivots_sz+coeffs_sz+mmr_sz) >> !!ctx->dovi_use_fp16;
-+        CL_CREATE_BUFFER_FLAGS(ctx, dovi_buf, dovi_buf_flags, buf_sz, NULL);
++        cle = clEnqueueWriteImage(ctx->command_queue,
++                                  ctx->dither_image,
++                                  CL_FALSE, m_origin, m_region,
++                                  m_row_pitch, 0,
++                                  ff_fruit_dither_matrix,
++                                  0, NULL, &event_out);
++        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to enqueue write of dither matrix image: %d.\n", cle);
++
++        cle = clWaitForEvents(1, &event_out);
++        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to wait for event completion: %d.\n", cle);
++        if (event_out) {
++            clReleaseEvent(event_out);
++            event_out = NULL;
++        }
 +    }
++
++    if (ctx->tradeoff) {
++        const size_t lut_size = LUT_SIZE;
++        const size_t lut_size_3d = lut_size * lut_size * lut_size;
++        const size_t lut_buffer_size = lut_size_3d * sizeof(cl_float4);
++        const float peak = (float)ctx->src_peak;
++        const size_t m_origin[3] = { 0 };
++        const size_t m_region[3] = { lut_size, lut_size, lut_size };
++        cl_mem_flags mem_flags = CL_MEM_HOST_NO_ACCESS;
++
++        cl_image_format image_format = {
++            .image_channel_order     = CL_RGBA,
++            .image_channel_data_type = CL_FLOAT,
++        };
++        cl_image_desc image_desc = {
++            .image_type        = CL_MEM_OBJECT_IMAGE3D,
++            .image_width       = lut_size,
++            .image_height      = lut_size,
++            .image_depth       = lut_size,
++            .image_row_pitch   = 0,
++            .image_slice_pitch = 0,
++        };
++
++        ctx->lut_generation_kernel = clCreateKernel(ctx->ocf.program, "build_lut", &cle);
++        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to create kernel %d.\n", cle);
++
++        CL_CREATE_BUFFER_FLAGS(ctx, lut_buffer, CL_MEM_READ_WRITE | mem_flags, lut_buffer_size, NULL);
++
++        CL_SET_KERNEL_ARG(ctx->lut_generation_kernel, 0, cl_mem, &ctx->lut_buffer);
++        CL_SET_KERNEL_ARG(ctx->lut_generation_kernel, 1, cl_float, &peak);
++        cle = clEnqueueNDRangeKernel(ctx->command_queue, ctx->lut_generation_kernel, 1, NULL,
++                                     &lut_size_3d, NULL,
++                                     0, NULL, ctx->use_image3d ? &event_in : &event_out);
++        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to enqueue build_lut kernel: %d.\n", cle);
++
++        if (ctx->use_image3d) {
++            ctx->lut_image = clCreateImage(ctx->ocf.hwctx->context, CL_MEM_READ_ONLY | mem_flags,
++                                            &image_format, &image_desc, NULL, &err);
++            if (!ctx->lut_image) {
++                av_log(avctx, AV_LOG_ERROR, "Failed to create image for "
++                       "lut image: %d.\n", cle);
++                err = AVERROR(EIO);
++                goto fail;
++            }
++            cle = clEnqueueCopyBufferToImage(ctx->command_queue,
++                                             ctx->lut_buffer, ctx->lut_image,
++                                             0, m_origin, m_region,
++                                             1, &event_in, &event_out);
++            CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to enqueue copy of lut buffer to image: %d.\n", cle);
++        }
++
++        cle = clWaitForEvents(1, &event_out);
++        CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to wait for event completion: %d.\n", cle);
++        if (event_in) {
++            clReleaseEvent(event_in);
++            event_in = NULL;
++        }
++        if (event_out) {
++            clReleaseEvent(event_out);
++            event_out = NULL;
++        }
++    }
++
++    ctx->kernel = clCreateKernel(ctx->ocf.program, ctx->tradeoff ? "tonemap_lut" : "tonemap", &cle);
++    CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to create kernel %d.\n", cle);
  
      ctx->initialised = 1;
      return 0;
@@ -2610,8 +2784,10 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +    av_freep(&device_vendor);
 +    av_freep(&device_name);
 +    av_freep(&device_exts);
-+    if (event)
-+        clReleaseEvent(event);
++    if (event_in)
++        clReleaseEvent(event_in);
++    if (event_out)
++        clReleaseEvent(event_out);
      if (ctx->kernel)
          clReleaseKernel(ctx->kernel);
 +    if (ctx->lut_generation_kernel)
@@ -2620,6 +2796,8 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +        clReleaseMemObject(ctx->dither_image);
 +    if (ctx->lut_buffer)
 +        clReleaseMemObject(ctx->lut_buffer);
++    if (ctx->lut_image)
++        clReleaseMemObject(ctx->lut_image);
 +    if (ctx->dovi_buf)
 +        clReleaseMemObject(ctx->dovi_buf);
 +    if (ctx->command_queue)
@@ -2684,6 +2862,13 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +        if (cle != CL_SUCCESS)
 +            av_log(avctx, AV_LOG_ERROR, "Failed to release "
 +                                        "lut buffer: %d.\n", cle);
++    }
++
++    if (ctx->lut_image) {
++        cle = clReleaseMemObject(ctx->lut_image);
++        if (cle != CL_SUCCESS)
++            av_log(avctx, AV_LOG_ERROR, "Failed to release "
++                                        "lut image: %d.\n", cle);
 +    }
 +
 +    if (ctx->command_queue) {
@@ -2751,13 +2936,14 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +        av_log(ctx, AV_LOG_ERROR, "Unsupported output format: %s\n",
 +               av_get_pix_fmt_name(out_format));
 +        return AVERROR(ENOSYS);
-     }
++    }
 +    if (in_desc->comp[0].depth != 10 && in_desc->comp[0].depth != 16) {
 +        av_log(ctx, AV_LOG_ERROR, "Unsupported input format depth: %d\n",
 +               in_desc->comp[0].depth);
 +        return AVERROR(ENOSYS);
-+    }
-+
+     }
+ 
+-    s->ocf.output_format = s->format == AV_PIX_FMT_NONE ? AV_PIX_FMT_NV12 : s->format;
 +    ctx->in_fmt     = in_format;
 +    ctx->out_fmt    = out_format;
 +    ctx->in_desc    = in_desc;
@@ -2765,12 +2951,22 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +    ctx->in_planes  = av_pix_fmt_count_planes(in_format);
 +    ctx->out_planes = av_pix_fmt_count_planes(out_format);
 +    ctx->ocf.output_format = out_format;
- 
--    s->ocf.output_format = s->format == AV_PIX_FMT_NONE ? AV_PIX_FMT_NV12 : s->format;
++
      ret = ff_opencl_filter_config_output(outlink);
      if (ret < 0)
          return ret;
-@@ -308,13 +932,49 @@ static int launch_kernel(AVFilterContext
+ 
++    if (ctx->trc != AVCOL_TRC_SMPTE2084) {
++        av_frame_side_data_remove(&outlink->side_data, &outlink->nb_side_data,
++                                  AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
++        av_frame_side_data_remove(&outlink->side_data, &outlink->nb_side_data,
++                                  AV_FRAME_DATA_CONTENT_LIGHT_LEVEL);
++    }
++
+     return 0;
+ }
+ 
+@@ -309,13 +1065,50 @@ static int launch_kernel(AVFilterContext
      size_t global_work[2];
      size_t local_work[2];
      cl_int cle;
@@ -2799,7 +2995,8 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +
 +    idx_arg = 0;
 +    if (ctx->tradeoff) {
-+        CL_SET_KERNEL_ARG(kernel, idx_arg++, cl_mem, &ctx->lut_buffer);
++        CL_SET_KERNEL_ARG(kernel, idx_arg++, cl_mem,
++            ctx->use_image3d ? &ctx->lut_image : &ctx->lut_buffer);
 +    }
 +    CL_SET_KERNEL_ARG(kernel, idx_arg++, cl_mem, &output->data[0]);
 +    CL_SET_KERNEL_ARG(kernel, idx_arg++, cl_mem, &input->data[0]);
@@ -2826,7 +3023,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
  
      local_work[0]  = 16;
      local_work[1]  = 16;
-@@ -338,12 +998,10 @@ static int tonemap_opencl_filter_frame(A
+@@ -339,12 +1132,10 @@ static int tonemap_opencl_filter_frame(A
      AVFilterContext    *avctx = inlink->dst;
      AVFilterLink     *outlink = avctx->outputs[0];
      TonemapOpenCLContext *ctx = avctx->priv;
@@ -2840,7 +3037,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
  
      av_log(ctx, AV_LOG_DEBUG, "Filter input: %s, %ux%u (%"PRId64").\n",
             av_get_pix_fmt_name(input->format),
-@@ -351,7 +1009,6 @@ static int tonemap_opencl_filter_frame(A
+@@ -352,7 +1143,6 @@ static int tonemap_opencl_filter_frame(A
  
      if (!input->hw_frames_ctx)
          return AVERROR(EINVAL);
@@ -2848,7 +3045,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
  
      output = ff_get_video_buffer(outlink, outlink->w, outlink->h);
      if (!output) {
-@@ -363,17 +1020,65 @@ static int tonemap_opencl_filter_frame(A
+@@ -364,17 +1154,66 @@ static int tonemap_opencl_filter_frame(A
      if (err < 0)
          goto fail;
  
@@ -2890,12 +3087,13 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 +        const AVDOVIRpuDataHeader *rpu = av_dovi_get_header(metadata);
 +        // only map dovi rpus that don't require an EL
 +        if (rpu->disable_residual_flag) {
-+            struct DoviMetadata *dovi = av_malloc(sizeof(*dovi));
++            struct FFDOVIMetadataRemap *dovi = av_malloc(sizeof(*dovi));
 +            ctx->dovi = dovi;
 +            if (!ctx->dovi)
 +                goto fail;
 +
 +            ctx->is_pure_dovi = rpu->vdr_rpu_profile == 0;
++            ctx->is_hlg_dovi = input->color_trc == AVCOL_TRC_ARIB_STD_B67;
 +
 +            ff_map_dovi_metadata(ctx->dovi, metadata);
 +            output->color_trc = input->color_trc = AVCOL_TRC_SMPTE2084;
@@ -2920,7 +3118,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
  
      ctx->trc_in = input->color_trc;
      ctx->trc_out = output->color_trc;
-@@ -385,72 +1090,50 @@ static int tonemap_opencl_filter_frame(A
+@@ -386,72 +1225,50 @@ static int tonemap_opencl_filter_frame(A
      ctx->range_out = output->color_range;
      ctx->chroma_loc = output->chroma_location;
  
@@ -3016,7 +3214,7 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
      av_frame_free(&input);
      av_frame_free(&output);
      return err;
-@@ -458,62 +1141,101 @@ fail:
+@@ -459,62 +1276,101 @@ fail:
  
  static av_cold void tonemap_opencl_uninit(AVFilterContext *avctx)
  {
@@ -3165,10 +3363,14 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
      { NULL }
  };
  
-@@ -541,11 +1263,12 @@ const AVFilter ff_vf_tonemap_opencl = {
-     .description    = NULL_IF_CONFIG_SMALL("Perform HDR to SDR conversion with tonemapping."),
+@@ -540,13 +1396,14 @@ static const AVFilterPad tonemap_opencl_
+ const FFFilter ff_vf_tonemap_opencl = {
+     .p.name         = "tonemap_opencl",
+     .p.description  = NULL_IF_CONFIG_SMALL("Perform HDR to SDR conversion with tonemapping."),
+-    .p.priv_class   = &tonemap_opencl_class,
+-    .p.flags        = AVFILTER_FLAG_HWDEVICE,
      .priv_size      = sizeof(TonemapOpenCLContext),
-     .priv_class     = &tonemap_opencl_class,
++    .p.priv_class   = &tonemap_opencl_class,
 +    .preinit        = &tonemap_opencl_preinit,
      .init           = &ff_opencl_filter_init,
      .uninit         = &tonemap_opencl_uninit,
@@ -3177,5 +3379,5 @@ Index: FFmpeg/libavfilter/vf_tonemap_opencl.c
 -    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_OPENCL),
 +    FILTER_QUERY_FUNC(tonemap_opencl_query_formats),
      .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
-     .flags          = AVFILTER_FLAG_HWDEVICE,
++    .p.flags        = AVFILTER_FLAG_HWDEVICE,
  };

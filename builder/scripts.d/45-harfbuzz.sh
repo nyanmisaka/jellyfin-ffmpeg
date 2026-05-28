@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_REPO="https://github.com/harfbuzz/harfbuzz.git"
-SCRIPT_COMMIT="e9348cd76d38f72cf881cc860035403220ffbe0b"
+SCRIPT_COMMIT="b0ffab42d473eb380ad0fcf42730e0f1868cbc97"
 
 ffbuild_enabled() {
     return 0
@@ -27,6 +27,7 @@ ffbuild_dockerbuild() {
         -Dintrospection=disabled
         -Ddocs=disabled
         -Dutilities=disabled
+        -Dgpu=disabled
     )
 
     if [[ $TARGET == win* || $TARGET == linux* ]]; then
@@ -34,8 +35,6 @@ ffbuild_dockerbuild() {
             --cross-file=/cross.meson
         )
     elif [[ $TARGET == mac* ]]; then
-        # freetype's pkg-config usage cannot find static libbrotli
-        export FREETYPE_LIBS="$(pkg-config --libs --static freetype2)"
         if [ "$MACOS_BUILDER_CPU_ARCH" = "arm64" ] && [ "$TARGET" = "mac64" ]; then
             myconf+=(
                 --cross-file="$BUILDER_ROOT"/images/macos/cross/cross-x86_64.txt
@@ -46,7 +45,7 @@ ffbuild_dockerbuild() {
         return -1
     fi
 
-    meson "${myconf[@]}" ..
+    meson setup "${myconf[@]}" ..
     ninja -j$(nproc)
     ninja install
 }

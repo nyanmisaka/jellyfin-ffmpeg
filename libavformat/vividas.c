@@ -567,8 +567,9 @@ static int viv_read_header(AVFormatContext *s)
     v = avio_r8(pb);
     avio_seek(pb, v, SEEK_CUR);
 
-    if (avio_read(pb, keybuffer, 187) != 187)
-        return AVERROR_INVALIDDATA;
+    ret = ffio_read_size(pb, keybuffer, 187);
+    if (ret < 0)
+        return ret;
     key = decode_key(keybuffer);
     viv->sb_key = key;
 
@@ -602,7 +603,7 @@ static int viv_read_header(AVFormatContext *s)
         k2 = b22_key;
         buf = read_vblock(pb, &v, b22_key, &k2, 0);
         if (!buf)
-            return AVERROR(EIO);
+            return AVERROR_INVALIDDATA;
 
         av_free(buf);
     }
@@ -610,7 +611,7 @@ static int viv_read_header(AVFormatContext *s)
     k2 = key;
     buf = read_vblock(pb, &v, key, &k2, 0);
     if (!buf)
-        return AVERROR(EIO);
+        return AVERROR_INVALIDDATA;
     ret = track_header(viv, s, buf, v);
     av_free(buf);
     if (ret < 0)
@@ -618,7 +619,7 @@ static int viv_read_header(AVFormatContext *s)
 
     buf = read_vblock(pb, &v, key, &k2, v);
     if (!buf)
-        return AVERROR(EIO);
+        return AVERROR_INVALIDDATA;
     ret = track_index(viv, s, buf, v);
     av_free(buf);
     if (ret < 0)
@@ -644,7 +645,7 @@ static int viv_read_packet(AVFormatContext *s,
     int ret;
 
     if (!viv->sb_pb)
-        return AVERROR(EIO);
+        return AVERROR_INVALIDDATA;
     if (avio_feof(viv->sb_pb))
         return AVERROR_EOF;
 
@@ -671,7 +672,7 @@ static int viv_read_packet(AVFormatContext *s,
 
     if (viv->current_sb_entry >= viv->n_sb_entries) {
         if (viv->current_sb+1 >= viv->n_sb_blocks)
-            return AVERROR(EIO);
+            return AVERROR_INVALIDDATA;
         viv->current_sb++;
 
         load_sb_block(s, viv, 0);
@@ -680,7 +681,7 @@ static int viv_read_packet(AVFormatContext *s,
 
     pb = viv->sb_pb;
     if (!pb)
-        return AVERROR(EIO);
+        return AVERROR_INVALIDDATA;
     off = avio_tell(pb);
 
     if (viv->current_sb_entry >= viv->n_sb_entries)

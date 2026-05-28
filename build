@@ -46,14 +46,14 @@ case ${cli_release} in
     'noble')
         release="ubuntu:noble"
         gcc_ver="13"
-        llvm_ver="19"
-        llvmspirvlib_ver="19"
+        llvm_ver="20"
+        llvmspirvlib_ver="20"
     ;;
     'resolute')
         release="ubuntu:resolute"
         gcc_ver="15"
-        llvm_ver="20"
-        llvmspirvlib_ver="20"
+        llvm_ver="21"
+        llvmspirvlib_ver="21"
     ;;
     *)
         echo "Invalid release."
