@@ -25,7 +25,6 @@
 
 #include "avcodec.h"
 #include "bytestream.h"
-#include "get_bits.h"
 #include "cfhddsp.h"
 
 enum CFHDParam {
@@ -107,7 +106,7 @@ enum CFHDSegment {
 
 typedef struct CFHD_RL_VLC_ELEM {
     int16_t level;
-    int8_t len;
+    int8_t len8;
     uint16_t run;
 } CFHD_RL_VLC_ELEM;
 
@@ -152,8 +151,6 @@ typedef struct CFHDContext {
     CFHD_RL_VLC_ELEM table_18_rl_vlc[4572];
 
     int lut[2][256];
-
-    GetBitContext gb;
 
     int planes;
     int frame_type;

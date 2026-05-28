@@ -185,8 +185,7 @@ static int neighbor_opencl_filter_frame(AVFilterLink *inlink, AVFrame *input)
             if (err < 0)
                 goto fail;
 
-            av_log(avctx, AV_LOG_DEBUG, "Run kernel on plane %d "
-                   "(%"SIZE_SPECIFIER"x%"SIZE_SPECIFIER").\n",
+            av_log(avctx, AV_LOG_DEBUG, "Run kernel on plane %d (%zux%zu).\n",
                    p, global_work[0], global_work[1]);
 
             cle = clEnqueueNDRangeKernel(ctx->command_queue, ctx->kernel, 2, NULL,
@@ -276,11 +275,11 @@ static const AVOption erosion_opencl_options[] = {
 
 AVFILTER_DEFINE_CLASS(erosion_opencl);
 
-const AVFilter ff_vf_erosion_opencl = {
-    .name           = "erosion_opencl",
-    .description    = NULL_IF_CONFIG_SMALL("Apply erosion effect"),
+const FFFilter ff_vf_erosion_opencl = {
+    .p.name         = "erosion_opencl",
+    .p.description  = NULL_IF_CONFIG_SMALL("Apply erosion effect"),
+    .p.priv_class   = &erosion_opencl_class,
     .priv_size      = sizeof(NeighborOpenCLContext),
-    .priv_class     = &erosion_opencl_class,
     .init           = &ff_opencl_filter_init,
     .uninit         = &neighbor_opencl_uninit,
     FILTER_INPUTS(neighbor_opencl_inputs),
@@ -304,18 +303,18 @@ static const AVOption dilation_opencl_options[] = {
 
 AVFILTER_DEFINE_CLASS(dilation_opencl);
 
-const AVFilter ff_vf_dilation_opencl = {
-    .name           = "dilation_opencl",
-    .description    = NULL_IF_CONFIG_SMALL("Apply dilation effect"),
+const FFFilter ff_vf_dilation_opencl = {
+    .p.name         = "dilation_opencl",
+    .p.description  = NULL_IF_CONFIG_SMALL("Apply dilation effect"),
+    .p.priv_class   = &dilation_opencl_class,
+    .p.flags        = AVFILTER_FLAG_HWDEVICE,
     .priv_size      = sizeof(NeighborOpenCLContext),
-    .priv_class     = &dilation_opencl_class,
     .init           = &ff_opencl_filter_init,
     .uninit         = &neighbor_opencl_uninit,
     FILTER_INPUTS(neighbor_opencl_inputs),
     FILTER_OUTPUTS(neighbor_opencl_outputs),
     FILTER_SINGLE_PIXFMT(AV_PIX_FMT_OPENCL),
     .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
-    .flags          = AVFILTER_FLAG_HWDEVICE,
 };
 
 #endif /* CONFIG_DILATION_OPENCL_FILTER */

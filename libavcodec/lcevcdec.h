@@ -19,7 +19,7 @@
 #ifndef AVCODEC_LCEVCDEC_H
 #define AVCODEC_LCEVCDEC_H
 
-#include "config_components.h"
+#include "config.h"
 
 #include <stdint.h>
 #if CONFIG_LIBLCEVC_DEC
@@ -27,10 +27,14 @@
 #else
 typedef uintptr_t LCEVC_DecoderHandle;
 #endif
-#include "refstruct.h"
+
+struct CodedBitstreamContext;
+struct CodedBitstreamFragment;
 
 typedef struct FFLCEVCContext {
     LCEVC_DecoderHandle decoder;
+    struct CodedBitstreamContext *cbc;
+    struct CodedBitstreamFragment *frag;
     int initialized;
 } FFLCEVCContext;
 
@@ -41,7 +45,9 @@ typedef struct FFLCEVCFrame {
     struct AVFrame *frame;
 } FFLCEVCFrame;
 
-int ff_lcevc_alloc(FFLCEVCContext **plcevc);
+int ff_lcevc_alloc(FFLCEVCContext **plcevc, void *logctx);
 int ff_lcevc_process(void *logctx, struct AVFrame *frame);
+int ff_lcevc_parse_frame(FFLCEVCContext *lcevc, const struct AVFrame *frame,
+                         int *width, int *height, void *logctx);
 void ff_lcevc_unref(void *opaque);
 #endif /* AVCODEC_LCEVCDEC_H */
