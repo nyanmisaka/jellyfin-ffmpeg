@@ -86,3 +86,4 @@
 0086-workaround-amd-hevc-vaapi-encoder-out-of-band-vtag-hvc1.patch
 0087-backport-a-fix-from-upstream-for-magicyuv-decoder.patch
 0088-add-dtsx-detect-for-dts-hd-hra.patch
+0089-add-webp-to-matroskadec-image-mime-types.patch
