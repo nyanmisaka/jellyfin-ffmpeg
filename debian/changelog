@@ -2,6 +2,9 @@ jellyfin-ffmpeg (8.1.1-1) unstable; urgency=medium
 
   * New upstream version 8.1.1
   * Rename package to jellyin-ffmpeg8
+  * Use EOTF from BT 2446 Method B for HLG tonemap
+  * Add dtsx detection for dts hra
+  * Add webp to matroskadec image mime types
 
  -- nyanmisaka <nst799610810@gmail.com>  Thu, 28 May 2026 10:55:42 +0800
 
