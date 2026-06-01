@@ -42,7 +42,7 @@ PKG_CONFIG_PATH=/clang64/ffbuild/lib/pkgconfig ./configure --cc=clang \
     --disable-debug \
     --disable-doc \
     --disable-sdl2 \
-    --enable-lto=thin \
+    --enable-lto=full \
     --enable-gpl \
     --enable-version3 \
     --enable-schannel \
