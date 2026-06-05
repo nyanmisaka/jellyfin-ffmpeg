@@ -90,7 +90,13 @@ PKG_CONFIG_PATH=/clangarm64/ffbuild/lib/pkgconfig ./configure \
     --enable-dxva2 \
     --enable-d3d11va \
     --enable-d3d12va \
-    --enable-mediafoundation
+    --enable-mediafoundation \
+    --enable-ffnvcodec \
+    --enable-cuda \
+    --enable-cuda-llvm \
+    --enable-cuvid \
+    --enable-nvdec \
+    --enable-nvenc
 
 make -j$(nproc) V=1
 

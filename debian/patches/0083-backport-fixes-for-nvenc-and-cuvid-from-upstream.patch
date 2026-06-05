@@ -1,3 +1,16 @@
+Index: FFmpeg/configure
+===================================================================
+--- FFmpeg.orig/configure
++++ FFmpeg/configure
+@@ -7870,7 +7870,7 @@ if enabled x86; then
+     esac
+ elif enabled_any aarch64 ppc64 && ! enabled bigendian; then
+     case $target_os in
+-        linux)
++        linux|mingw32*|mingw64*|win32|win64)
+             ;;
+         *)
+             disable ffnvcodec cuvid nvdec nvenc
 Index: FFmpeg/libavcodec/cuviddec.c
 ===================================================================
 --- FFmpeg.orig/libavcodec/cuviddec.c
@@ -93,3 +106,18 @@ Index: FFmpeg/libavcodec/nvenc.c
              break;
          case NV_ENC_H264_PROFILE_MAIN:
              cc->profileGUID = NV_ENC_H264_PROFILE_MAIN_GUID;
+Index: FFmpeg/libavfilter/vf_scale_cuda.h
+===================================================================
+--- FFmpeg.orig/libavfilter/vf_scale_cuda.h
++++ FFmpeg/libavfilter/vf_scale_cuda.h
+@@ -24,9 +24,8 @@
+ #define AVFILTER_SCALE_CUDA_H
+ 
+ #if defined(__CUDACC__) || defined(__CUDA__)
+-#include <stdint.h>
+ typedef cudaTextureObject_t CUtexObject;
+-typedef uint8_t* CUdeviceptr;
++typedef unsigned char* CUdeviceptr;
+ #else
+ #include <ffnvcodec/dynlink_cuda.h>
+ #endif
