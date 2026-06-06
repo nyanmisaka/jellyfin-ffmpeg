@@ -87,4 +87,4 @@
 0087-backport-a-fix-from-upstream-for-magicyuv-decoder.patch
 0088-add-dtsx-detect-for-dts-hd-hra.patch
 0089-add-webp-to-matroskadec-image-mime-types.patch
-0090-fix-extracting-mkv-attachments-with-non-ascii-filenames.patch
+0090-relax-to-allow-safe-filenames-in-mkv-attachments.patch
