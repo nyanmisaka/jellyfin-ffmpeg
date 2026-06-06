@@ -1,3 +1,9 @@
+jellyfin-ffmpeg (8.1.1-3) unstable; urgency=medium
+
+  * Relax to allow safe filenames in mkv attachments
+
+ -- nyanmisaka <nst799610810@gmail.com>  Sat, 6 Jun 2026 14:13:50 +0800
+
 jellyfin-ffmpeg (8.1.1-2) unstable; urgency=medium
 
   * Fix extracting mkv attachments with non-ascii filenames
