@@ -89,3 +89,4 @@
 0089-add-webp-to-matroskadec-image-mime-types.patch
 0090-relax-to-allow-safe-filenames-in-mkv-attachments.patch
 0091-backport-a-fix-to-use-sw-pix-fmt-in-codec-par-if-set.patch
+0092-backport-fixes-by-comparing-n8-1-1-and-release-8-1.patch
