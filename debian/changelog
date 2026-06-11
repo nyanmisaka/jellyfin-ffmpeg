@@ -1,3 +1,12 @@
+jellyfin-ffmpeg (8.1.1-4) unstable; urgency=medium
+
+  * Fix broken macro place for scale_vt patch
+  * Fix compatibility with ffnvcodec 13.1
+  * Backport a fix to use sw_pix_fmt in codec_par if set
+  * Backport fixes by comparing n8.1.1 and release/8.1
+
+ -- nyanmisaka <nst799610810@gmail.com>  Thu, 11 Jun 2026 12:54:09 +0800
+
 jellyfin-ffmpeg (8.1.1-3) unstable; urgency=medium
 
   * Relax to allow safe filenames in mkv attachments
