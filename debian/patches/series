@@ -88,3 +88,8 @@
 0088-add-webp-to-matroskadec-image-mime-types.patch
 0089-relax-to-allow-safe-filenames-in-mkv-attachments.patch
 0090-backport-a-fix-to-use-sw-pix-fmt-in-codec-par-if-set.patch
+0093-add-d3d11-deinterlace-filter.patch
+0094-add-d3d11-video-processor-overlay-transpose-filters.patch
+0095-fix-d3d11-scale-visible-source-rect.patch
+0096-add-d3d11-tonemap-filter.patch
+0097-add-scale-d3d11-p010-shader-fallback.patch

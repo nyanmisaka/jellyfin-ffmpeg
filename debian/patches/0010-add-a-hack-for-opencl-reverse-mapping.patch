@@ -180,7 +180,7 @@ Index: FFmpeg/libavutil/hwcontext_d3d11va.c
 +    if (ctx->user_opaque) {
 +        D3D11_TEXTURE2D_DESC *desc = ctx->user_opaque;
 +        if (desc->BindFlags & D3D11_BIND_DECODER)
-+            texDesc.BindFlags = D3D11_BIND_DECODER;
++            texDesc.BindFlags |= D3D11_BIND_DECODER;
 +    }
 +#endif
 +
