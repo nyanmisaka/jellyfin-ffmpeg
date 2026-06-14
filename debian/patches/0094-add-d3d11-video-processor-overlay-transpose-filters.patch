@@ -63,7 +63,7 @@ Index: FFmpeg/libavfilter/vf_overlay_d3d11.c
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/vf_overlay_d3d11.c
-@@ -0,0 +1,972 @@
+@@ -0,0 +1,976 @@
 +/*
 + * D3D11 overlay filter
 + *
@@ -166,6 +166,7 @@ Index: FFmpeg/libavfilter/vf_overlay_d3d11.c
 +    int direct_main_srv;
 +    int direct_overlay_srv;
 +    int direct_output_uav;
++    int force_output_copy;
 +
 +    AVBufferRef *hw_device_ctx;
 +    AVBufferRef *hw_frames_ctx_out;
@@ -892,7 +893,7 @@ Index: FFmpeg/libavfilter/vf_overlay_d3d11.c
 +    s->direct_main_srv = -1;
 +    s->direct_overlay_srv = -1;
 +
-+    for (int direct = 1; direct >= 0; direct--) {
++    for (int direct = !s->force_output_copy; direct >= 0; direct--) {
 +        s->hw_frames_ctx_out = av_hwframe_ctx_alloc(s->hw_device_ctx);
 +        if (!s->hw_frames_ctx_out)
 +            return AVERROR(ENOMEM);
@@ -934,6 +935,8 @@ Index: FFmpeg/libavfilter/vf_overlay_d3d11.c
 +    }
 +    if (ret < 0)
 +        return ret;
++    if (s->force_output_copy)
++        av_log(ctx, AV_LOG_DEBUG, "D3D11 shader output: forced copy from internal UAV texture\n");
 +
 +    av_buffer_unref(&outl->hw_frames_ctx);
 +    outl->hw_frames_ctx = av_buffer_ref(s->hw_frames_ctx_out);
@@ -988,6 +991,7 @@ Index: FFmpeg/libavfilter/vf_overlay_d3d11.c
 +    { "w", "Overlay width",      OFFSET(overlay_ow), AV_OPT_TYPE_STRING, { .str = "overlay_iw" }, 0, 255, FLAGS },
 +    { "h", "Overlay height",     OFFSET(overlay_oh), AV_OPT_TYPE_STRING, { .str = "overlay_ih*overlay_w/overlay_iw" }, 0, 255, FLAGS },
 +    { "alpha", "Overlay global alpha", OFFSET(alpha), AV_OPT_TYPE_FLOAT, { .dbl = 1.0 }, 0.0, 1.0, FLAGS },
++    { "force_output_copy", "Force output through an internal unordered-access texture", OFFSET(force_output_copy), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
 +    { "eof_action", "Action to take when encountering EOF from secondary input",
 +      OFFSET(opt_eof_action), AV_OPT_TYPE_INT, { .i64 = EOF_ACTION_REPEAT },
 +      EOF_ACTION_REPEAT, EOF_ACTION_PASS, FLAGS, .unit = "eof_action" },
