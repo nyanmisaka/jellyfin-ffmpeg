@@ -73,7 +73,7 @@ Index: FFmpeg/libavfilter/vf_yadif_d3d11.c
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/vf_yadif_d3d11.c
-@@ -0,0 +1,774 @@
+@@ -0,0 +1,804 @@
 +/*
 + * D3D11 YADIF/BWDIF deinterlacing filters
 + *
@@ -168,6 +168,7 @@ Index: FFmpeg/libavfilter/vf_yadif_d3d11.c
 +    int tex_w, tex_h;
 +    int direct_input_srv;
 +    int direct_output_uav;
++    int force_output_copy;
 +} DeintD3D11Context;
 +
 +static void release_d3d11_resources(DeintD3D11Context *s)
@@ -712,7 +713,7 @@ Index: FFmpeg/libavfilter/vf_yadif_d3d11.c
 +    s->direct_input_srv = -1;
 +    s->direct_output_uav = -1;
 +
-+    for (int direct = 1; direct >= 0; direct--) {
++    for (int direct = !s->force_output_copy; direct >= 0; direct--) {
 +        l->hw_frames_ctx = av_hwframe_ctx_alloc(s->device_ref);
 +        if (!l->hw_frames_ctx)
 +            return AVERROR(ENOMEM);
@@ -753,6 +754,8 @@ Index: FFmpeg/libavfilter/vf_yadif_d3d11.c
 +    }
 +    if (ret < 0)
 +        return ret;
++    if (s->force_output_copy)
++        av_log(ctx, AV_LOG_DEBUG, "D3D11 shader output: forced copy from internal UAV texture\n");
 +
 +    output_frames = (AVHWFramesContext *)l->hw_frames_ctx->data;
 +
@@ -787,10 +790,37 @@ Index: FFmpeg/libavfilter/vf_yadif_d3d11.c
 +    return 0;
 +}
 +
++#define DEINT_OFFSET(x) offsetof(DeintD3D11Context, x)
++#define YADIF_OFFSET(x) offsetof(DeintD3D11Context, yadif.x)
++#define FLAGS AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_FILTERING_PARAM
++#define CONST(name, help, val, u) { name, help, 0, AV_OPT_TYPE_CONST, { .i64 = val }, INT_MIN, INT_MAX, FLAGS, .unit = u }
++
++static const AVOption deint_d3d11_options[] = {
++    { "mode",   "specify the interlacing mode", YADIF_OFFSET(mode), AV_OPT_TYPE_INT, { .i64 = YADIF_MODE_SEND_FRAME }, 0, 3, FLAGS, .unit = "mode" },
++    CONST("send_frame",           "send one frame for each frame",                                     YADIF_MODE_SEND_FRAME,           "mode"),
++    CONST("send_field",           "send one frame for each field",                                     YADIF_MODE_SEND_FIELD,           "mode"),
++    CONST("send_frame_nospatial", "send one frame for each frame, but skip spatial interlacing check", YADIF_MODE_SEND_FRAME_NOSPATIAL, "mode"),
++    CONST("send_field_nospatial", "send one frame for each field, but skip spatial interlacing check", YADIF_MODE_SEND_FIELD_NOSPATIAL, "mode"),
++    { "parity", "specify the assumed picture field parity", YADIF_OFFSET(parity), AV_OPT_TYPE_INT, { .i64 = YADIF_PARITY_AUTO }, -1, 1, FLAGS, .unit = "parity" },
++    CONST("tff",  "assume top field first",    YADIF_PARITY_TFF,  "parity"),
++    CONST("bff",  "assume bottom field first", YADIF_PARITY_BFF,  "parity"),
++    CONST("auto", "auto detect parity",        YADIF_PARITY_AUTO, "parity"),
++    { "deint", "specify which frames to deinterlace", YADIF_OFFSET(deint), AV_OPT_TYPE_INT, { .i64 = YADIF_DEINT_ALL }, 0, 1, FLAGS, .unit = "deint" },
++    CONST("all",        "deinterlace all frames",                       YADIF_DEINT_ALL,        "deint"),
++    CONST("interlaced", "only deinterlace frames marked as interlaced", YADIF_DEINT_INTERLACED, "deint"),
++    { "force_output_copy", "Force output through an internal unordered-access texture", DEINT_OFFSET(force_output_copy), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
++    { NULL }
++};
++
++#undef CONST
++#undef FLAGS
++#undef YADIF_OFFSET
++#undef DEINT_OFFSET
++
 +static const AVClass yadif_d3d11_class = {
 +    .class_name = "yadif_d3d11",
 +    .item_name  = av_default_item_name,
-+    .option     = ff_yadif_options,
++    .option     = deint_d3d11_options,
 +    .version    = LIBAVUTIL_VERSION_INT,
 +    .category   = AV_CLASS_CATEGORY_FILTER,
 +};
@@ -798,7 +828,7 @@ Index: FFmpeg/libavfilter/vf_yadif_d3d11.c
 +static const AVClass bwdif_d3d11_class = {
 +    .class_name = "bwdif_d3d11",
 +    .item_name  = av_default_item_name,
-+    .option     = ff_yadif_options,
++    .option     = deint_d3d11_options,
 +    .version    = LIBAVUTIL_VERSION_INT,
 +    .category   = AV_CLASS_CATEGORY_FILTER,
 +};

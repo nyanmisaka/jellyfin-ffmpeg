@@ -991,7 +991,7 @@ Index: FFmpeg/libavfilter/vf_overlay_d3d11.c
 +    { "w", "Overlay width",      OFFSET(overlay_ow), AV_OPT_TYPE_STRING, { .str = "overlay_iw" }, 0, 255, FLAGS },
 +    { "h", "Overlay height",     OFFSET(overlay_oh), AV_OPT_TYPE_STRING, { .str = "overlay_ih*overlay_w/overlay_iw" }, 0, 255, FLAGS },
 +    { "alpha", "Overlay global alpha", OFFSET(alpha), AV_OPT_TYPE_FLOAT, { .dbl = 1.0 }, 0.0, 1.0, FLAGS },
-+    { "force_output_copy", "Force output through an internal unordered-access texture", OFFSET(force_output_copy), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
++    { "force_output_copy", "Force output through an internal unordered-access texture", OFFSET(force_output_copy), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
 +    { "eof_action", "Action to take when encountering EOF from secondary input",
 +      OFFSET(opt_eof_action), AV_OPT_TYPE_INT, { .i64 = EOF_ACTION_REPEAT },
 +      EOF_ACTION_REPEAT, EOF_ACTION_PASS, FLAGS, .unit = "eof_action" },
