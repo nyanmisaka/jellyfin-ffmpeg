@@ -6,7 +6,7 @@ Index: FFmpeg/configure
  thumbnail_cuda_filter_deps="ffnvcodec"
  thumbnail_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
  tonemap_cuda_filter_deps="ffnvcodec const_nan"
-+tonemap_d3d11_filter_deps="d3d11va const_nan"
++tonemap_d3d11_filter_deps="d3d11va const_nan d3dcompiler_h"
  tonemap_cuda_filter_deps_any="cuda_nvcc cuda_llvm"
  transpose_cuda_filter_deps="ffnvcodec"
  transpose_cuda_filter_deps_any="cuda_nvcc cuda_llvm"

@@ -855,3 +855,16 @@ Index: FFmpeg/libavfilter/d3d11_source.h
  extern const char *ff_source_tonemap_hlsl;
  
  #endif /* AVFILTER_D3D11_SOURCE_H */
+Index: FFmpeg/configure
+===================================================================
+--- FFmpeg.orig/configure
++++ FFmpeg/configure
+@@ -3549,7 +3549,7 @@ sharpen_npp_filter_deps="ffnvcodec libnp
+ ddagrab_filter_deps="d3d11va IDXGIOutput1 DXGI_OUTDUPL_FRAME_INFO"
+ gfxcapture_filter_deps="cxx17 threads d3d11va IGraphicsCaptureItemInterop __x_ABI_CWindows_CGraphics_CCapture_CIGraphicsCaptureSession3"
+ gfxcapture_filter_extralibs="-lstdc++"
+-scale_d3d11_filter_deps="d3d11va"
++scale_d3d11_filter_deps="d3d11va ID3D11VideoProcessor d3dcompiler_h"
+ overlay_d3d11_filter_deps="d3d11va d3dcompiler_h"
+ transpose_d3d11_filter_deps="d3d11va ID3D11VideoContext1 ID3D11VideoProcessor"
+ bwdif_d3d11_filter_deps="d3d11va d3dcompiler_h"
