@@ -83,18 +83,6 @@ Index: FFmpeg/libavcodec/nvenc.c
 ===================================================================
 --- FFmpeg.orig/libavcodec/nvenc.c
 +++ FFmpeg/libavcodec/nvenc.c
-@@ -266,8 +266,10 @@ static void nvenc_map_preset(NvencContex
- 
- static void nvenc_print_driver_requirement(AVCodecContext *avctx, int level)
- {
--#if NVENCAPI_CHECK_VERSION(13, 1)
-+#if NVENCAPI_CHECK_VERSION(13, 2)
-     const char *minver = "(unknown)";
-+#elif NVENCAPI_CHECK_VERSION(13, 1)
-+    const char *minver = "610.00";
- #elif NVENCAPI_CHECK_VERSION(13, 0)
-     const char *minver = "570.0";
- #elif NVENCAPI_CHECK_VERSION(12, 2)
 @@ -592,12 +594,24 @@ static int nvenc_check_capabilities(AVCo
  #ifdef NVENC_HAVE_BFRAME_REF_MODE
      tmp = (ctx->b_ref_mode >= 0) ? ctx->b_ref_mode : NV_ENC_BFRAME_REF_MODE_DISABLED;
@@ -163,35 +151,6 @@ Index: FFmpeg/libavcodec/nvenc.c
              break;
          case NV_ENC_H264_PROFILE_MAIN:
              cc->profileGUID = NV_ENC_H264_PROFILE_MAIN_GUID;
-@@ -2529,7 +2557,12 @@ static void nvenc_fill_time_code(AVCodec
-             unsigned hh, mm, ss, ff, drop;
-             ff_timecode_set_smpte(&drop, &hh, &mm, &ss, &ff, avctx->framerate, tc[i + 1], 0, 0);
- 
-+#ifdef NVENC_NEW_COUNTING_TYPE
-+            time_code->clockTimestamp[i].countingTypeLSB = 0;
-+            time_code->clockTimestamp[i].countingTypeMSB = 0;
-+#else
-             time_code->clockTimestamp[i].countingType = 0;
-+#endif
-             time_code->clockTimestamp[i].discontinuityFlag = 0;
-             time_code->clockTimestamp[i].cntDroppedFrames = drop;
-             time_code->clockTimestamp[i].nFrames = ff;
-Index: FFmpeg/libavcodec/nvenc.h
-===================================================================
---- FFmpeg.orig/libavcodec/nvenc.h
-+++ FFmpeg/libavcodec/nvenc.h
-@@ -111,6 +111,11 @@ typedef void ID3D11Device;
- #define NVENC_HAVE_MVHEVC
- #endif
- 
-+// SDK 13.1 compile time feature checks
-+#if NVENCAPI_CHECK_VERSION(13, 1)
-+#define NVENC_NEW_COUNTING_TYPE
-+#endif
-+
- typedef struct NvencSurface
- {
-     NV_ENC_INPUT_PTR input_surface;
 Index: FFmpeg/libavfilter/vf_scale_cuda.h
 ===================================================================
 --- FFmpeg.orig/libavfilter/vf_scale_cuda.h
