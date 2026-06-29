@@ -903,7 +903,7 @@ Index: FFmpeg/libavfilter/d3d11/deint.hlsl
 +               float h, float i, float j, float k, float l, float m, float n)
 +{
 +    float spatial_pred  = (d + k) * 0.5;
-+    float spatial_score = abs(c - j) + abs(d - k) + abs(e - l);
++    float spatial_score = abs(c - j) + abs(d - k) + abs(e - l) - (1.0 / 255.0);
 +
 +    float score = abs(b - k) + abs(c - l) + abs(d - m);
 +    if (score < spatial_score) {
@@ -964,7 +964,7 @@ Index: FFmpeg/libavfilter/d3d11/deint.hlsl
 +    float tdiff0 = abs(D - I);
 +    float tdiff1 = (abs(A - F) + abs(B - G)) * 0.5;
 +    float tdiff2 = (abs(K - F) + abs(G - L)) * 0.5;
-+    float diff   = max3f(tdiff0, tdiff1, tdiff2);
++    float diff   = max3f(tdiff0 * 0.5, tdiff1, tdiff2);
 +
 +    if (!skip_spatial_check) {
 +        float maxi = max3f(p2 - p3, p2 - p1, min(p0 - p1, p4 - p3));
@@ -988,16 +988,16 @@ Index: FFmpeg/libavfilter/d3d11/deint.hlsl
 +    float sp = yadif_spatial_y(x, y);
 +
 +    if (is_second_field)
-+        return temporal1(py(x, y - 1), py(x, y + 1),
-+                         cy(x, y - 2), cy(x, y), cy(x, y + 2),
++        return temporal1(cy(x, y - 1), cy(x, y + 1),
++                         py(x, y - 2), py(x, y), py(x, y + 2),
 +                         cy(x, y - 1), cy(x, y + 1),
 +                         ny(x, y - 2), ny(x, y), ny(x, y + 2),
 +                         ny(x, y - 1), ny(x, y + 1), sp);
 +    return temporal1(py(x, y - 1), py(x, y + 1),
 +                     py(x, y - 2), py(x, y), py(x, y + 2),
 +                     cy(x, y - 1), cy(x, y + 1),
-+                     cy(x, y - 2), cy(x, y), cy(x, y + 2),
-+                     ny(x, y - 1), ny(x, y + 1), sp);
++                     ny(x, y - 2), ny(x, y), ny(x, y + 2),
++                     cy(x, y - 1), cy(x, y + 1), sp);
 +}
 +
 +float2 yadif_uv(int x, int y)
@@ -1005,16 +1005,16 @@ Index: FFmpeg/libavfilter/d3d11/deint.hlsl
 +    float2 sp = yadif_spatial_uv(x, y);
 +
 +    if (is_second_field)
-+        return temporal2(puv(x, y - 1), puv(x, y + 1),
-+                         cuv(x, y - 2), cuv(x, y), cuv(x, y + 2),
++        return temporal2(cuv(x, y - 1), cuv(x, y + 1),
++                         puv(x, y - 2), puv(x, y), puv(x, y + 2),
 +                         cuv(x, y - 1), cuv(x, y + 1),
 +                         nuv(x, y - 2), nuv(x, y), nuv(x, y + 2),
 +                         nuv(x, y - 1), nuv(x, y + 1), sp);
 +    return temporal2(puv(x, y - 1), puv(x, y + 1),
 +                     puv(x, y - 2), puv(x, y), puv(x, y + 2),
 +                     cuv(x, y - 1), cuv(x, y + 1),
-+                     cuv(x, y - 2), cuv(x, y), cuv(x, y + 2),
-+                     nuv(x, y - 1), nuv(x, y + 1), sp);
++                     nuv(x, y - 2), nuv(x, y), nuv(x, y + 2),
++                     cuv(x, y - 1), cuv(x, y + 1), sp);
 +}
 +
 +float bwdif_intra1(float cur_prefs3, float cur_prefs, float cur_mrefs, float cur_mrefs3)
@@ -1092,13 +1092,13 @@ Index: FFmpeg/libavfilter/d3d11/deint.hlsl
 +
 +    if (is_second_field)
 +        return bwdif_temp1(cp3, cp, cm, cm3,
-+                           py(x, y + 4), py(x, y + 2), py(x, y), py(x, y - 2), py(x, y - 4),
-+                           cy(x, y + 1), cy(x, y - 1), ny(x, y + 1), ny(x, y - 1),
++                           cy(x, y + 4), cy(x, y + 2), cy(x, y), cy(x, y - 2), cy(x, y - 4),
++                           py(x, y + 1), py(x, y - 1), ny(x, y + 1), ny(x, y - 1),
 +                           ny(x, y + 4), ny(x, y + 2), ny(x, y), ny(x, y - 2), ny(x, y - 4));
 +    return bwdif_temp1(cp3, cp, cm, cm3,
 +                       py(x, y + 4), py(x, y + 2), py(x, y), py(x, y - 2), py(x, y - 4),
-+                       py(x, y + 1), py(x, y - 1), cy(x, y + 1), cy(x, y - 1),
-+                       ny(x, y + 4), ny(x, y + 2), ny(x, y), ny(x, y - 2), ny(x, y - 4));
++                       py(x, y + 1), py(x, y - 1), ny(x, y + 1), ny(x, y - 1),
++                       cy(x, y + 4), cy(x, y + 2), cy(x, y), cy(x, y - 2), cy(x, y - 4));
 +}
 +
 +float2 bwdif_uv(int x, int y)
@@ -1113,13 +1113,13 @@ Index: FFmpeg/libavfilter/d3d11/deint.hlsl
 +
 +    if (is_second_field)
 +        return bwdif_temp2(cp3, cp, cm, cm3,
-+                           puv(x, y + 4), puv(x, y + 2), puv(x, y), puv(x, y - 2), puv(x, y - 4),
-+                           cuv(x, y + 1), cuv(x, y - 1), nuv(x, y + 1), nuv(x, y - 1),
++                           cuv(x, y + 4), cuv(x, y + 2), cuv(x, y), cuv(x, y - 2), cuv(x, y - 4),
++                           puv(x, y + 1), puv(x, y - 1), nuv(x, y + 1), nuv(x, y - 1),
 +                           nuv(x, y + 4), nuv(x, y + 2), nuv(x, y), nuv(x, y - 2), nuv(x, y - 4));
 +    return bwdif_temp2(cp3, cp, cm, cm3,
 +                       puv(x, y + 4), puv(x, y + 2), puv(x, y), puv(x, y - 2), puv(x, y - 4),
-+                       puv(x, y + 1), puv(x, y - 1), cuv(x, y + 1), cuv(x, y - 1),
-+                       nuv(x, y + 4), nuv(x, y + 2), nuv(x, y), nuv(x, y - 2), nuv(x, y - 4));
++                       puv(x, y + 1), puv(x, y - 1), nuv(x, y + 1), nuv(x, y - 1),
++                       cuv(x, y + 4), cuv(x, y + 2), cuv(x, y), cuv(x, y - 2), cuv(x, y - 4));
 +}
 +
 +[numthreads(16, 16, 1)]
