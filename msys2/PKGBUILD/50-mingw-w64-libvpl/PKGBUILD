@@ -3,7 +3,7 @@
 _realname=libvpl
 pkgbase=mingw-w64-jellyfin-${_realname}
 pkgname=("${MINGW_PACKAGE_PREFIX}-jellyfin-${_realname}")
-pkgver=2.16.0
+pkgver=2.17.0
 pkgrel=1
 pkgdesc="Intel Video Processing Library (mingw-w64)"
 arch=('any')
@@ -66,6 +66,7 @@ build() {
       "${extra_config[@]}" \
       -DBUILD_SHARED_LIBS=OFF \
       -DINSTALL_{DEV,LIB}=ON \
+      -DINSTALL_EXAMPLES=OFF \
       -DBUILD_{TESTS,EXAMPLES,EXPERIMENTAL}=OFF \
       ../libvpl-${pkgver}
 
@@ -75,8 +76,6 @@ build() {
 package() {
   cd "${srcdir}/build-${MSYSTEM}-static"
   DESTDIR="${pkgdir}" "${MINGW_TOOLCHAIN_PREFIX}"/bin/cmake.exe --install .
-
-  rm -r "${pkgdir}${FF_MINGW_PREFIX}/share/vpl/examples"
 
   install -Dm644 "${srcdir}/libvpl-${pkgver}/LICENSE" "${pkgdir}${FF_MINGW_PREFIX}/share/licenses/${_realname}/LICENSE"
 

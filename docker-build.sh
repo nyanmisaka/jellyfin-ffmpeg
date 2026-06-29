@@ -135,7 +135,7 @@ prepare_extra_common() {
 
     # HARFBUZZ
     pushd ${SOURCE_DIR}
-    git clone -b 14.2.0 --depth=1 https://github.com/harfbuzz/harfbuzz.git
+    git clone -b 14.2.1 --depth=1 https://github.com/harfbuzz/harfbuzz.git
     meson setup harfbuzz harfbuzz_build \
         ${MESON_CROSS_OPT} \
         --prefix=${TARGET_DIR} \
@@ -169,7 +169,7 @@ prepare_extra_common() {
 
     # LIBASS
     pushd ${SOURCE_DIR}
-    git clone -b 0.17.4 --depth=1 https://github.com/libass/libass.git
+    git clone -b 0.17.5 --depth=1 https://github.com/libass/libass.git
     pushd libass
     ./autogen.sh
     ./configure \
@@ -315,7 +315,7 @@ prepare_extra_amd64() {
     pushd ${SOURCE_DIR}
     mkdir amf-headers
     pushd amf-headers
-    amf_ver="1.5.0"
+    amf_ver="1.5.2"
     amf_link="https://github.com/GPUOpen-LibrariesAndSDKs/AMF/releases/download/v${amf_ver}/AMF-headers-v${amf_ver}.tar.gz"
     wget ${amf_link} -O amf.tar.gz
     tar xaf amf.tar.gz
@@ -431,7 +431,7 @@ prepare_extra_amd64() {
     # Provides VPL header and dispatcher (libvpl.so.2) for FFmpeg
     # Both MSDK and VPL runtime can be loaded by VPL dispatcher
     pushd ${SOURCE_DIR}
-    git clone -b v2.16.0 --depth=1 https://github.com/intel/libvpl.git
+    git clone -b v2.17.0 --depth=1 https://github.com/intel/libvpl.git
     pushd libvpl
     sed -i 's|ParseEnvSearchPaths(ONEVPL_PRIORITY_PATH_VAR, searchDirList)|searchDirList.push_back("/usr/lib/jellyfin-ffmpeg/lib")|g' libvpl/src/mfx_dispatcher_vpl_loader.cpp
     mkdir build && pushd build
@@ -441,6 +441,7 @@ prepare_extra_amd64() {
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
           -DINSTALL_{DEV,LIB}=ON \
+          -DINSTALL_EXAMPLES=OFF \
           -DBUILD_{TESTS,EXAMPLES,EXPERIMENTAL}=OFF \
           ..
     make -j$(nproc) && make install && make install DESTDIR=${SOURCE_DIR}/intel
@@ -453,7 +454,7 @@ prepare_extra_amd64() {
     # VPL-GPU-RT (RT only)
     # Provides VPL runtime (libmfx-gen.so.1.2) for 11th Gen Tiger Lake and newer
     pushd ${SOURCE_DIR}
-    git clone -b intel-onevpl-26.1.6 --depth=1 https://github.com/intel/vpl-gpu-rt.git
+    git clone -b intel-onevpl-26.2.3 --depth=1 https://github.com/intel/vpl-gpu-rt.git
     pushd vpl-gpu-rt
     # Fix missing entries in PicStruct validation
     wget -q -O - https://github.com/intel/vpl-gpu-rt/commit/c7eb030.patch | git apply
@@ -475,10 +476,12 @@ prepare_extra_amd64() {
     # Full Feature Build: ENABLE_KERNELS=ON(Default) ENABLE_NONFREE_KERNELS=ON(Default)
     # Free Kernel Build: ENABLE_KERNELS=ON ENABLE_NONFREE_KERNELS=OFF
     pushd ${SOURCE_DIR}
-    git clone -b intel-media-26.1.6 --depth=1 https://github.com/intel/media-driver.git
+    git clone -b intel-media-26.2.3 --depth=1 https://github.com/intel/media-driver.git
     pushd media-driver
     # Enable VC1 decode on DG2 (note that MTL+ is not supported)
-    wget -q -O - https://github.com/intel/media-driver/commit/25fb926.patch | git apply
+    wget -q -O - https://github.com/intel/media-driver/commit/e47702f.patch | git apply
+    # Fix iHD crashes when used with Xe KMD on small BAR systems
+    wget -q -O - https://github.com/intel/media-driver/commit/6fd4037.patch | git apply
     mkdir build && pushd build
     cmake -DCMAKE_INSTALL_PREFIX=${TARGET_DIR} \
           -DCMAKE_C_FLAGS="${CFLAGS} -Wno-error=array-bounds" \
@@ -498,7 +501,7 @@ prepare_extra_amd64() {
 
     # Vulkan Headers
     pushd ${SOURCE_DIR}
-    git clone -b v1.4.349 --depth=1 https://github.com/KhronosGroup/Vulkan-Headers.git
+    git clone -b v1.4.355 --depth=1 https://github.com/KhronosGroup/Vulkan-Headers.git
     pushd Vulkan-Headers
     mkdir build && pushd build
     cmake \
@@ -511,7 +514,7 @@ prepare_extra_amd64() {
 
     # Vulkan ICD Loader
     pushd ${SOURCE_DIR}
-    git clone -b v1.4.349 --depth=1 https://github.com/KhronosGroup/Vulkan-Loader.git
+    git clone -b v1.4.355 --depth=1 https://github.com/KhronosGroup/Vulkan-Loader.git
     pushd Vulkan-Loader
     mkdir build && pushd build
     cmake \
@@ -531,7 +534,7 @@ prepare_extra_amd64() {
     popd
 
     # SHADERC
-    shaderc_ver="v2026.1"
+    shaderc_ver="v2026.2"
     pushd ${SOURCE_DIR}
     git clone -b ${shaderc_ver} --depth=1 https://github.com/google/shaderc.git
     pushd shaderc
@@ -578,6 +581,12 @@ prepare_extra_amd64() {
         # Enable VAAPI VPP alpha blending support
         wget -q -O - https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/41090.patch | \
             patch -p1 -d mesa-${mesa_ver}
+        # Fix misc CSC issues in VAAPI VPP
+        wget -q -O - https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42181.patch | \
+            patch -p1 -d mesa-${mesa_ver}
+        # Fix setting VPE rotation with horizontal flip enabled
+        wget -q -O - https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42408.patch | \
+            sed 's#/mm/#/#g' | patch -p1 -d mesa-${mesa_ver}
         meson setup mesa-${mesa_ver} mesa_build \
             --prefix=${TARGET_DIR} \
             --libdir=lib \

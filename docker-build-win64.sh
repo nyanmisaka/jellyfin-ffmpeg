@@ -179,7 +179,7 @@ ninja -j$(nproc) -C fontconfig_build install
 popd
 
 # HARFBUZZ
-git clone -b 14.2.0 --depth=1 https://github.com/harfbuzz/harfbuzz.git
+git clone -b 14.2.1 --depth=1 https://github.com/harfbuzz/harfbuzz.git
 meson setup harfbuzz harfbuzz_build \
     --prefix=${FF_DEPS_PREFIX} \
     --cross-file=${FF_MESON_TOOLCHAIN} \
@@ -218,7 +218,7 @@ make install
 popd
 
 # LIBASS
-git clone -b 0.17.4 --depth=1 https://github.com/libass/libass.git
+git clone -b 0.17.5 --depth=1 https://github.com/libass/libass.git
 pushd libass
 ./autogen.sh
 ./configure \
@@ -321,7 +321,7 @@ popd
 # OPENMPT
 mkdir mpt
 pushd mpt
-mpt_ver="0.8.6"
+mpt_ver="0.8.7"
 mpt_link="https://lib.openmpt.org/files/libopenmpt/src/libopenmpt-${mpt_ver}+release.autotools.tar.gz"
 wget ${mpt_link} -O mpt.tar.gz
 tar xaf mpt.tar.gz
@@ -549,7 +549,7 @@ popd
 # AMF
 mkdir amf-headers
 pushd amf-headers
-amf_ver="1.5.0"
+amf_ver="1.5.2"
 amf_link="https://github.com/GPUOpen-LibrariesAndSDKs/AMF/releases/download/v${amf_ver}/AMF-headers-v${amf_ver}.tar.gz"
 wget ${amf_link} -O amf.tar.gz
 tar xaf amf.tar.gz
@@ -560,7 +560,7 @@ popd
 popd
 
 # VPL
-git clone -b v2.16.0 --depth=1 https://github.com/intel/libvpl.git
+git clone -b v2.17.0 --depth=1 https://github.com/intel/libvpl.git
 pushd libvpl
 mkdir build && pushd build
 cmake \
@@ -571,6 +571,7 @@ cmake \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_SHARED_LIBS=OFF \
     -DINSTALL_{DEV,LIB}=ON \
+    -DINSTALL_EXAMPLES=OFF \
     -DBUILD_{TESTS,EXAMPLES,EXPERIMENTAL}=OFF \
     ..
 make -j$(nproc)

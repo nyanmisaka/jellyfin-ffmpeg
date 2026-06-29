@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_REPO="https://github.com/google/shaderc.git"
-SCRIPT_COMMIT="301b4ede53d59b68bf55f95bb26412d9233c8187"
+SCRIPT_COMMIT="d5f08ae5c5a9a45165578445cbd0f9adf0223448"
 
 ffbuild_enabled() {
     [[ $TARGET == mac* ]] && return -1
