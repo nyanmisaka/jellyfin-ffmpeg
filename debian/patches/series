@@ -80,7 +80,7 @@
 0080-prefer-vulkan-device-with-higher-api-version.patch
 0081-signal-vulkan-semaphores-in-drm-prime-reverse-mapping.patch
 0082-add-fixes-and-enhancements-for-vulkan-filters.patch
-0083-backport-fixes-for-nvenc-and-cuvid-from-upstream.patch
+0083-backport-fixes-for-cuda-from-upstream.patch
 0084-backport-fixes-for-detecting-ac4-streams-in-mpegts.patch
 0085-fix-hdr10-sidedata-not-removed-in-libplacebo-outlink.patch
 0086-workaround-amd-hevc-vaapi-encoder-out-of-band-vtag-hvc1.patch
