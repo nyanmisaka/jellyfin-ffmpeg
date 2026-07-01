@@ -3,7 +3,7 @@
 _realname=shaderc
 pkgbase=mingw-w64-jellyfin-${_realname}
 pkgname=("${MINGW_PACKAGE_PREFIX}-jellyfin-${_realname}")
-pkgver=2026.1
+pkgver=2026.2
 pkgrel=1
 pkgdesc="Collection of tools, libraries and tests for shader compilation (mingw-w64)"
 arch=('any')

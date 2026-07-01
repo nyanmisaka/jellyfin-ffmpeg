@@ -4,7 +4,7 @@
 _realname=Vulkan-Headers
 pkgbase=mingw-w64-jellyfin-vulkan-headers
 pkgname=("${MINGW_PACKAGE_PREFIX}-jellyfin-vulkan-headers")
-pkgver=1.4.349
+pkgver=1.4.355
 pkgrel=1
 epoch=1
 pkgdesc='Vulkan header files (mingw-w64)'

@@ -12,11 +12,3 @@ Index: FFmpeg/libavcodec/codec_par.c
          par->width               = codec->width;
          par->height              = codec->height;
          par->field_order         = codec->field_order;
-@@ -219,6 +220,7 @@ int avcodec_parameters_to_context(AVCode
- 
-     switch (par->codec_type) {
-     case AVMEDIA_TYPE_VIDEO:
-+        codec->sw_pix_fmt             =
-         codec->pix_fmt                = par->format;
-         codec->width                  = par->width;
-         codec->height                 = par->height;

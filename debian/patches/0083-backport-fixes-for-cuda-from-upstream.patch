@@ -83,19 +83,7 @@ Index: FFmpeg/libavcodec/nvenc.c
 ===================================================================
 --- FFmpeg.orig/libavcodec/nvenc.c
 +++ FFmpeg/libavcodec/nvenc.c
-@@ -266,8 +266,10 @@ static void nvenc_map_preset(NvencContex
- 
- static void nvenc_print_driver_requirement(AVCodecContext *avctx, int level)
- {
--#if NVENCAPI_CHECK_VERSION(13, 1)
-+#if NVENCAPI_CHECK_VERSION(13, 2)
-     const char *minver = "(unknown)";
-+#elif NVENCAPI_CHECK_VERSION(13, 1)
-+    const char *minver = "610.00";
- #elif NVENCAPI_CHECK_VERSION(13, 0)
-     const char *minver = "570.0";
- #elif NVENCAPI_CHECK_VERSION(12, 2)
-@@ -592,12 +594,24 @@ static int nvenc_check_capabilities(AVCo
+@@ -594,12 +594,24 @@ static int nvenc_check_capabilities(AVCo
  #ifdef NVENC_HAVE_BFRAME_REF_MODE
      tmp = (ctx->b_ref_mode >= 0) ? ctx->b_ref_mode : NV_ENC_BFRAME_REF_MODE_DISABLED;
      ret = nvenc_check_cap(avctx, NV_ENC_CAPS_SUPPORT_BFRAME_REF_MODE);
@@ -126,7 +114,7 @@ Index: FFmpeg/libavcodec/nvenc.c
      }
  #else
      tmp = (ctx->b_ref_mode >= 0) ? ctx->b_ref_mode : 0;
-@@ -683,7 +697,9 @@ static int nvenc_check_capabilities(AVCo
+@@ -685,7 +697,9 @@ static int nvenc_check_capabilities(AVCo
  
  #ifdef NVENC_HAVE_MVHEVC
      ctx->multiview_supported = nvenc_check_cap(avctx, NV_ENC_CAPS_SUPPORT_MVHEVC_ENCODE) > 0;
@@ -137,7 +125,7 @@ Index: FFmpeg/libavcodec/nvenc.c
          av_log(avctx, AV_LOG_WARNING, "Multiview not supported by the device\n");
          return AVERROR(ENOSYS);
      }
-@@ -1163,6 +1179,13 @@ static av_cold int nvenc_setup_rate_cont
+@@ -1165,6 +1179,13 @@ static av_cold int nvenc_setup_rate_cont
  #ifdef NVENC_HAVE_QP_CHROMA_OFFSETS
      ctx->encode_config.rcParams.cbQPIndexOffset = ctx->qp_cb_offset;
      ctx->encode_config.rcParams.crQPIndexOffset = ctx->qp_cr_offset;
@@ -151,7 +139,7 @@ Index: FFmpeg/libavcodec/nvenc.c
  #else
      if (ctx->qp_cb_offset || ctx->qp_cr_offset)
          av_log(avctx, AV_LOG_WARNING, "Failed setting QP CB/CR offsets, SDK 11.1 or greater required at compile time.\n");
-@@ -1359,6 +1382,11 @@ static av_cold int nvenc_setup_h264_conf
+@@ -1361,6 +1382,11 @@ static av_cold int nvenc_setup_h264_conf
          case NV_ENC_H264_PROFILE_BASELINE:
              cc->profileGUID = NV_ENC_H264_PROFILE_BASELINE_GUID;
              avctx->profile = AV_PROFILE_H264_BASELINE;
@@ -163,35 +151,49 @@ Index: FFmpeg/libavcodec/nvenc.c
              break;
          case NV_ENC_H264_PROFILE_MAIN:
              cc->profileGUID = NV_ENC_H264_PROFILE_MAIN_GUID;
-@@ -2529,7 +2557,12 @@ static void nvenc_fill_time_code(AVCodec
-             unsigned hh, mm, ss, ff, drop;
-             ff_timecode_set_smpte(&drop, &hh, &mm, &ss, &ff, avctx->framerate, tc[i + 1], 0, 0);
- 
-+#ifdef NVENC_NEW_COUNTING_TYPE
-+            time_code->clockTimestamp[i].countingTypeLSB = 0;
-+            time_code->clockTimestamp[i].countingTypeMSB = 0;
-+#else
-             time_code->clockTimestamp[i].countingType = 0;
-+#endif
-             time_code->clockTimestamp[i].discontinuityFlag = 0;
-             time_code->clockTimestamp[i].cntDroppedFrames = drop;
-             time_code->clockTimestamp[i].nFrames = ff;
-Index: FFmpeg/libavcodec/nvenc.h
+Index: FFmpeg/libavfilter/vf_bwdif_cuda.cu
 ===================================================================
---- FFmpeg.orig/libavcodec/nvenc.h
-+++ FFmpeg/libavcodec/nvenc.h
-@@ -111,6 +111,11 @@ typedef void ID3D11Device;
- #define NVENC_HAVE_MVHEVC
- #endif
+--- FFmpeg.orig/libavfilter/vf_bwdif_cuda.cu
++++ FFmpeg/libavfilter/vf_bwdif_cuda.cu
+@@ -91,7 +91,7 @@ __inline__ __device__ T filter(T cur_pre
+         if (abs(c - e) > temporal_diff0) {
+             interpol = (((coef_hf[0] * (prev2_0 + next2_0)
+                 - coef_hf[1] * (prev2_mrefs2 + next2_mrefs2 + prev2_prefs2 + next2_prefs2)
+-                + coef_hf[2] * (prev2_mrefs4 + next2_mrefs4 + prev2_prefs4 + next2_mrefs4)) >> 2)
++                + coef_hf[2] * (prev2_mrefs4 + next2_mrefs4 + prev2_prefs4 + next2_prefs4)) >> 2)
+                 + coef_lf[0] * (c + e) - coef_lf[1] * (cur_mrefs3 + cur_prefs3)) >> 13;
+         } else {
+             interpol = (coef_sp[0] * (c + e) - coef_sp[1] * (cur_mrefs3 + cur_prefs3)) >> 13;
+@@ -146,10 +146,10 @@ __inline__ __device__ void bwdif_single(
+     // Calculate temporal prediction
+     int is_second_field = !(parity ^ tff);
  
-+// SDK 13.1 compile time feature checks
-+#if NVENCAPI_CHECK_VERSION(13, 1)
-+#define NVENC_NEW_COUNTING_TYPE
-+#endif
-+
- typedef struct NvencSurface
- {
-     NV_ENC_INPUT_PTR input_surface;
+-    cudaTextureObject_t prev2 = prev;
+-    cudaTextureObject_t prev1 = is_second_field ? cur : prev;
+-    cudaTextureObject_t next1 = is_second_field ? next : cur;
+-    cudaTextureObject_t next2 = next;
++    cudaTextureObject_t prev2 = is_second_field ? cur : prev;
++    cudaTextureObject_t prev1 = prev;
++    cudaTextureObject_t next1 = next;
++    cudaTextureObject_t next2 = is_second_field ? next : cur;
+ 
+     T prev2_prefs4 = tex2D<T>(prev2, xo,  yo + 4);
+     T prev2_prefs2 = tex2D<T>(prev2, xo,  yo + 2);
+@@ -213,10 +213,10 @@ __inline__ __device__ void bwdif_double(
+ 
+     int is_second_field = !(parity ^ tff);
+ 
+-    cudaTextureObject_t prev2 = prev;
+-    cudaTextureObject_t prev1 = is_second_field ? cur : prev;
+-    cudaTextureObject_t next1 = is_second_field ? next : cur;
+-    cudaTextureObject_t next2 = next;
++    cudaTextureObject_t prev2 = is_second_field ? cur : prev;
++    cudaTextureObject_t prev1 = prev;
++    cudaTextureObject_t next1 = next;
++    cudaTextureObject_t next2 = is_second_field ? next : cur;
+ 
+     T prev2_prefs4 = tex2D<T>(prev2, xo,  yo + 4);
+     T prev2_prefs2 = tex2D<T>(prev2, xo,  yo + 2);
 Index: FFmpeg/libavfilter/vf_scale_cuda.h
 ===================================================================
 --- FFmpeg.orig/libavfilter/vf_scale_cuda.h
@@ -207,3 +209,87 @@ Index: FFmpeg/libavfilter/vf_scale_cuda.h
  #else
  #include <ffnvcodec/dynlink_cuda.h>
  #endif
+Index: FFmpeg/libavfilter/vf_yadif_cuda.cu
+===================================================================
+--- FFmpeg.orig/libavfilter/vf_yadif_cuda.cu
++++ FFmpeg/libavfilter/vf_yadif_cuda.cu
+@@ -23,7 +23,7 @@ __inline__ __device__ T spatial_predicto
+                                           T h, T i, T j, T k, T l, T m, T n)
+ {
+     int spatial_pred = (d + k)/2;
+-    int spatial_score = abs(c - j) + abs(d - k) + abs(e - l);
++    int spatial_score = abs(c - j) + abs(d - k) + abs(e - l) - 1;
+ 
+     int score = abs(b - k) + abs(c - l) + abs(d - m);
+     if (score < spatial_score) {
+@@ -75,7 +75,7 @@ __inline__ __device__ T temporal_predict
+     int tdiff1 = (abs(A - F) + abs(B - G)) / 2;
+     int tdiff2 = (abs(K - F) + abs(G - L)) / 2;
+ 
+-    int diff = max3(tdiff0, tdiff1, tdiff2);
++    int diff = max3(tdiff0 >> 1, tdiff1, tdiff2);
+ 
+     if (!skip_check) {
+       int maxi = max3(p2 - p3, p2 - p1, min(p0 - p1, p4 - p3));
+@@ -85,8 +85,7 @@ __inline__ __device__ T temporal_predict
+ 
+     if (spatial_pred > p2 + diff) {
+       spatial_pred = p2 + diff;
+-    }
+-    if (spatial_pred < p2 - diff) {
++    } else if (spatial_pred < p2 - diff) {
+       spatial_pred = p2 - diff;
+     }
+ 
+@@ -139,10 +138,10 @@ __inline__ __device__ void yadif_single(
+     // Calculate temporal prediction
+     int is_second_field = !(parity ^ tff);
+ 
+-    cudaTextureObject_t prev2 = prev;
+-    cudaTextureObject_t prev1 = is_second_field ? cur : prev;
+-    cudaTextureObject_t next1 = is_second_field ? next : cur;
+-    cudaTextureObject_t next2 = next;
++    cudaTextureObject_t prev2 = is_second_field ? cur : prev;
++    cudaTextureObject_t prev1 = prev;
++    cudaTextureObject_t next1 = next;
++    cudaTextureObject_t next2 = is_second_field ? next : cur;
+ 
+     T A = tex2D<T>(prev2, xo,  yo - 1);
+     T B = tex2D<T>(prev2, xo,  yo + 1);
+@@ -210,10 +209,10 @@ __inline__ __device__ void yadif_double(
+     // Calculate temporal prediction
+     int is_second_field = !(parity ^ tff);
+ 
+-    cudaTextureObject_t prev2 = prev;
+-    cudaTextureObject_t prev1 = is_second_field ? cur : prev;
+-    cudaTextureObject_t next1 = is_second_field ? next : cur;
+-    cudaTextureObject_t next2 = next;
++    cudaTextureObject_t prev2 = is_second_field ? cur : prev;
++    cudaTextureObject_t prev1 = prev;
++    cudaTextureObject_t next1 = next;
++    cudaTextureObject_t next2 = is_second_field ? next : cur;
+ 
+     T A = tex2D<T>(prev2, xo,  yo - 1);
+     T B = tex2D<T>(prev2, xo,  yo + 1);
+Index: FFmpeg/libavutil/hwcontext_cuda.c
+===================================================================
+--- FFmpeg.orig/libavutil/hwcontext_cuda.c
++++ FFmpeg/libavutil/hwcontext_cuda.c
+@@ -207,7 +207,7 @@ static int cuda_get_buffer(AVHWFramesCon
+     if (ctx->sw_format == AV_PIX_FMT_YUV420P) {
+         frame->linesize[1] = frame->linesize[2] = frame->linesize[0] / 2;
+         frame->data[2]     = frame->data[1];
+-        frame->data[1]     = frame->data[2] + frame->linesize[2] * (ctx->height / 2);
++        frame->data[1]     = frame->data[2] + frame->linesize[2] * AV_CEIL_RSHIFT(ctx->height, 1);
+     }
+ 
+     frame->format = AV_PIX_FMT_CUDA;
+@@ -259,7 +259,7 @@ static int cuda_transfer_data(AVHWFrames
+             .srcPitch      = src->linesize[i],
+             .dstPitch      = dst->linesize[i],
+             .WidthInBytes  = FFMIN(src->linesize[i], dst->linesize[i]),
+-            .Height        = src->height >> ((i == 0 || i == 3) ? 0 : priv->shift_height),
++            .Height        = AV_CEIL_RSHIFT(src->height, ((i == 0 || i == 3) ? 0 : priv->shift_height)),
+         };
+ 
+         if (src->hw_frames_ctx) {

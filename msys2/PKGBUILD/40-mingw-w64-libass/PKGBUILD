@@ -3,7 +3,7 @@
 _realname=libass
 pkgbase=mingw-w64-jellyfin-${_realname}
 pkgname="${MINGW_PACKAGE_PREFIX}-${_realname}"
-pkgver=0.17.4
+pkgver=0.17.5
 pkgrel=1
 pkgdesc="A portable library for SSA/ASS subtitles rendering (mingw-w64)"
 arch=('any')
@@ -13,15 +13,17 @@ msys2_references=(
   "cpe: cpe:/a:libass_project:libass"
 )
 license=('spdx:ISC')
-makedepends=("${MINGW_PACKAGE_PREFIX}-autotools"
-             "${MINGW_PACKAGE_PREFIX}-cc"
-              $( [[ "${CARCH}" != "i686" \
-                && "${CARCH}" != "x86_64" ]] \
-                || echo "${MINGW_PACKAGE_PREFIX}-nasm" ))
+makedepends=(
+  "${MINGW_PACKAGE_PREFIX}-cc"
+  "${MINGW_PACKAGE_PREFIX}-meson"
+  "${MINGW_PACKAGE_PREFIX}-ninja"
+  $([[ "${MSYSTEM}" == "CLANGARM64" ]] || echo "${MINGW_PACKAGE_PREFIX}-nasm")
+)
 depends=("${MINGW_PACKAGE_PREFIX}-jellyfin-fribidi"
          "${MINGW_PACKAGE_PREFIX}-jellyfin-fontconfig"
          "${MINGW_PACKAGE_PREFIX}-jellyfin-freetype"
          "${MINGW_PACKAGE_PREFIX}-jellyfin-libunibreak"
+         "${MINGW_PACKAGE_PREFIX}-jellyfin-libiconv"
          "${MINGW_PACKAGE_PREFIX}-jellyfin-harfbuzz")
 source=(https://github.com/libass/${_realname}/releases/download/${pkgver}/${_realname}-${pkgver}.tar.xz
         fix-strndup-mingw.patch)
@@ -34,34 +36,33 @@ export FF_MINGW_PREFIX="${MINGW_TOOLCHAIN_PREFIX}/ffbuild"
 prepare() {
   cd "${srcdir}/${_realname}-${pkgver}"
   patch -p1 -i "${srcdir}/fix-strndup-mingw.patch"
-  # autoreconf to get updated libtool for clang
-  autoreconf -fiv
 }
 
 build() {
-  [[ -d "${srcdir}/build-${MSYSTEM}-static" ]] && rm -rf "${srcdir}/build-${MSYSTEM}-static"
-  mkdir -p "${srcdir}/build-${MSYSTEM}-static" && cd "${srcdir}/build-${MSYSTEM}-static"
-
   export PKG_CONFIG_PATH="${FF_MINGW_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH}"
-  CPPFLAGS+=" -DFRIBIDI_LIB_STATIC" \
-  ../${_realname}-${pkgver}/configure \
-    --prefix=${FF_MINGW_PREFIX} \
-    --build=${MINGW_CHOST} \
-    --host=${MINGW_CHOST} \
-    --target=${MINGW_CHOST} \
-    --disable-shared \
-    --enable-static \
-    --enable-directwrite \
-    --enable-libunibreak \
-    --with-pic \
-    $( [[ "${CARCH}" != "i686" \
-      && "${CARCH}" != "x86_64" ]] \
-      || echo "--enable-asm")
 
-  make
+  CPPFLAGS+=" -DFRIBIDI_LIB_STATIC" \
+  MSYS2_ARG_CONV_EXCL="--prefix=" \
+    ${MINGW_TOOLCHAIN_PREFIX}/bin/meson setup \
+      --prefix="${FF_MINGW_PREFIX}" \
+      --wrap-mode=nodownload \
+      --buildtype=plain \
+      --default-library=static \
+      -Dtest=disabled \
+      -Dcompare=disabled \
+      -Dprofile=disabled \
+      -Dfuzz=disabled \
+      -Dcheckasm=disabled \
+      -Dfontconfig=enabled \
+      -Ddirectwrite=enabled \
+      -Dasm=enabled \
+      -Dlibunibreak=enabled \
+      "build-${MSYSTEM}-static" \
+      "${_realname}-${pkgver}"
+
+  ${MINGW_TOOLCHAIN_PREFIX}/bin/meson compile -C "build-${MSYSTEM}-static"
 }
 
 package() {
-  cd "${srcdir}/build-${MSYSTEM}-static"
-  make DESTDIR="${pkgdir}" install
+  ${MINGW_TOOLCHAIN_PREFIX}/bin/meson install -C "build-${MSYSTEM}-static" --destdir "${pkgdir}"
 }
