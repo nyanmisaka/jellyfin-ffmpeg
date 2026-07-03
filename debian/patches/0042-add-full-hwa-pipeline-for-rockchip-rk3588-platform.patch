@@ -3563,7 +3563,7 @@ Index: FFmpeg/libavcodec/rkmppenc.c
 +            av_log(avctx, AV_LOG_ERROR, "ff_get_encode_buffer failed: %d\n", ret);
 +            goto exit;
 +        }
-+        memcpy(packet->data, mpp_packet_get_data(mpp_pkt), mpp_pkt_length);
++        memcpy(packet->data, mpp_packet_get_pos(mpp_pkt), mpp_pkt_length);
 +    }
  
 -    int64_t pts = mpp_packet_get_pts(packet);
@@ -4489,7 +4489,7 @@ Index: FFmpeg/libavfilter/rkrga_common.c
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/rkrga_common.c
-@@ -0,0 +1,1447 @@
+@@ -0,0 +1,1453 @@
 +/*
 + * Copyright (c) 2023 NyanMisaka
 + *
@@ -5361,8 +5361,14 @@ Index: FFmpeg/libavfilter/rkrga_common.c
 +    if (!src || !dst)
 +        return AVERROR(EINVAL);
 +
-+    scale_ratio_w = (float)dst->act_w / (float)src->act_w;
-+    scale_ratio_h = (float)dst->act_h / (float)src->act_h;
++    if ((src->rotate_mode & 0x04) == 0x04 /* HAL_TRANSFORM_ROT_90 */ ||
++        (src->rotate_mode & 0x07) == 0x07 /* HAL_TRANSFORM_ROT_270 */) {
++        scale_ratio_w = (float)dst->act_h / (float)src->act_w;
++        scale_ratio_h = (float)dst->act_w / (float)src->act_h;
++    } else {
++        scale_ratio_w = (float)dst->act_w / (float)src->act_w;
++        scale_ratio_h = (float)dst->act_h / (float)src->act_h;
++    }
 +
 +    /* P010 requires RGA3 */
 +    if (!r->has_rga3 &&
