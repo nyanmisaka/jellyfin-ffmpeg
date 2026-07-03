@@ -23,14 +23,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     DLLTOOL="x86_64-w64-mingw32-dlltool" \
     CMAKE_POLICY_VERSION_MINIMUM="3.5"
 
-# Use more reliable mirrors for Ubuntu packages
-RUN mkdir -p /etc/apt/sources.list.d/ \
- && touch /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
- && sed -i 's|archive.ubuntu.com/ubuntu/|mirrors.kernel.org/ubuntu/|g' \
-    /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
- && sed -i 's|security.ubuntu.com/ubuntu/|mirrors.kernel.org/ubuntu/|g' \
-    /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources
-
 # Prepare Debian and mingw-w64 build environment
 RUN apt-get update \
  && apt-get dist-upgrade -y \
