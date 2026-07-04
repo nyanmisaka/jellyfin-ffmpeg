@@ -20,14 +20,18 @@ makedepends=("${MINGW_PACKAGE_PREFIX}-cc"
              "${MINGW_PACKAGE_PREFIX}-cmake"
              "${MINGW_PACKAGE_PREFIX}-ninja"
              "${MINGW_PACKAGE_PREFIX}-python")
-source=("https://github.com/google/shaderc/archive/v${pkgver}/${_realname}-${pkgver}.tar.gz")
+source=("${_realname}"::"git+https://github.com/google/${_realname}.git#tag=v${pkgver}")
 sha256sums=('SKIP')
 
 export MINGW_TOOLCHAIN_PREFIX="${MINGW_PREFIX}"
 export FF_MINGW_PREFIX="${MINGW_TOOLCHAIN_PREFIX}/ffbuild"
 
 prepare() {
-  cd "${srcdir}/${_realname}-${pkgver}"
+  cd "${srcdir}/${_realname}"
+
+  # Fixup "IS NOT TOP-LEVEL GIT DIRECTORY" on Windows
+  sed -i 's/def is_git_toplevel(git, directory):/&\n  return True/' utils/git-sync-deps
+
   ./utils/git-sync-deps || return 1
 }
 
@@ -44,7 +48,7 @@ build() {
   MSYS2_ARG_CONV_EXCL="-DCMAKE_INSTALL_PREFIX=" \
   ${MINGW_TOOLCHAIN_PREFIX}/bin/cmake.exe \
     -GNinja \
-    -DCMAKE_INSTALL_PREFIX=${FF_MINGW_PREFIX} \
+    -DCMAKE_INSTALL_PREFIX="${FF_MINGW_PREFIX}" \
     "${_extra_config[@]}" \
     -DBUILD_SHARED_LIBS=OFF \
     -DENABLE_GLSLANG_BINARIES=ON \
@@ -54,7 +58,7 @@ build() {
     -DSHADERC_SKIP_COPYRIGHT_CHECK=ON \
     -DSHADERC_ENABLE_WERROR_COMPILE=OFF \
     -DPython_EXECUTABLE="${MINGW_TOOLCHAIN_PREFIX}/bin/python.exe" \
-    ../${_realname}-${pkgver}
+    "../${_realname}"
 
   ${MINGW_TOOLCHAIN_PREFIX}/bin/cmake.exe --build ./
 }
@@ -76,6 +80,6 @@ package() {
   cp shaderc_combined.pc shaderc.pc
   popd
 
-  install -Dm644 "${srcdir}/${_realname}-${pkgver}/LICENSE" \
+  install -Dm644 "${srcdir}/${_realname}/LICENSE" \
     "${pkgdir}${FF_MINGW_PREFIX}/share/licenses/${_realname}/LICENSE"
 }
