@@ -124,7 +124,7 @@ static int videotoolbox_postproc_frame(void *avctx, AVFrame *frame)
     if (!ref->pixbuf) {
         av_log(avctx, AV_LOG_ERROR, "No frame decoded?\n");
         av_frame_unref(frame);
-        return AVERROR_EXTERNAL;
+        return 0;
     }
 
     frame->crop_right = 0;
@@ -817,11 +817,6 @@ static CFDictionaryRef videotoolbox_buffer_attributes_create(int width,
     CFDictionarySetValue(buffer_attributes, kCVPixelBufferIOSurfacePropertiesKey, io_surface_properties);
     CFDictionarySetValue(buffer_attributes, kCVPixelBufferWidthKey, w);
     CFDictionarySetValue(buffer_attributes, kCVPixelBufferHeightKey, h);
-#if TARGET_OS_IPHONE
-    CFDictionarySetValue(buffer_attributes, kCVPixelBufferOpenGLESCompatibilityKey, kCFBooleanTrue);
-#else
-    CFDictionarySetValue(buffer_attributes, kCVPixelBufferIOSurfaceOpenGLTextureCompatibilityKey, kCFBooleanTrue);
-#endif
 
     CFRelease(io_surface_properties);
     CFRelease(cv_pix_fmt);
@@ -843,9 +838,7 @@ static CFDictionaryRef videotoolbox_decoder_config_create(CMVideoCodecType codec
                                                                    &kCFTypeDictionaryValueCallBacks);
 
     CFDictionarySetValue(config_info,
-                         codec_type == kCMVideoCodecType_HEVC ?
-                            kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder :
-                            kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder,
+                         kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder,
                          kCFBooleanTrue);
 
     avc_info = CFDictionaryCreateMutable(kCFAllocatorDefault,
@@ -1025,6 +1018,23 @@ static int videotoolbox_start(AVCodecContext *avctx)
         av_log(avctx, AV_LOG_VERBOSE, "VideoToolbox reported invalid data.\n");
         return AVERROR_INVALIDDATA;
     case 0:
+        if (avctx->skip_frame >= AVDISCARD_NONKEY) {
+            status = VTSessionSetProperty(videotoolbox->session,
+                                          kVTDecompressionPropertyKey_OnlyTheseFrames,
+                                          kVTDecompressionProperty_OnlyTheseFrames_KeyFrames);
+            if (status) {
+                av_log(avctx, AV_LOG_WARNING, "kVTDecompressionProperty_OnlyTheseFrames_KeyFrames is not supported on this device. Ignoring.\n");
+            }
+        }
+        if (avctx->hwaccel_flags & AV_HWACCEL_FLAG_LOW_PRIORITY) {
+            status = VTSessionSetProperty(videotoolbox->session,
+                                          kVTDecompressionPropertyKey_RealTime,
+                                          kCFBooleanFalse);
+            av_log(avctx, AV_LOG_INFO, "Decoder running at lower priority.\n");
+            if (status) {
+                av_log(avctx, AV_LOG_WARNING, "kVTDecompressionPropertyKey_RealTime is not supported on this device. Ignoring.\n");
+            }
+        }
         return 0;
     default:
         av_log(avctx, AV_LOG_VERBOSE, "Unknown VideoToolbox session creation error %d\n", (int)status);

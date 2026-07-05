@@ -33,4 +33,12 @@ int ff_isom_parse_dvcc_dvvc(void *logctx, AVStream *st,
 void ff_isom_put_dvcc_dvvc(void *logctx, uint8_t out[ISOM_DVCC_DVVC_SIZE],
                            const AVDOVIDecoderConfigurationRecord *dovi);
 
+/*
+ * Check if the AVDOVIDecoderConfigurationRecord is spec-compliant for current codec parameters
+ * Used by muxers to determine if the configuration record should be copied into the container
+ * Returns 0 when the AVDOVIDecoderConfigurationRecord is safe to copy, otherwise return an AVERROR
+ */
+int ff_isom_validate_dovi_config(const AVDOVIDecoderConfigurationRecord *dovi,
+                                 const AVCodecParameters *codec_par, int codec_tag);
+
 #endif /* AVFORMAT_DOVI_ISOM_H */

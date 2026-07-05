@@ -818,6 +818,7 @@ static const CodecMime mkv_image_mime_tags[] = {
     {"image/jpeg"                 , AV_CODEC_ID_MJPEG},
     {"image/png"                  , AV_CODEC_ID_PNG},
     {"image/tiff"                 , AV_CODEC_ID_TIFF},
+    {"image/webp"                 , AV_CODEC_ID_WEBP},
 
     {""                           , AV_CODEC_ID_NONE}
 };

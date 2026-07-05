@@ -23,6 +23,7 @@
 #include <float.h>
 #include <stdio.h>
 
+#include "libavutil/avassert.h"
 #include "libavutil/common.h"
 #include "libavutil/hwcontext.h"
 #include "libavutil/hwcontext_cuda_internal.h"
@@ -32,6 +33,7 @@
 #include "libavutil/pixdesc.h"
 
 #include "avfilter.h"
+#include "dither_matrix.h"
 #include "filters.h"
 #include "scale_eval.h"
 #include "video.h"
@@ -121,6 +123,9 @@ typedef struct CUDAScaleContext {
     int interp_as_integer;
 
     float param;
+
+    CUdeviceptr dither_buffer;
+    CUtexObject dither_tex;
 } CUDAScaleContext;
 
 static av_cold int cudascale_init(AVFilterContext *ctx)
@@ -142,13 +147,23 @@ static av_cold void cudascale_uninit(AVFilterContext *ctx)
 {
     CUDAScaleContext *s = ctx->priv;
 
-    if (s->hwctx && s->cu_module) {
+    if (s->hwctx) {
         CudaFunctions *cu = s->hwctx->internal->cuda_dl;
         CUcontext dummy;
 
         CHECK_CU(cu->cuCtxPushCurrent(s->hwctx->cuda_ctx));
-        CHECK_CU(cu->cuModuleUnload(s->cu_module));
-        s->cu_module = NULL;
+        if (s->dither_tex) {
+            CHECK_CU(cu->cuTexObjectDestroy(s->dither_tex));
+            s->dither_tex = 0;
+        }
+        if (s->dither_buffer) {
+            CHECK_CU(cu->cuMemFree(s->dither_buffer));
+            s->dither_buffer = 0;
+        }
+        if (s->cu_module) {
+            CHECK_CU(cu->cuModuleUnload(s->cu_module));
+            s->cu_module = NULL;
+        }
         CHECK_CU(cu->cuCtxPopCurrent(&dummy));
     }
 
@@ -294,6 +309,67 @@ static av_cold int init_processing_chain(AVFilterContext *ctx, int in_width, int
     return 0;
 }
 
+static av_cold int cudascale_setup_dither(AVFilterContext *ctx)
+{
+    CUDAScaleContext    *s  = ctx->priv;
+    AVFilterLink        *inlink = ctx->inputs[0];
+    FilterLink          *inl = ff_filter_link(inlink);
+    AVHWFramesContext   *frames_ctx = (AVHWFramesContext*)inl->hw_frames_ctx->data;
+    AVCUDADeviceContext *device_hwctx = frames_ctx->device_ctx->hwctx;
+    CudaFunctions       *cu = device_hwctx->internal->cuda_dl;
+    CUcontext dummy, cuda_ctx = device_hwctx->cuda_ctx;
+    int ret = 0;
+
+    CUDA_MEMCPY2D cpy = {
+        .srcMemoryType = CU_MEMORYTYPE_HOST,
+        .dstMemoryType = CU_MEMORYTYPE_DEVICE,
+        .srcHost       = ff_fruit_dither_matrix,
+        .dstDevice     = 0,
+        .srcPitch      = ff_fruit_dither_size * sizeof(ff_fruit_dither_matrix[0]),
+        .dstPitch      = ff_fruit_dither_size * sizeof(ff_fruit_dither_matrix[0]),
+        .WidthInBytes  = ff_fruit_dither_size * sizeof(ff_fruit_dither_matrix[0]),
+        .Height        = ff_fruit_dither_size
+    };
+
+    CUDA_TEXTURE_DESC tex_desc = {
+        .addressMode = { CU_TR_ADDRESS_MODE_WRAP,
+                         CU_TR_ADDRESS_MODE_WRAP },
+        .filterMode  = CU_TR_FILTER_MODE_POINT,
+        .flags       = 2 /* CU_TRSF_NORMALIZED_COORDINATES */
+    };
+
+    CUDA_RESOURCE_DESC res_desc = {
+        .resType                  = CU_RESOURCE_TYPE_PITCH2D,
+        .res.pitch2D.format       = CU_AD_FORMAT_UNSIGNED_INT16,
+        .res.pitch2D.numChannels  = 1,
+        .res.pitch2D.width        = ff_fruit_dither_size,
+        .res.pitch2D.height       = ff_fruit_dither_size,
+        .res.pitch2D.pitchInBytes = ff_fruit_dither_size * sizeof(ff_fruit_dither_matrix[0]),
+        .res.pitch2D.devPtr       = 0
+    };
+
+    av_assert0(sizeof(ff_fruit_dither_matrix) ==
+        sizeof(ff_fruit_dither_matrix[0]) * ff_fruit_dither_size * ff_fruit_dither_size);
+
+    if ((ret = CHECK_CU(cu->cuCtxPushCurrent(cuda_ctx))) < 0)
+        return ret;
+
+    if ((ret = CHECK_CU(cu->cuMemAlloc(&s->dither_buffer, sizeof(ff_fruit_dither_matrix)))) < 0)
+        goto fail;
+
+    res_desc.res.pitch2D.devPtr = cpy.dstDevice = s->dither_buffer;
+
+    if ((ret = CHECK_CU(cu->cuMemcpy2D(&cpy))) < 0)
+        goto fail;
+
+    if ((ret = CHECK_CU(cu->cuTexObjectCreate(&s->dither_tex, &res_desc, &tex_desc, NULL))) < 0)
+        goto fail;
+
+fail:
+    CHECK_CU(cu->cuCtxPopCurrent(&dummy));
+    return ret;
+}
+
 static av_cold int cudascale_load_functions(AVFilterContext *ctx)
 {
     CUDAScaleContext *s = ctx->priv;
@@ -409,6 +485,11 @@ static av_cold int cudascale_config_props(AVFilterLink *outlink)
     s->hwctx = device_hwctx;
     s->cu_stream = s->hwctx->stream;
 
+    if (s->in_desc->comp[0].depth > s->out_desc->comp[0].depth) {
+        if ((ret = cudascale_setup_dither(ctx)) < 0)
+            goto fail;
+    }
+
     if (s->reset_sar)
         outlink->sample_aspect_ratio = (AVRational){1, 1};
     else if (inlink->sample_aspect_ratio.num) {
@@ -457,7 +538,10 @@ static int call_resize_kernel(AVFilterContext *ctx, CUfunction func,
         .src_width = src_width,
         .src_height = src_height,
         .param = s->param,
-        .mpeg_range = mpeg_range
+        .mpeg_range = mpeg_range,
+        .dither_tex = s->dither_tex,
+        .dither_size = (float)ff_fruit_dither_size,
+        .dither_quantization = (float)((1 << s->out_desc->comp[0].depth) - 1)
     };
 
     void *args[] = { &params };
@@ -487,6 +571,7 @@ static int scalecuda_resize(AVFilterContext *ctx,
 
     for (i = 0; i < s->in_planes; i++) {
         CUDA_TEXTURE_DESC tex_desc = {
+            .addressMode = { CU_TR_ADDRESS_MODE_CLAMP },
             .filterMode = s->interp_use_linear ?
                           CU_TR_FILTER_MODE_LINEAR :
                           CU_TR_FILTER_MODE_POINT,

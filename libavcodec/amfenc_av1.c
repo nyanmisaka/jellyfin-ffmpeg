@@ -16,15 +16,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/avassert.h"
 #include "libavutil/internal.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
+#include "libavutil/pixdesc.h"
 #include "amfenc.h"
 #include "codec_internal.h"
-
-#define AMF_VIDEO_ENCODER_AV1_CAP_WIDTH_ALIGNMENT_FACTOR_LOCAL                L"Av1WidthAlignmentFactor"          // amf_int64; default = 1
-#define AMF_VIDEO_ENCODER_AV1_CAP_HEIGHT_ALIGNMENT_FACTOR_LOCAL               L"Av1HeightAlignmentFactor"         // amf_int64; default = 1
 
 #define OFFSET(x) offsetof(AMFEncoderContext, x)
 #define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
@@ -101,7 +100,7 @@ static const AVOption options[] = {
     { "gop",                    "", 0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_HEADER_INSERTION_MODE_GOP_ALIGNED       }, 0, 0, VE, .unit = "hdrmode" },
     { "frame",                  "", 0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_HEADER_INSERTION_MODE_KEY_FRAME_ALIGNED }, 0, 0, VE, .unit = "hdrmode" },
 
-    { "async_depth",            "Set maximum encoding parallelism. Higher values increase output latency.", OFFSET(hwsurfaces_in_queue_max), AV_OPT_TYPE_INT, {.i64 = 16 }, 1, MAX_LOOKAHEAD_DEPTH + 1, VE },
+    { "async_depth",            "Set maximum encoding parallelism. Higher values increase output latency.", OFFSET(hwsurfaces_in_queue_max), AV_OPT_TYPE_INT, {.i64 = 8 }, 1, MAX_LOOKAHEAD_DEPTH + 1, VE },
 
     { "preencode",              "Enable preencode",     OFFSET(preencode),      AV_OPT_TYPE_BOOL, {.i64 = -1  }, -1, 1, VE},
     { "enforce_hrd",            "Enforce HRD",          OFFSET(enforce_hrd),    AV_OPT_TYPE_BOOL, {.i64 = -1  }, -1, 1, VE},
@@ -129,7 +128,7 @@ static const AVOption options[] = {
     { "none",                   "no adaptive quantization",         0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_AQ_MODE_NONE }, 0, 0, VE, .unit = "adaptive_quantisation_mode" },
     { "caq",                    "context adaptive quantization",    0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_AQ_MODE_CAQ }, 0, 0, VE, .unit = "adaptive_quantisation_mode" },
 
-    { "forced_idr",             "Force I frames to be IDR frames",  OFFSET(forced_idr),   AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE },
+    { "forced_idr",             "Force I frames to be IDR frames",  OFFSET(forced_idr),   AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, VE },
 
     { "align",                  "alignment mode",                           OFFSET(align),                          AV_OPT_TYPE_INT,     {.i64 = AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_NO_RESTRICTIONS },         AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_64X16_ONLY, AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_NO_RESTRICTIONS, VE, .unit = "align" },
     { "64x16",                  "", 0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_64X16_ONLY               }, 0, 0, VE, .unit = "align" },
@@ -205,6 +204,7 @@ static av_cold int amf_encode_init_av1(AVCodecContext* avctx)
     amf_int64           bit_depth;
     amf_int64           color_profile;
     enum                AVPixelFormat pix_fmt;
+    const AVPixFmtDescriptor *pix_desc;
 
     //for av1 alignment and crop
     uint32_t            crop_right  = 0;
@@ -250,10 +250,12 @@ static av_cold int amf_encode_init_av1(AVCodecContext* avctx)
 
     // Color bit depth
     pix_fmt = avctx->hw_frames_ctx ? ((AVHWFramesContext*)avctx->hw_frames_ctx->data)->sw_format
-                                : avctx->pix_fmt;
+                                   : avctx->pix_fmt;
+    pix_desc = av_pix_fmt_desc_get(pix_fmt);
+    av_assert0(pix_desc);
     bit_depth = ctx->bit_depth;
-    if(bit_depth == AMF_COLOR_BIT_DEPTH_UNDEFINED){
-        bit_depth = pix_fmt == AV_PIX_FMT_P010 ? AMF_COLOR_BIT_DEPTH_10 : AMF_COLOR_BIT_DEPTH_8;
+    if (bit_depth == AMF_COLOR_BIT_DEPTH_UNDEFINED) {
+        bit_depth = pix_desc->comp[0].depth >= 10 ? AMF_COLOR_BIT_DEPTH_10 : AMF_COLOR_BIT_DEPTH_8;
     }
     AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_AV1_COLOR_BIT_DEPTH, bit_depth);
 
@@ -262,23 +264,21 @@ static av_cold int amf_encode_init_av1(AVCodecContext* avctx)
     AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_AV1_OUTPUT_COLOR_PROFILE, color_profile);
 
     // Color Range
-    // TODO
+    AMF_ASSIGN_PROPERTY_BOOL(res, ctx->encoder, AMF_VIDEO_ENCODER_AV1_OUTPUT_FULL_RANGE_COLOR, (avctx->color_range == AVCOL_RANGE_JPEG));
 
-    // Color Transfer Characteristics (AMF matches ISO/IEC)
-    if(avctx->color_primaries != AVCOL_PRI_UNSPECIFIED && (pix_fmt == AV_PIX_FMT_NV12 || pix_fmt == AV_PIX_FMT_P010)){
-        // if input is YUV, color_primaries are for VUI only
-        // AMF VCN color conversion supports only specific output primaries BT2020 for 10-bit and BT709 for 8-bit
+    if (!(pix_desc->flags & AV_PIX_FMT_FLAG_RGB)) {
+        // Color Transfer Characteristics (AMF matches ISO/IEC)
+        // if input is YUV, color_trc is for VUI only - any value
+        // AMF VCN color conversion supports only specific output transfer characteristic SMPTE2084 for 10-bit and BT709 for 8-bit
         // vpp_amf supports more
         AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_AV1_OUTPUT_TRANSFER_CHARACTERISTIC, avctx->color_trc);
-    }
 
-    // Color Primaries (AMF matches ISO/IEC)
-    if(avctx->color_primaries != AVCOL_PRI_UNSPECIFIED || pix_fmt == AV_PIX_FMT_NV12 || pix_fmt == AV_PIX_FMT_P010 )
-    {
+        // Color Primaries (AMF matches ISO/IEC)
         // AMF VCN color conversion supports only specific primaries BT2020 for 10-bit and BT709 for 8-bit
         // vpp_amf supports more
         AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_AV1_OUTPUT_COLOR_PRIMARIES, avctx->color_primaries);
     }
+
     profile_level = avctx->level;
     if (profile_level == AV_LEVEL_UNKNOWN) {
         profile_level = ctx->level;
@@ -658,13 +658,13 @@ static av_cold int amf_encode_init_av1(AVCodecContext* avctx)
     var.pInterface->pVtbl->Release(var.pInterface);
 
     //processing crop information according to alignment
-    if (ctx->encoder->pVtbl->GetProperty(ctx->encoder, AMF_VIDEO_ENCODER_AV1_CAP_WIDTH_ALIGNMENT_FACTOR_LOCAL, &var) != AMF_OK)
+    if (ctx->encoder->pVtbl->GetProperty(ctx->encoder, AMF_VIDEO_ENCODER_AV1_CAP_WIDTH_ALIGNMENT_FACTOR, &var) != AMF_OK)
         // assume older driver and Navi3x
         width_alignment_factor = 64;
     else
         width_alignment_factor = (int)var.int64Value;
 
-    if (ctx->encoder->pVtbl->GetProperty(ctx->encoder, AMF_VIDEO_ENCODER_AV1_CAP_HEIGHT_ALIGNMENT_FACTOR_LOCAL, &var) != AMF_OK)
+    if (ctx->encoder->pVtbl->GetProperty(ctx->encoder, AMF_VIDEO_ENCODER_AV1_CAP_HEIGHT_ALIGNMENT_FACTOR, &var) != AMF_OK)
         // assume older driver and Navi3x
         height_alignment_factor = 16;
     else
@@ -745,8 +745,8 @@ const FFCodec ff_av1_amf_encoder = {
     .p.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_HARDWARE |
                       AV_CODEC_CAP_DR1,
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
-    CODEC_PIXFMTS_ARRAY(ff_amf_pix_fmts),
-    .color_ranges   = AVCOL_RANGE_MPEG, /* FIXME: implement tagging */
+    CODEC_PIXFMTS_ARRAY(ff_amf_pix_fmts_10b_8b),
+    .color_ranges   = AVCOL_RANGE_MPEG | AVCOL_RANGE_JPEG,
     .p.wrapper_name   = "amf",
     .hw_configs     = ff_amfenc_hw_configs,
 };

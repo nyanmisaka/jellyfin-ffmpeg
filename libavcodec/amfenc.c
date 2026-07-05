@@ -106,7 +106,7 @@ static int amf_save_hdr_metadata(AVCodecContext *avctx, const AVFrame *frame, AM
 #define FFMPEG_AMF_WRITER_ID L"ffmpeg_amf"
 
 
-const enum AVPixelFormat ff_amf_pix_fmts[] = {
+const enum AVPixelFormat ff_amf_pix_fmts_10b_8b[] = {
     AV_PIX_FMT_NV12,
     AV_PIX_FMT_YUV420P,
 #if CONFIG_D3D11VA
@@ -124,6 +124,24 @@ const enum AVPixelFormat ff_amf_pix_fmts[] = {
     AV_PIX_FMT_RGBA,
     AV_PIX_FMT_X2BGR10,
     AV_PIX_FMT_RGBAF16,
+    AV_PIX_FMT_NONE
+};
+
+const enum AVPixelFormat ff_amf_pix_fmts_8b[] = {
+    AV_PIX_FMT_NV12,
+    AV_PIX_FMT_YUV420P,
+#if CONFIG_D3D11VA
+    AV_PIX_FMT_D3D11,
+#endif
+#if CONFIG_DXVA2
+    AV_PIX_FMT_DXVA2_VLD,
+#endif
+    AV_PIX_FMT_AMF_SURFACE,
+    AV_PIX_FMT_BGR0,
+    AV_PIX_FMT_RGB0,
+    AV_PIX_FMT_BGRA,
+    AV_PIX_FMT_ARGB,
+    AV_PIX_FMT_RGBA,
     AV_PIX_FMT_NONE
 };
 
@@ -172,10 +190,6 @@ static int amf_init_encoder(AVCodecContext *avctx)
         pix_fmt = ((AVHWFramesContext*)avctx->hw_frames_ctx->data)->sw_format;
     else
         pix_fmt = avctx->pix_fmt;
-
-    if (pix_fmt == AV_PIX_FMT_P010) {
-        AMF_RETURN_IF_FALSE(ctx, amf_device_ctx->version >= AMF_MAKE_FULL_VERSION(1, 4, 32, 0), AVERROR_UNKNOWN, "10-bit encoder is not supported by AMD GPU drivers versions lower than 23.30.\n");
-    }
 
     ctx->format = av_av_to_amf_format(pix_fmt);
     AMF_RETURN_IF_FALSE(ctx, ctx->format != AMF_SURFACE_UNKNOWN, AVERROR(EINVAL),
@@ -251,6 +265,8 @@ static int amf_copy_buffer(AVCodecContext *avctx, AVPacket *pkt, AMFBuffer *buff
     AMFVariantStruct var = {0};
     int64_t          timestamp = AV_NOPTS_VALUE;
     int64_t          size = buffer->pVtbl->GetSize(buffer);
+    enum AVPictureType pict_type = 0;
+    int              average_qp = -1;
 
     if ((ret = ff_get_encode_buffer(avctx, pkt, size, 0)) < 0) {
         return ret;
@@ -258,25 +274,52 @@ static int amf_copy_buffer(AVCodecContext *avctx, AVPacket *pkt, AMFBuffer *buff
     memcpy(pkt->data, buffer->pVtbl->GetNative(buffer), size);
 
     switch (avctx->codec->id) {
-        case AV_CODEC_ID_H264:
-            buffer->pVtbl->GetProperty(buffer, AMF_VIDEO_ENCODER_OUTPUT_DATA_TYPE, &var);
-            if(var.int64Value == AMF_VIDEO_ENCODER_OUTPUT_DATA_TYPE_IDR) {
-                pkt->flags = AV_PKT_FLAG_KEY;
+    case AV_CODEC_ID_H264:
+        buffer->pVtbl->GetProperty(buffer, AMF_VIDEO_ENCODER_OUTPUT_DATA_TYPE, &var);
+        pkt->flags |= AV_PKT_FLAG_KEY * (var.int64Value == AMF_VIDEO_ENCODER_OUTPUT_DATA_TYPE_IDR);
+        pict_type = var.int64Value == AMF_VIDEO_ENCODER_OUTPUT_DATA_TYPE_IDR ? AV_PICTURE_TYPE_I :
+                    var.int64Value == AMF_VIDEO_ENCODER_OUTPUT_DATA_TYPE_I ? AV_PICTURE_TYPE_I :
+                    var.int64Value == AMF_VIDEO_ENCODER_OUTPUT_DATA_TYPE_P ? AV_PICTURE_TYPE_P :
+                    var.int64Value == AMF_VIDEO_ENCODER_OUTPUT_DATA_TYPE_B ? AV_PICTURE_TYPE_B : 0;
+
+        var.int64Value = -1;
+        if ((buffer->pVtbl->GetProperty(buffer, AMF_VIDEO_ENCODER_STATISTIC_AVERAGE_QP, &var)) == AMF_OK) {
+            average_qp = FFMAX((int)var.int64Value, -1);
+        }
+        break;
+    case AV_CODEC_ID_HEVC:
+        buffer->pVtbl->GetProperty(buffer, AMF_VIDEO_ENCODER_HEVC_OUTPUT_DATA_TYPE, &var);
+        pkt->flags |= AV_PKT_FLAG_KEY * (var.int64Value == AMF_VIDEO_ENCODER_HEVC_OUTPUT_DATA_TYPE_IDR);
+        pict_type = var.int64Value == AMF_VIDEO_ENCODER_HEVC_OUTPUT_DATA_TYPE_IDR ? AV_PICTURE_TYPE_I :
+                    var.int64Value == AMF_VIDEO_ENCODER_HEVC_OUTPUT_DATA_TYPE_I ? AV_PICTURE_TYPE_I :
+                    var.int64Value == AMF_VIDEO_ENCODER_HEVC_OUTPUT_DATA_TYPE_P ? AV_PICTURE_TYPE_P : 0;
+
+        var.int64Value = -1;
+        if ((buffer->pVtbl->GetProperty(buffer, AMF_VIDEO_ENCODER_HEVC_STATISTIC_AVERAGE_QP, &var)) == AMF_OK) {
+            average_qp = FFMAX((int)var.int64Value, -1);
+        }
+        break;
+    case AV_CODEC_ID_AV1:
+        buffer->pVtbl->GetProperty(buffer, AMF_VIDEO_ENCODER_AV1_OUTPUT_FRAME_TYPE, &var);
+        pkt->flags |= AV_PKT_FLAG_KEY * (var.int64Value == AMF_VIDEO_ENCODER_AV1_OUTPUT_FRAME_TYPE_KEY);
+        pict_type = var.int64Value == AMF_VIDEO_ENCODER_AV1_OUTPUT_FRAME_TYPE_KEY ? AV_PICTURE_TYPE_I :
+                    var.int64Value == AMF_VIDEO_ENCODER_AV1_OUTPUT_FRAME_TYPE_INTRA_ONLY ? AV_PICTURE_TYPE_I :
+                    var.int64Value == AMF_VIDEO_ENCODER_AV1_OUTPUT_FRAME_TYPE_INTER ? AV_PICTURE_TYPE_P : 0;
+
+        var.int64Value = -1;
+        if ((buffer->pVtbl->GetProperty(buffer, AMF_VIDEO_ENCODER_AV1_STATISTIC_AVERAGE_Q_INDEX, &var)) == AMF_OK) {
+            average_qp = FFMAX((int)var.int64Value, -1); // av1 qindex
+            if (average_qp >= 0) {
+                average_qp = (average_qp > 244) ? (average_qp <= 249 ? 62 : 63) : (average_qp + 3) >> 2; // av1 quantizer
             }
-            break;
-        case AV_CODEC_ID_HEVC:
-            buffer->pVtbl->GetProperty(buffer, AMF_VIDEO_ENCODER_HEVC_OUTPUT_DATA_TYPE, &var);
-            if (var.int64Value == AMF_VIDEO_ENCODER_HEVC_OUTPUT_DATA_TYPE_IDR) {
-                pkt->flags = AV_PKT_FLAG_KEY;
-            }
-            break;
-        case AV_CODEC_ID_AV1:
-            buffer->pVtbl->GetProperty(buffer, AMF_VIDEO_ENCODER_AV1_OUTPUT_FRAME_TYPE, &var);
-            if (var.int64Value == AMF_VIDEO_ENCODER_AV1_OUTPUT_FRAME_TYPE_KEY) {
-                pkt->flags = AV_PKT_FLAG_KEY;
-            }
-        default:
-            break;
+        }
+        break;
+    default:
+        break;
+    }
+
+    if (average_qp >= 0) {
+        ff_encode_add_stats_side_data(pkt, average_qp * FF_QP2LAMBDA, NULL, 0, pict_type);
     }
 
     buffer->pVtbl->GetProperty(buffer, ctx->pts_property_name, &var);
@@ -433,8 +476,6 @@ static int amf_submit_frame(AVCodecContext *avctx, AVFrame    *frame, AMFSurface
             static const GUID AMFTextureArrayIndexGUID = { 0x28115527, 0xe7c3, 0x4b66, { 0x99, 0xd3, 0x4f, 0x2a, 0xe6, 0xb4, 0x7f, 0xaf } };
             ID3D11Texture2D *texture = (ID3D11Texture2D*)frame->data[0]; // actual texture
             int index = (intptr_t)frame->data[1]; // index is a slice in texture array is - set to tell AMF which slice to use
-                av_assert0(frame->hw_frames_ctx       && avctx->hw_frames_ctx &&
-                    frame->hw_frames_ctx->data == avctx->hw_frames_ctx->data);
                 texture->lpVtbl->SetPrivateData(texture, &AMFTextureArrayIndexGUID, sizeof(index), &index);
                 res = amf_device_ctx->context->pVtbl->CreateSurfaceFromDX11Native(amf_device_ctx->context, texture, &surface, NULL); // wrap to AMF surface
             AMF_RETURN_IF_FALSE(ctx, res == AMF_OK, AVERROR(ENOMEM), "CreateSurfaceFromDX11Native() failed  with error %d\n", res);
@@ -500,6 +541,7 @@ static int amf_submit_frame(AVCodecContext *avctx, AVFrame    *frame, AMFSurface
 
     switch (avctx->codec->id) {
     case AV_CODEC_ID_H264:
+        AMF_ASSIGN_PROPERTY_BOOL(res, surface, AMF_VIDEO_ENCODER_STATISTICS_FEEDBACK, 1);
         AMF_ASSIGN_PROPERTY_INT64(res, surface, AMF_VIDEO_ENCODER_INSERT_AUD, !!ctx->aud);
         switch (frame->pict_type) {
         case AV_PICTURE_TYPE_I:
@@ -520,6 +562,7 @@ static int amf_submit_frame(AVCodecContext *avctx, AVFrame    *frame, AMFSurface
         }
         break;
     case AV_CODEC_ID_HEVC:
+        AMF_ASSIGN_PROPERTY_BOOL(res, surface, AMF_VIDEO_ENCODER_HEVC_STATISTICS_FEEDBACK, 1);
         AMF_ASSIGN_PROPERTY_INT64(res, surface, AMF_VIDEO_ENCODER_HEVC_INSERT_AUD, !!ctx->aud);
         switch (frame->pict_type) {
         case AV_PICTURE_TYPE_I:
@@ -536,6 +579,7 @@ static int amf_submit_frame(AVCodecContext *avctx, AVFrame    *frame, AMFSurface
         }
         break;
     case AV_CODEC_ID_AV1:
+        AMF_ASSIGN_PROPERTY_BOOL(res, surface, AMF_VIDEO_ENCODER_AV1_STATISTICS_FEEDBACK, 1);
         if (frame->pict_type == AV_PICTURE_TYPE_I) {
             if (ctx->forced_idr) {
                 AMF_ASSIGN_PROPERTY_INT64(res, surface, AMF_VIDEO_ENCODER_AV1_FORCE_INSERT_SEQUENCE_HEADER, 1);

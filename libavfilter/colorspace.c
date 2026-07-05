@@ -17,6 +17,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/avassert.h"
 #include "libavutil/frame.h"
 #include "libavutil/mastering_display_metadata.h"
 #include "libavutil/pixdesc.h"
@@ -48,6 +49,18 @@ void ff_matrix_invert_3x3(const double in[3][3], double out[3][3])
     for (i = 0; i < 3; i++) {
         for (j = 0; j < 3; j++)
             out[i][j] *= det;
+    }
+}
+
+void ff_matrix_transpose_3x3(const double in[3][3], double out[3][3])
+{
+    int i, j;
+    double *out_p = &out[0][0];
+    const double *in_p = &in[0][0];
+
+    for (i = 0; i < 3; i++) {
+        for (j = 0; j < 3; j++)
+            out_p[i * 3 + j] = in_p[j * 3 + i];
     }
 }
 
@@ -189,5 +202,212 @@ void ff_update_hdr_metadata(AVFrame *in, double peak)
         AVMasteringDisplayMetadata *metadata = (AVMasteringDisplayMetadata *)sd->data;
         if (metadata->has_luminance)
             metadata->max_luminance = av_d2q(peak * REFERENCE_WHITE, 10000);
+    }
+}
+
+double ff_determine_dovi_signal_peak(const AVDOVIMetadata *data, int l0_only)
+{
+    float peak;
+    const AVDOVIColorMetadata *color;
+    const AVDOVIDmData *ext;
+
+    // Fallback to the peak of 10000 if SMPTE ST.2084
+    if (!data)
+        return 100.0f;
+
+    color = av_dovi_get_color(data);
+    // L0 max
+    peak = color->source_max_pq / 4095.0f;
+    // L1 max
+    if (!l0_only && (ext = av_dovi_find_level(data, 1)))
+        peak = ext->l1.max_pq / 4095.0f;
+    if (!peak)
+        return peak;
+
+    peak = powf(peak, 1.0f / ST2084_M2);
+    peak = FFMAX(peak - ST2084_C1, 0.0f) / FFMAX((ST2084_C2 - ST2084_C3 * peak), FLOAT_EPS);
+    peak = powf(peak, 1.0f / ST2084_M1);
+    peak *= (ST2084_MAX_LUMINANCE / REFERENCE_WHITE);
+
+    return peak;
+}
+
+void ff_map_dovi_metadata(struct FFDOVIMetadataRemap *out, const AVDOVIMetadata *data)
+{
+    int c, i, j, k;
+    const AVDOVIRpuDataHeader *header;
+    const AVDOVIDataMapping *mapping;
+    const AVDOVIColorMetadata *color;
+
+    if (!data)
+        return;
+
+    header = av_dovi_get_header(data);
+    mapping = av_dovi_get_mapping(data);
+    color = av_dovi_get_color(data);
+
+    for (i = 0; i < 3; i++)
+        out->nonlinear_offset[i] = av_q2d(color->ycc_to_rgb_offset[i]);
+    for (i = 0; i < 9; i++) {
+        double *nonlinear = &out->nonlinear[0][0];
+        double *linear = &out->linear[0][0];
+        nonlinear[i] = av_q2d(color->ycc_to_rgb_matrix[i]);
+        linear[i] = av_q2d(color->rgb_to_lms_matrix[i]);
+    }
+    for (c = 0; c < 3; c++) {
+        const AVDOVIReshapingCurve *csrc = &mapping->curves[c];
+        struct FFDOVIReshapeData *cdst = &out->comp[c];
+        cdst->num_pivots = csrc->num_pivots;
+        for (i = 0; i < csrc->num_pivots; i++) {
+            const float scale = 1.0f / ((1 << header->bl_bit_depth) - 1);
+            cdst->pivots[i] = scale * csrc->pivots[i];
+        }
+        for (i = 0; i < csrc->num_pivots - 1; i++) {
+            const float scale = 1.0f / (1 << header->coef_log2_denom);
+            cdst->method[i] = csrc->mapping_idc[i];
+            switch (csrc->mapping_idc[i]) {
+            case AV_DOVI_MAPPING_POLYNOMIAL:
+                for (k = 0; k < 3; k++) {
+                    cdst->poly_coeffs[i][k] = (k <= csrc->poly_order[i])
+                        ? scale * csrc->poly_coef[i][k]
+                        : 0.0f;
+                }
+                break;
+            case AV_DOVI_MAPPING_MMR:
+                cdst->mmr_order[i] = csrc->mmr_order[i];
+                cdst->mmr_constant[i] = scale * csrc->mmr_constant[i];
+                for (j = 0; j < csrc->mmr_order[i]; j++) {
+                    for (k = 0; k < 7; k++)
+                        cdst->mmr_coeffs[i][j][k] = scale * csrc->mmr_coef[i][j][k];
+                }
+                break;
+            }
+        }
+    }
+}
+
+// linearizer for PQ/ST2084
+float ff_eotf_st2084_common(float x)
+{
+    float xpow = powf(FFMAX(x, 0.0f), 1.0f / ST2084_M2);
+    float num = FFMAX(xpow - ST2084_C1, 0.0f);
+    float den = FFMAX(ST2084_C2 - ST2084_C3 * xpow, FLOAT_EPS);
+    x = powf(num / den, 1.0f / ST2084_M1);
+    return x;
+}
+
+float ff_eotf_st2084(float x, float ref_white)
+{
+    return ff_eotf_st2084_common(x) * ST2084_MAX_LUMINANCE / ref_white;
+}
+
+// delinearizer for PQ/ST2084
+float ff_inverse_eotf_st2084_common(float x)
+{
+    float xpow = powf(FFMAX(x, 0.0f), ST2084_M1);
+#if 0
+    // Original formulation from SMPTE ST 2084:2014 publication.
+    float num = ST2084_C1 + ST2084_C2 * xpow;
+    float den = 1.0f + ST2084_C3 * xpow;
+    return powf(num / den, ST2084_M2);
+#else
+    // More stable arrangement that avoids some cancellation error.
+    float num = (ST2084_C1 - 1.0f) + (ST2084_C2 - ST2084_C3) * xpow;
+    float den = 1.0f + ST2084_C3 * xpow;
+    return powf(1.0f + num / den, ST2084_M2);
+#endif
+}
+
+float ff_inverse_eotf_st2084(float x, float ref_white)
+{
+    x *= ref_white / ST2084_MAX_LUMINANCE;
+    return ff_inverse_eotf_st2084_common(x);
+}
+
+static float inverse_oetf_arib_b67(float x)
+{
+    float a = 4.0f * x * x;
+    float b = expf((x - ARIB_B67_C) * (1.0f / ARIB_B67_A)) + ARIB_B67_B;
+    return (x > 0.5f ? b : a) * (1.0f / 12.0f);
+}
+
+static float ootf_arib_b67(float x, float ref_white, int bt2446b)
+{
+    const AVLumaCoefficients *coeffs;
+    float peak = ARIB_B67_MAX_LUMINANCE / ref_white;
+    float gamma = 1.2f;
+    float luma;
+
+    if (!(coeffs = av_csp_luma_coeffs_from_avcsp(AVCOL_SPC_BT2020_NCL)))
+        return x;
+
+    if (bt2446b) {
+        peak = BT2446B_HLG_LW / ref_white;
+        gamma = BT2446B_HLG_GAMMA;
+    }
+    luma = av_q2d(coeffs->cr) * x +
+           av_q2d(coeffs->cg) * x +
+           av_q2d(coeffs->cb) * x;
+
+    return x * peak * powf(FFMAX(luma, 0.0f), gamma - 1.0f);
+}
+
+// linearizer for HLG/ARIB-B67
+float ff_eotf_arib_b67(float x, float ref_white, int bt2446b)
+{
+    x = inverse_oetf_arib_b67(x);
+    return ootf_arib_b67(x, ref_white, bt2446b);
+}
+
+// delinearizer for BT709, BT2020-10
+float ff_inverse_eotf_bt1886(float x) {
+    return x > 0.0f ? powf(x, 1.0f / 2.4f) : 0.0f;
+}
+
+int ff_get_range_off(int *off, int *y_rng, int *uv_rng,
+                     enum AVColorRange rng, int depth)
+{
+    switch (rng) {
+    case AVCOL_RANGE_UNSPECIFIED:
+    case AVCOL_RANGE_MPEG:
+        *off = 16 << (depth - 8);
+        *y_rng = 219 << (depth - 8);
+        *uv_rng = 224 << (depth - 8);
+        break;
+    case AVCOL_RANGE_JPEG:
+        *off = 0;
+        *y_rng = *uv_rng = (256 << (depth - 8)) - 1;
+        break;
+    default:
+        return AVERROR(EINVAL);
+    }
+
+    return 0;
+}
+
+void ff_get_yuv_coeffs(int out[3][3][8], double (*table)[3],
+                       int depth, int y_rng, int uv_rng, int yuv2rgb)
+{
+#define N (yuv2rgb ? m : n)
+#define M (yuv2rgb ? n : m)
+    int rng, n, m, o;
+    int bits = 1 << (yuv2rgb ? (depth - 1) : (29 - depth));
+    for (rng = y_rng, n = 0; n < 3; n++, rng = uv_rng) {
+        for (m = 0; m < 3; m++) {
+            out[N][M][0] = (int)lrint(bits * (yuv2rgb ? 32767 : rng) * table[N][M] / (yuv2rgb ? rng : 32767));
+            for (o = 1; o < 8; o++)
+                out[N][M][o] = out[N][M][0];
+        }
+    }
+#undef N
+#undef M
+
+    if (yuv2rgb) {
+        av_assert2(out[0][1][0] == 0);
+        av_assert2(out[2][2][0] == 0);
+        av_assert2(out[0][0][0] == out[1][0][0]);
+        av_assert2(out[0][0][0] == out[2][0][0]);
+    } else {
+        av_assert2(out[1][2][0] == out[2][0][0]);
     }
 }

@@ -56,6 +56,9 @@ CVMetalTextureRef ff_metal_texture_from_pixbuf(void *ctx,
 {
     CVMetalTextureRef tex = NULL;
     CVReturn ret;
+    bool is_planar = CVPixelBufferIsPlanar(pixbuf);
+    size_t width = is_planar ? CVPixelBufferGetWidthOfPlane(pixbuf, plane) : CVPixelBufferGetWidth(pixbuf);
+    size_t height = is_planar ? CVPixelBufferGetHeightOfPlane(pixbuf, plane) : CVPixelBufferGetHeight(pixbuf);
 
     ret = CVMetalTextureCacheCreateTextureFromImage(
         NULL,
@@ -63,8 +66,8 @@ CVMetalTextureRef ff_metal_texture_from_pixbuf(void *ctx,
         pixbuf,
         NULL,
         format,
-        CVPixelBufferGetWidthOfPlane(pixbuf, plane),
-        CVPixelBufferGetHeightOfPlane(pixbuf, plane),
+        width,
+        height,
         plane,
         &tex
     );

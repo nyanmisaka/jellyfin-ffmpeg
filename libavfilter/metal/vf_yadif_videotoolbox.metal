@@ -88,7 +88,7 @@ T spatial_predictor(T a, T b, T c, T d, T e, T f, T g,
                     T h, T i, T j, T k, T l, T m, T n)
 {
     T spatial_pred = (d + k)/2;
-    T spatial_score = abs(c - j) + abs(d - k) + abs(e - l);
+    T spatial_score = abs(c - j) + abs(d - k) + abs(e - l) - (1.0f / 255.0f);
 
     T score = abs(b - k) + abs(c - l) + abs(d - m);
     if (score < spatial_score) {
@@ -128,7 +128,7 @@ T temporal_predictor(T A, T B, T C, T D, T E, T F,
     T tdiff1 = (abs(A - F) + abs(B - G)) / 2;
     T tdiff2 = (abs(K - F) + abs(G - L)) / 2;
 
-    T diff = max3(tdiff0, tdiff1, tdiff2);
+    T diff = max3(tdiff0 / 2, tdiff1, tdiff2);
 
     if (!skip_check) {
         T maxi = max3(p2 - p3, p2 - p1, min(p0 - p1, p4 - p3));
@@ -239,9 +239,9 @@ T yadif(
     T spatial_pred = yadif_compute_spatial<T>(cur, pos);
 
     if (params.is_second_field) {
-        return yadif_compute_temporal(cur, prev, cur, next, next, spatial_pred, params.skip_spatial_check, pos);
+        return yadif_compute_temporal(cur, cur, prev, next, next, spatial_pred, params.skip_spatial_check, pos);
     } else {
-        return yadif_compute_temporal(cur, prev, prev, cur, next, spatial_pred, params.skip_spatial_check, pos);
+        return yadif_compute_temporal(cur, prev, prev, next, cur, spatial_pred, params.skip_spatial_check, pos);
     }
 }
 

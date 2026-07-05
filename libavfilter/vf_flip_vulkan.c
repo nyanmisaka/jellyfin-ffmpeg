@@ -109,13 +109,13 @@ static av_cold int init_filter(AVFilterContext *ctx, AVFrame *in, enum FlipType 
         switch (type)
         {
         case FLIP_HORIZONTAL:
-            GLSLF(2, vec4 res = imageLoad(input_image[%i], ivec2(size.x - pos.x, pos.y)); ,i);
+            GLSLF(2, vec4 res = imageLoad(input_image[%i], ivec2(size.x - 1 - pos.x, pos.y)); ,i);
             break;
         case FLIP_VERTICAL:
-            GLSLF(2, vec4 res = imageLoad(input_image[%i], ivec2(pos.x, size.y - pos.y)); ,i);
+            GLSLF(2, vec4 res = imageLoad(input_image[%i], ivec2(pos.x, size.y - 1 - pos.y)); ,i);
             break;
         case FLIP_BOTH:
-            GLSLF(2, vec4 res = imageLoad(input_image[%i], ivec2(size.xy - pos.xy));,      i);
+            GLSLF(2, vec4 res = imageLoad(input_image[%i], ivec2(size.xy - 1 - pos.xy));,      i);
             break;
         default:
             GLSLF(2, vec4 res = imageLoad(input_image[%i], pos);                          ,i);

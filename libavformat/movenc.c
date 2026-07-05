@@ -2976,7 +2976,9 @@ static int mov_write_video_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
                                                                track->st->codecpar->nb_coded_side_data,
                                                                AV_PKT_DATA_DOVI_CONF);
         if (dovi && mov->fc->strict_std_compliance <= FF_COMPLIANCE_UNOFFICIAL) {
-            mov_write_dvcc_dvvc_tag(s, pb, (AVDOVIDecoderConfigurationRecord *)dovi->data);
+            if (!ff_isom_validate_dovi_config((AVDOVIDecoderConfigurationRecord *)dovi->data, track->par, track->tag)) {
+                mov_write_dvcc_dvvc_tag(s, pb, (AVDOVIDecoderConfigurationRecord *)dovi->data);
+            }
         } else if (dovi) {
             av_log(mov->fc, AV_LOG_WARNING, "Not writing 'dvcC'/'dvvC' box. Requires -strict unofficial.\n");
         }
@@ -6927,7 +6929,7 @@ int ff_mov_write_packet(AVFormatContext *s, AVPacket *pkt)
     } else if (par->codec_id == AV_CODEC_ID_HEVC && trk->extradata_size[trk->last_stsd_index] > 6 &&
                (AV_RB24(trk->extradata[trk->last_stsd_index]) == 1 || AV_RB32(trk->extradata[trk->last_stsd_index]) == 1)) {
         /* extradata is Annex B, assume the bitstream is too and convert it */
-        int filter_ps = (trk->tag == MKTAG('h','v','c','1'));
+        int filter_ps = 0; // Always disable it as a Wa for AMD hevc_vaapi encoder
         if (trk->hint_track >= 0 && trk->hint_track < mov->nb_tracks) {
             ret = ff_hevc_annexb2mp4_buf(pkt->data, &reformatted_data,
                                          &size, filter_ps, NULL);
@@ -8889,6 +8891,7 @@ static const AVCodecTag codec_mp4_tags[] = {
     { AV_CODEC_ID_HEVC,            MKTAG('h', 'e', 'v', '1') },
     { AV_CODEC_ID_HEVC,            MKTAG('h', 'v', 'c', '1') },
     { AV_CODEC_ID_HEVC,            MKTAG('d', 'v', 'h', '1') },
+    { AV_CODEC_ID_HEVC,            MKTAG('d', 'v', 'h', 'e') },
     { AV_CODEC_ID_VVC,             MKTAG('v', 'v', 'c', '1') },
     { AV_CODEC_ID_VVC,             MKTAG('v', 'v', 'i', '1') },
     { AV_CODEC_ID_EVC,             MKTAG('e', 'v', 'c', '1') },
@@ -8903,6 +8906,7 @@ static const AVCodecTag codec_mp4_tags[] = {
     { AV_CODEC_ID_TSCC2,           MKTAG('m', 'p', '4', 'v') },
     { AV_CODEC_ID_VP9,             MKTAG('v', 'p', '0', '9') },
     { AV_CODEC_ID_AV1,             MKTAG('a', 'v', '0', '1') },
+    { AV_CODEC_ID_AV1,             MKTAG('d', 'a', 'v', '1') },
     { AV_CODEC_ID_AAC,             MKTAG('m', 'p', '4', 'a') },
     { AV_CODEC_ID_ALAC,            MKTAG('a', 'l', 'a', 'c') },
     { AV_CODEC_ID_MP4ALS,          MKTAG('m', 'p', '4', 'a') },

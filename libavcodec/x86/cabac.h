@@ -183,6 +183,9 @@ av_noinline
 #else
 av_always_inline
 #endif
+#if defined(__GNUC__) && !defined(__clang__)
+__attribute__((optimize("-fno-tree-vectorize")))
+#endif
 int get_cabac_inline_x86(CABACContext *c, uint8_t *const state)
 {
     int bit, tmp;

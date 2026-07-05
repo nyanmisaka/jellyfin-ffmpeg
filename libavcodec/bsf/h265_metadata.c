@@ -26,6 +26,7 @@
 #include "cbs_h265.h"
 #include "h2645data.h"
 #include "h265_profile_level.h"
+#include "itut35.h"
 
 #include "hevc/hevc.h"
 
@@ -65,6 +66,8 @@ typedef struct H265MetadataContext {
     int level;
     int level_guess;
     int level_warned;
+    int remove_dovi;
+    int remove_hdr10plus;
 } H265MetadataContext;
 
 
@@ -475,6 +478,38 @@ static int h265_metadata_update_fragment(AVBSFContext *bsf, AVPacket *pkt,
             if (err < 0)
                 return err;
         }
+        if (ctx->remove_hdr10plus) {
+            // This implementation is not strictly correct as it does not decode the entire NAL.
+            // There could be multiple SEIs packed within a single NAL, and some of them may not be HDR10+ metadata.
+            // The current implementation simply removes the entire NAL without further inspection.
+            if (au->units[i].type == HEVC_NAL_SEI_PREFIX && au->units[i].data_size > 8 * sizeof(uint8_t)) {
+                uint8_t *nal_sei = au->units[i].data;
+                // This Matches ITU-T T.35 SMPTE ST 2094-40
+                if (nal_sei[0] == 0x4E && nal_sei[1] == 0x01 && nal_sei[2] == 0x04) {
+                    if (nal_sei[4] == ITU_T_T35_COUNTRY_CODE_US && nal_sei[6] == ITU_T_T35_PROVIDER_CODE_SAMSUNG) {
+                        // identifier for HDR10+
+                        const uint8_t smpte2094_40_provider_oriented_code = 0x01;
+                        const uint8_t smpte2094_40_application_identifier = 0x04;
+                        if (nal_sei[8] == smpte2094_40_provider_oriented_code && nal_sei[9] == smpte2094_40_application_identifier) {
+                            av_log(bsf, AV_LOG_DEBUG, "Found HDR10+ metadata, removing NAL\n");
+                            ff_cbs_delete_unit(au, i);
+                        }
+                    }
+
+                }
+            }
+        }
+    }
+
+    if (ctx->remove_dovi && au->nb_units) {
+        if (au->units[au->nb_units - 1].type == HEVC_NAL_UNSPEC62) { // Dolby Vision RPU
+            ff_cbs_delete_unit(au, au->nb_units - 1);
+            av_log(bsf, AV_LOG_DEBUG, "Removing Dolby Vision RPU\n");
+        }
+        if (au->units[au->nb_units - 1].type == HEVC_NAL_UNSPEC63) { // Dolby Vision EL
+            ff_cbs_delete_unit(au, au->nb_units - 1);
+            av_log(bsf, AV_LOG_DEBUG, "Removing Dolby Vision EL\n");
+        }
     }
 
     return 0;
@@ -489,6 +524,11 @@ static const CBSBSFType h265_metadata_type = {
 
 static int h265_metadata_init(AVBSFContext *bsf)
 {
+    if (((H265MetadataContext *)bsf->priv_data)->remove_dovi) {
+        av_packet_side_data_remove(bsf->par_out->coded_side_data,
+                                   &bsf->par_out->nb_coded_side_data,
+                                   AV_PKT_DATA_DOVI_CONF);
+    }
     return ff_cbs_bsf_generic_init(bsf, &h265_metadata_type);
 }
 
@@ -573,6 +613,13 @@ static const AVOption h265_metadata_options[] = {
     { LEVEL("6.2", 186) },
     { LEVEL("8.5", 255) },
 #undef LEVEL
+
+    { "remove_dovi", "Remove Dolby Vision EL and RPU",
+      OFFSET(remove_dovi), AV_OPT_TYPE_BOOL,
+      { .i64 = 0 }, 0, 1, FLAGS },
+    { "remove_hdr10plus", "Remove NALs including HDR10+ metadata",
+      OFFSET(remove_hdr10plus), AV_OPT_TYPE_BOOL,
+      { .i64 = 0 }, 0, 1, FLAGS },
 
     { NULL }
 };

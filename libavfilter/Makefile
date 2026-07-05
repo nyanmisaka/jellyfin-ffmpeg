@@ -32,6 +32,7 @@ OBJS-$(HAVE_THREADS)                         += pthread.o
 
 # subsystems
 OBJS-$(CONFIG_QSVVPP)                        += qsvvpp.o
+OBJS-$(CONFIG_RKRGA)                         += rkrga_common.o
 OBJS-$(CONFIG_SCENE_SAD)                     += scene_sad.o
 OBJS-$(CONFIG_DNN)                           += dnn_filter_common.o
 
@@ -223,6 +224,12 @@ OBJS-$(CONFIG_BOXBLUR_OPENCL_FILTER)         += vf_avgblur_opencl.o opencl.o \
 OBJS-$(CONFIG_BWDIF_FILTER)                  += vf_bwdif.o bwdifdsp.o yadif_common.o
 OBJS-$(CONFIG_BWDIF_CUDA_FILTER)             += vf_bwdif_cuda.o vf_bwdif_cuda.ptx.o \
                                                 yadif_common.o
+OBJS-$(CONFIG_BWDIF_OPENCL_FILTER)           += vf_bwdif_opencl.o opencl.o opencl/bwdif.o \
+                                                yadif_common.o
+OBJS-$(CONFIG_BWDIF_VIDEOTOOLBOX_FILTER)     += vf_bwdif_videotoolbox.o \
+                                                metal/vf_bwdif_videotoolbox.metallib.o \
+                                                metal/utils.o \
+                                                yadif_common.o
 OBJS-$(CONFIG_BWDIF_VULKAN_FILTER)           += vf_bwdif_vulkan.o yadif_common.o vulkan.o vulkan_filter.o
 OBJS-$(CONFIG_CAS_FILTER)                    += vf_cas.o
 OBJS-$(CONFIG_CCREPACK_FILTER)               += vf_ccrepack.o
@@ -355,6 +362,7 @@ OBJS-$(CONFIG_HUESATURATION_FILTER)          += vf_huesaturation.o
 OBJS-$(CONFIG_HWDOWNLOAD_FILTER)             += vf_hwdownload.o
 OBJS-$(CONFIG_HWMAP_FILTER)                  += vf_hwmap.o
 OBJS-$(CONFIG_HWUPLOAD_CUDA_FILTER)          += vf_hwupload_cuda.o
+OBJS-$(CONFIG_HWUPLOAD_VAAPI_FILTER)         += vf_hwupload_vaapi.o
 OBJS-$(CONFIG_HWUPLOAD_FILTER)               += vf_hwupload.o
 OBJS-$(CONFIG_HYSTERESIS_FILTER)             += vf_hysteresis.o framesync.o
 OBJS-$(CONFIG_ICCDETECT_FILTER)              += vf_iccdetect.o fflcms2.o
@@ -425,7 +433,11 @@ OBJS-$(CONFIG_OVERLAY_CUDA_FILTER)           += vf_overlay_cuda.o framesync.o vf
 OBJS-$(CONFIG_OVERLAY_OPENCL_FILTER)         += vf_overlay_opencl.o opencl.o \
                                                 opencl/overlay.o framesync.o
 OBJS-$(CONFIG_OVERLAY_QSV_FILTER)            += vf_overlay_qsv.o framesync.o
+OBJS-$(CONFIG_OVERLAY_RKRGA_FILTER)          += vf_overlay_rkrga.o framesync.o
 OBJS-$(CONFIG_OVERLAY_VAAPI_FILTER)          += vf_overlay_vaapi.o framesync.o vaapi_vpp.o
+OBJS-$(CONFIG_OVERLAY_VIDEOTOOLBOX_FILTER)   += vf_overlay_videotoolbox.o framesync.o \
+                                                metal/vf_overlay_videotoolbox.metallib.o \
+                                                metal/utils.o
 OBJS-$(CONFIG_OVERLAY_VULKAN_FILTER)         += vf_overlay_vulkan.o vulkan.o vulkan_filter.o
 OBJS-$(CONFIG_OWDENOISE_FILTER)              += vf_owdenoise.o
 OBJS-$(CONFIG_PAD_FILTER)                    += vf_pad.o
@@ -476,7 +488,9 @@ OBJS-$(CONFIG_SCALE_D3D12_FILTER)            += vf_scale_d3d12.o scale_eval.o
 OBJS-$(CONFIG_SCALE_CUDA_FILTER)             += vf_scale_cuda.o scale_eval.o \
                                                 vf_scale_cuda.ptx.o cuda/load_helper.o
 OBJS-$(CONFIG_SCALE_NPP_FILTER)              += vf_scale_npp.o scale_eval.o
+OBJS-$(CONFIG_SCALE_OPENCL_FILTER)           += vf_scale_opencl.o opencl.o opencl/scale.o scale_eval.o
 OBJS-$(CONFIG_SCALE_QSV_FILTER)              += vf_vpp_qsv.o
+OBJS-$(CONFIG_SCALE_RKRGA_FILTER)            += vf_vpp_rkrga.o scale_eval.o
 OBJS-$(CONFIG_SCALE_VAAPI_FILTER)            += vf_scale_vaapi.o scale_eval.o vaapi_vpp.o
 OBJS-$(CONFIG_SCALE_VT_FILTER)               += vf_scale_vt.o scale_eval.o
 OBJS-$(CONFIG_SCALE_VULKAN_FILTER)           += vf_scale_vulkan.o vulkan.o vulkan_filter.o
@@ -541,11 +555,19 @@ OBJS-$(CONFIG_TMEDIAN_FILTER)                += vf_xmedian.o framesync.o
 OBJS-$(CONFIG_TMIDEQUALIZER_FILTER)          += vf_tmidequalizer.o
 OBJS-$(CONFIG_TMIX_FILTER)                   += vf_mix.o framesync.o
 OBJS-$(CONFIG_TONEMAP_FILTER)                += vf_tonemap.o
+OBJS-$(CONFIG_TONEMAPX_FILTER)               += vf_tonemapx.o
+OBJS-$(CONFIG_TONEMAP_CUDA_FILTER)           += vf_tonemap_cuda.o cuda/tonemap.ptx.o \
+                                                cuda/host_util.o cuda/load_helper.o
 OBJS-$(CONFIG_TONEMAP_OPENCL_FILTER)         += vf_tonemap_opencl.o opencl.o \
                                                 opencl/tonemap.o opencl/colorspace_common.o
 OBJS-$(CONFIG_TONEMAP_VAAPI_FILTER)          += vf_tonemap_vaapi.o vaapi_vpp.o
+OBJS-$(CONFIG_TONEMAP_VIDEOTOOLBOX_FILTER)   += vf_tonemap_videotoolbox.o \
+                                                metal/vf_tonemap_videotoolbox.metallib.o \
+                                                metal/utils.o
 OBJS-$(CONFIG_TPAD_FILTER)                   += vf_tpad.o
 OBJS-$(CONFIG_TRANSPOSE_FILTER)              += vf_transpose.o
+OBJS-$(CONFIG_TRANSPOSE_CUDA_FILTER)         += vf_transpose_cuda.o vf_transpose_cuda.ptx.o \
+                                                cuda/load_helper.o
 OBJS-$(CONFIG_TRANSPOSE_NPP_FILTER)          += vf_transpose_npp.o
 OBJS-$(CONFIG_TRANSPOSE_OPENCL_FILTER)       += vf_transpose_opencl.o opencl.o opencl/transpose.o
 OBJS-$(CONFIG_TRANSPOSE_VAAPI_FILTER)        += vf_transpose_vaapi.o vaapi_vpp.o
@@ -573,6 +595,7 @@ OBJS-$(CONFIG_VIGNETTE_FILTER)               += vf_vignette.o
 OBJS-$(CONFIG_VMAFMOTION_FILTER)             += vf_vmafmotion.o framesync.o
 OBJS-$(CONFIG_VPP_AMF_FILTER)                += vf_vpp_amf.o scale_eval.o vf_amf_common.o
 OBJS-$(CONFIG_VPP_QSV_FILTER)                += vf_vpp_qsv.o
+OBJS-$(CONFIG_VPP_RKRGA_FILTER)              += vf_vpp_rkrga.o scale_eval.o
 OBJS-$(CONFIG_VSTACK_FILTER)                 += vf_stack.o framesync.o
 OBJS-$(CONFIG_W3FDIF_FILTER)                 += vf_w3fdif.o
 OBJS-$(CONFIG_WAVEFORM_FILTER)               += vf_waveform.o
@@ -588,6 +611,8 @@ OBJS-$(CONFIG_XSTACK_FILTER)                 += vf_stack.o framesync.o
 OBJS-$(CONFIG_YADIF_FILTER)                  += vf_yadif.o yadif_common.o
 OBJS-$(CONFIG_YADIF_CUDA_FILTER)             += vf_yadif_cuda.o vf_yadif_cuda.ptx.o \
                                                 yadif_common.o cuda/load_helper.o
+OBJS-$(CONFIG_YADIF_OPENCL_FILTER)           += vf_yadif_opencl.o opencl.o opencl/yadif.o \
+                                                yadif_common.o
 OBJS-$(CONFIG_YADIF_VIDEOTOOLBOX_FILTER)     += vf_yadif_videotoolbox.o \
                                                 metal/vf_yadif_videotoolbox.metallib.o \
                                                 metal/utils.o \
@@ -607,6 +632,7 @@ OBJS-$(CONFIG_DRAWBOX_VAAPI_FILTER)          += vf_drawbox_vaapi.o vaapi_vpp.o
 
 OBJS-$(CONFIG_ALLRGB_FILTER)                 += vsrc_testsrc.o
 OBJS-$(CONFIG_ALLYUV_FILTER)                 += vsrc_testsrc.o
+OBJS-$(CONFIG_ALPHASRC_FILTER)               += vsrc_alphasrc.o
 OBJS-$(CONFIG_CELLAUTO_FILTER)               += vsrc_cellauto.o
 OBJS-$(CONFIG_COLOR_FILTER)                  += vsrc_testsrc.o
 OBJS-$(CONFIG_COLORCHART_FILTER)             += vsrc_testsrc.o
@@ -681,6 +707,7 @@ SKIPHEADERS-$(CONFIG_LIBVIDSTAB)             += vidstabutils.h
 SKIPHEADERS-$(CONFIG_AMF)                    += vf_amf_common.h
 SKIPHEADERS-$(CONFIG_QSVVPP)                 += qsvvpp.h stack_internal.h
 SKIPHEADERS-$(CONFIG_OPENCL)                 += opencl.h
+SKIPHEADERS-$(CONFIG_RKRGA)                  += rkrga_common.h
 SKIPHEADERS-$(CONFIG_VAAPI)                  += vaapi_vpp.h stack_internal.h
 SKIPHEADERS-$(CONFIG_VULKAN)                 += vulkan_filter.h
 SKIPHEADERS-$(CONFIG_SCALE_CUDA_FILTER)      += vf_scale_cuda.h

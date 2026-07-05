@@ -461,7 +461,7 @@ void ff_blend_rectangle(FFDrawContext *draw, FFDrawColor *color,
 
 static void blend_pixel16(uint8_t *dst, unsigned src, unsigned alpha,
                           const uint8_t *mask, int mask_linesize, int l2depth,
-                          unsigned w, unsigned h, unsigned shift, unsigned xm0)
+                          unsigned w, unsigned h, unsigned shift, unsigned xm0, int srca_opaque)
 {
     unsigned t = 0;
     unsigned xmshf = 3 - l2depth;
@@ -480,12 +480,13 @@ static void blend_pixel16(uint8_t *dst, unsigned src, unsigned alpha,
         mask += mask_linesize;
     }
     alpha = (t >> shift) * alpha;
+    src = srca_opaque ? ((1 << 16) - 1) : src;
     AV_WL16(dst, ((0x10001 - alpha) * value + alpha * src) >> 16);
 }
 
 static void blend_pixel(uint8_t *dst, unsigned src, unsigned alpha,
                         const uint8_t *mask, int mask_linesize, int l2depth,
-                        unsigned w, unsigned h, unsigned shift, unsigned xm0)
+                        unsigned w, unsigned h, unsigned shift, unsigned xm0, int srca_opaque)
 {
     unsigned t = 0;
     unsigned xmshf = 3 - l2depth;
@@ -503,6 +504,7 @@ static void blend_pixel(uint8_t *dst, unsigned src, unsigned alpha,
         mask += mask_linesize;
     }
     alpha = (t >> shift) * alpha;
+    src = srca_opaque ? 255 : src;
     *dst = ((0x1010101 - alpha) * *dst + alpha * src) >> 24;
 }
 
@@ -510,48 +512,130 @@ static void blend_line_hv16(uint8_t *dst, int dst_delta,
                             unsigned src, unsigned alpha,
                             const uint8_t *mask, int mask_linesize, int l2depth, int w,
                             unsigned hsub, unsigned vsub,
-                            int xm, int left, int right, int hband)
+                            int xm, int left, int right, int hband, int srca_opaque)
 {
 
     if (left) {
         blend_pixel16(dst, src, alpha, mask, mask_linesize, l2depth,
-                      left, hband, hsub + vsub, xm);
+                      left, hband, hsub + vsub, xm, srca_opaque);
         dst += dst_delta;
         xm += left;
     }
     for (int x = 0; x < w; x++) {
         blend_pixel16(dst, src, alpha, mask, mask_linesize, l2depth,
-                      1 << hsub, hband, hsub + vsub, xm);
+                      1 << hsub, hband, hsub + vsub, xm, srca_opaque);
         dst += dst_delta;
         xm += 1 << hsub;
     }
     if (right)
         blend_pixel16(dst, src, alpha, mask, mask_linesize, l2depth,
-                      right, hband, hsub + vsub, xm);
+                      right, hband, hsub + vsub, xm, srca_opaque);
 }
 
 static void blend_line_hv(uint8_t *dst, int dst_delta,
                           unsigned src, unsigned alpha,
                           const uint8_t *mask, int mask_linesize, int l2depth, int w,
                           unsigned hsub, unsigned vsub,
-                          int xm, int left, int right, int hband)
+                          int xm, int left, int right, int hband, int srca_opaque)
 {
 
     if (left) {
         blend_pixel(dst, src, alpha, mask, mask_linesize, l2depth,
-                    left, hband, hsub + vsub, xm);
+                    left, hband, hsub + vsub, xm, srca_opaque);
         dst += dst_delta;
         xm += left;
     }
     for (int x = 0; x < w; x++) {
         blend_pixel(dst, src, alpha, mask, mask_linesize, l2depth,
-                    1 << hsub, hband, hsub + vsub, xm);
+                    1 << hsub, hband, hsub + vsub, xm, srca_opaque);
         dst += dst_delta;
         xm += 1 << hsub;
     }
     if (right)
         blend_pixel(dst, src, alpha, mask, mask_linesize, l2depth,
-                    right, hband, hsub + vsub, xm);
+                    right, hband, hsub + vsub, xm, srca_opaque);
+}
+
+static void blend_pixel_unpremul_rgb32(
+    uint8_t *dst0, uint8_t *dst1, uint8_t *dst2, uint8_t *dst3,
+    unsigned src[4], unsigned alpha,
+    const uint8_t *mask, int mask_linesize, int l2depth,
+    unsigned w, unsigned h, unsigned shift, unsigned xm0,
+    int srca_opaque, int limited)
+{
+    unsigned t = 0;
+    unsigned xmshf = 3 - l2depth;
+    unsigned xmmod = 7 >> l2depth;
+    unsigned mbits = (1 << (1 << l2depth)) - 1;
+    unsigned mmult = 255 / mbits;
+    const uint8_t offset = limited ? 16 : 0;
+
+    for (unsigned y = 0; y < h; y++) {
+        unsigned xm = xm0;
+        for (unsigned x = 0; x < w; x++) {
+            t += ((mask[xm >> xmshf] >> ((~xm & xmmod) << l2depth)) & mbits)
+                 * mmult;
+            xm++;
+        }
+        mask += mask_linesize;
+    }
+    alpha = (t >> shift) * alpha;
+
+    // premul
+    *dst0 = ((((*dst0 - offset) * (((*dst3 >> 1) & 1) + *dst3)) + 128) >> 8) + offset;
+    *dst1 = ((((*dst1 - offset) * (((*dst3 >> 1) & 1) + *dst3)) + 128) >> 8) + offset;
+    *dst2 = ((((*dst2 - offset) * (((*dst3 >> 1) & 1) + *dst3)) + 128) >> 8) + offset;
+
+    // blend mask with source alpha set to opaque
+    src[3] = srca_opaque ? 255 : src[3];
+    *dst0 = ((0x1010101 - alpha) * *dst0 + alpha * src[0]) >> 24;
+    *dst1 = ((0x1010101 - alpha) * *dst1 + alpha * src[1]) >> 24;
+    *dst2 = ((0x1010101 - alpha) * *dst2 + alpha * src[2]) >> 24;
+    *dst3 = ((0x1010101 - alpha) * *dst3 + alpha * src[3]) >> 24;
+
+    // unpremul
+    if (*dst3 > 0 && *dst3 < 255) {
+        *dst0 = FFMIN(FFMAX(*dst0 - offset, 0) * 255 / *dst3 + offset, 255);
+        *dst1 = FFMIN(FFMAX(*dst1 - offset, 0) * 255 / *dst3 + offset, 255);
+        *dst2 = FFMIN(FFMAX(*dst2 - offset, 0) * 255 / *dst3 + offset, 255);
+    }
+}
+
+static void blend_line_hv_unpremul_rgb32(
+    uint8_t *dst0, uint8_t *dst1, uint8_t *dst2, uint8_t *dst3,
+    int dst_delta, unsigned src[4], unsigned alpha,
+    const uint8_t *mask, int mask_linesize, int l2depth, int w,
+    unsigned hsub, unsigned vsub,
+    int xm, int left, int right, int hband,
+    int srca_opaque, int limited)
+{
+    if (left) {
+        blend_pixel_unpremul_rgb32(
+	    dst0, dst1, dst2, dst3,
+            src, alpha, mask, mask_linesize, l2depth,
+            left, hband, hsub + vsub, xm, srca_opaque, limited);
+        dst0 += dst_delta;
+        dst1 += dst_delta;
+        dst2 += dst_delta;
+        dst3 += dst_delta;
+        xm += left;
+    }
+    for (int x = 0; x < w; x++) {
+        blend_pixel_unpremul_rgb32(
+            dst0, dst1, dst2, dst3,
+            src, alpha, mask, mask_linesize, l2depth,
+            1 << hsub, hband, hsub + vsub, xm, srca_opaque, limited);
+        dst0 += dst_delta;
+        dst1 += dst_delta;
+        dst2 += dst_delta;
+        dst3 += dst_delta;
+        xm += 1 << hsub;
+    }
+    if (right)
+        blend_pixel_unpremul_rgb32(
+            dst0, dst1, dst2, dst3,
+            src, alpha, mask, mask_linesize, l2depth,
+            right, hband, hsub + vsub, xm, srca_opaque, limited);
 }
 
 void ff_blend_mask(FFDrawContext *draw, FFDrawColor *color,
@@ -589,13 +673,79 @@ void ff_blend_mask(FFDrawContext *draw, FFDrawColor *color,
         y_sub = y0;
         subsampling_bounds(draw->hsub[plane], &x_sub, &w_sub, &left, &right);
         subsampling_bounds(draw->vsub[plane], &y_sub, &h_sub, &top, &bottom);
+
+        if ((draw->flags & FF_DRAW_MASK_UNPREMUL_RGB32) &&
+            nb_planes == 1 && nb_comp == 4 &&
+            (draw->format == AV_PIX_FMT_RGB32 ||
+             draw->format == AV_PIX_FMT_BGR32 ||
+             draw->format == AV_PIX_FMT_RGB32_1 ||
+             draw->format == AV_PIX_FMT_BGR32_1)) {
+            const int srca_opaque = !!(draw->flags & FF_DRAW_MASK_SRC_ALPHA_OPAQUE);
+            const int limited = draw->range == AVCOL_RANGE_MPEG;
+            const int depth = draw->desc->comp[0].depth;
+            int offset[4], index[4];
+            uint8_t *pdst[4];
+            unsigned src[4];
+
+            for (unsigned comp = 0; comp < nb_comp; comp++) {
+                av_assert0(draw->desc->comp[comp].plane == plane);
+
+                offset[comp] = draw->desc->comp[comp].offset;
+                index[comp] = offset[comp] / ((depth + 7) / 8);
+                pdst[comp] = p0 + offset[comp];
+                src[comp] = color->comp[plane].u8[index[comp]];
+            }
+
+            m = mask;
+            if (top) {
+                blend_line_hv_unpremul_rgb32(
+                    pdst[0], pdst[1], pdst[2], pdst[3], draw->pixelstep[plane],
+                    src, alpha,
+                    m, mask_linesize, l2depth, w_sub,
+                    draw->hsub[plane], draw->vsub[plane],
+                    xm0, left, right, top, srca_opaque, limited);
+
+                for (unsigned comp = 0; comp < nb_comp; comp++)
+                    pdst[comp] += dst_linesize[plane];
+                m += top * mask_linesize;
+            }
+            for (int y = 0; y < h_sub; y++) {
+                blend_line_hv_unpremul_rgb32(
+                    pdst[0], pdst[1], pdst[2], pdst[3], draw->pixelstep[plane],
+                    src, alpha,
+                    m, mask_linesize, l2depth, w_sub,
+                    draw->hsub[plane], draw->vsub[plane],
+                    xm0, left, right, 1 << draw->vsub[plane], srca_opaque, limited);
+
+                for (unsigned comp = 0; comp < nb_comp; comp++)
+                    pdst[comp] += dst_linesize[plane];
+                m += mask_linesize << draw->vsub[plane];
+            }
+            if (bottom) {
+                blend_line_hv_unpremul_rgb32(
+                    pdst[0], pdst[1], pdst[2], pdst[3], draw->pixelstep[plane],
+                    src, alpha,
+                    m, mask_linesize, l2depth, w_sub,
+                    draw->hsub[plane], draw->vsub[plane],
+                    xm0, left, right, bottom, srca_opaque, limited);
+            }
+            break;
+        }
+
         for (unsigned comp = 0; comp < nb_comp; comp++) {
             const int depth = draw->desc->comp[comp].depth;
             const int offset = draw->desc->comp[comp].offset;
             const int index = offset / ((depth + 7) / 8);
+            int srca_opaque = !!(draw->flags & FF_DRAW_MASK_SRC_ALPHA_OPAQUE);
 
             if (draw->desc->comp[comp].plane != plane)
                 continue;
+
+            if (comp == draw->desc->nb_components - 1)
+                srca_opaque = (draw->desc->flags & AV_PIX_FMT_FLAG_ALPHA) ? srca_opaque : 0;
+            else
+                srca_opaque = 0;
+
             p = p0 + offset;
             m = mask;
             if (top) {
@@ -604,13 +754,13 @@ void ff_blend_mask(FFDrawContext *draw, FFDrawColor *color,
                                   color->comp[plane].u8[index], alpha,
                                   m, mask_linesize, l2depth, w_sub,
                                   draw->hsub[plane], draw->vsub[plane],
-                                  xm0, left, right, top);
+                                  xm0, left, right, top, srca_opaque);
                 } else {
                     blend_line_hv16(p, draw->pixelstep[plane],
                                     color->comp[plane].u16[index], alpha,
                                     m, mask_linesize, l2depth, w_sub,
                                     draw->hsub[plane], draw->vsub[plane],
-                                    xm0, left, right, top);
+                                    xm0, left, right, top, srca_opaque);
                 }
                 p += dst_linesize[plane];
                 m += top * mask_linesize;
@@ -621,7 +771,7 @@ void ff_blend_mask(FFDrawContext *draw, FFDrawColor *color,
                                   color->comp[plane].u8[index], alpha,
                                   m, mask_linesize, l2depth, w_sub,
                                   draw->hsub[plane], draw->vsub[plane],
-                                  xm0, left, right, 1 << draw->vsub[plane]);
+                                  xm0, left, right, 1 << draw->vsub[plane], srca_opaque);
                     p += dst_linesize[plane];
                     m += mask_linesize << draw->vsub[plane];
                 }
@@ -631,7 +781,7 @@ void ff_blend_mask(FFDrawContext *draw, FFDrawColor *color,
                                     color->comp[plane].u16[index], alpha,
                                     m, mask_linesize, l2depth, w_sub,
                                     draw->hsub[plane], draw->vsub[plane],
-                                    xm0, left, right, 1 << draw->vsub[plane]);
+                                    xm0, left, right, 1 << draw->vsub[plane], srca_opaque);
                     p += dst_linesize[plane];
                     m += mask_linesize << draw->vsub[plane];
                 }
@@ -642,13 +792,13 @@ void ff_blend_mask(FFDrawContext *draw, FFDrawColor *color,
                                   color->comp[plane].u8[index], alpha,
                                   m, mask_linesize, l2depth, w_sub,
                                   draw->hsub[plane], draw->vsub[plane],
-                                  xm0, left, right, bottom);
+                                  xm0, left, right, bottom, srca_opaque);
                 } else {
                     blend_line_hv16(p, draw->pixelstep[plane],
                                     color->comp[plane].u16[index], alpha,
                                     m, mask_linesize, l2depth, w_sub,
                                     draw->hsub[plane], draw->vsub[plane],
-                                    xm0, left, right, bottom);
+                                    xm0, left, right, bottom, srca_opaque);
                 }
             }
         }

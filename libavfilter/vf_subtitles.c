@@ -38,6 +38,7 @@
 #include "libavutil/avstring.h"
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
+#include "libavutil/pixdesc.h"
 
 #include "filters.h"
 #include "drawutils.h"
@@ -64,6 +65,9 @@ typedef struct AssContext {
     int shaping;
     FFDrawContext draw;
     int wrap_unicode;
+    int sub2video;
+    int last_image;
+    int64_t max_pts, max_ts_ms;
 } AssContext;
 
 #define OFFSET(x) offsetof(AssContext, x)
@@ -74,7 +78,12 @@ typedef struct AssContext {
     {"f",              "set the filename of file to read",                         OFFSET(filename),   AV_OPT_TYPE_STRING,     {.str = NULL},  0, 0, FLAGS }, \
     {"original_size",  "set the size of the original video (used to scale fonts)", OFFSET(original_w), AV_OPT_TYPE_IMAGE_SIZE, {.str = NULL},  0, 0, FLAGS }, \
     {"fontsdir",       "set the directory containing the fonts to read",           OFFSET(fontsdir),   AV_OPT_TYPE_STRING,     {.str = NULL},  0, 0, FLAGS }, \
-    {"alpha",          "enable processing of alpha channel",                       OFFSET(alpha),      AV_OPT_TYPE_BOOL,       {.i64 = 0   },         0,        1, FLAGS }, \
+    {"alpha",          "enable processing of alpha channel",                       OFFSET(alpha),      AV_OPT_TYPE_BOOL,       {.i64 = 0   },  0, 1, FLAGS }, \
+    {"sub2video",      "enable textual subtitle to video mode",                    OFFSET(sub2video),  AV_OPT_TYPE_BOOL,       {.i64 = 0   },  0, 1, FLAGS }, \
+    {"shaping",        "set shaping engine",                                       OFFSET(shaping),    AV_OPT_TYPE_INT,        {.i64 = ASS_SHAPING_COMPLEX }, -1, 1, FLAGS, .unit = "shaping_mode"}, \
+        {"auto",       NULL,              0, AV_OPT_TYPE_CONST, {.i64 = -1},                  INT_MIN, INT_MAX, FLAGS, .unit = "shaping_mode"}, \
+        {"simple",     "simple shaping",  0, AV_OPT_TYPE_CONST, {.i64 = ASS_SHAPING_SIMPLE},  INT_MIN, INT_MAX, FLAGS, .unit = "shaping_mode"}, \
+        {"complex",    "complex shaping", 0, AV_OPT_TYPE_CONST, {.i64 = ASS_SHAPING_COMPLEX}, INT_MIN, INT_MAX, FLAGS, .unit = "shaping_mode"}, \
 
 /* libass supports a log level ranging from 0 to 7 */
 static const int ass_libavfilter_log_level_map[] = {
@@ -184,12 +193,28 @@ static int config_input(AVFilterLink *inlink)
 {
     AVFilterContext *ctx = inlink->dst;
     AssContext *ass = ctx->priv;
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(inlink->format);
+    int draw_flags = ass->alpha ? FF_DRAW_PROCESS_ALPHA : 0;
     int ret;
 
+    if (ass->sub2video && inlink->alpha_mode != AVALPHA_MODE_PREMULTIPLIED) {
+        if ((desc->flags & AV_PIX_FMT_FLAG_ALPHA) &&
+            (desc->flags & (AV_PIX_FMT_FLAG_PLANAR | AV_PIX_FMT_FLAG_RGB)))
+            draw_flags |= FF_DRAW_MASK_SRC_ALPHA_OPAQUE | FF_DRAW_PROCESS_ALPHA;
+
+        if (inlink->format == AV_PIX_FMT_RGB32 ||
+            inlink->format == AV_PIX_FMT_BGR32 ||
+            inlink->format == AV_PIX_FMT_RGB32_1 ||
+            inlink->format == AV_PIX_FMT_BGR32_1)
+            draw_flags |= FF_DRAW_MASK_UNPREMUL_RGB32;
+    }
+
     ret = ff_draw_init2(&ass->draw, inlink->format,
+                        (desc->flags & AV_PIX_FMT_FLAG_RGB) ? inlink->colorspace :
                         ass_get_color_space(ass->track->YCbCrMatrix, inlink->colorspace),
+                        (desc->flags & AV_PIX_FMT_FLAG_RGB) ? inlink->color_range :
                         ass_get_color_range(ass->track->YCbCrMatrix, inlink->color_range),
-                        inlink->alpha_mode, ass->alpha ? FF_DRAW_PROCESS_ALPHA : 0);
+                        inlink->alpha_mode, draw_flags);
     if (ret < 0) {
         av_log(ctx, AV_LOG_ERROR, "Failed to initialize FFDrawContext\n");
         return ret;
@@ -205,6 +230,8 @@ static int config_input(AVFilterLink *inlink)
 
     if (ass->shaping != -1)
         ass_set_shaper(ass->renderer, ass->shaping);
+
+    ass->max_pts = ass->max_ts_ms / (av_q2d(inlink->time_base) * 1000);
 
     return 0;
 }
@@ -234,18 +261,42 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *picref)
 {
     AVFilterContext *ctx = inlink->dst;
     AVFilterLink *outlink = ctx->outputs[0];
+    FilterLink *outl = ff_filter_link(outlink);
     AssContext *ass = ctx->priv;
     int detect_change = 0;
-    double time_ms = picref->pts * av_q2d(inlink->time_base) * 1000;
+    int64_t time_ms = picref->pts * av_q2d(inlink->time_base) * 1000;
     ASS_Image *image = ass_render_frame(ass->renderer, ass->track,
                                         time_ms, &detect_change);
 
+    if (ass->sub2video) {
+        if (!image && !ass->last_image && picref->pts <= ass->max_pts && outl->current_pts != AV_NOPTS_VALUE) {
+            av_log(ctx, AV_LOG_DEBUG, "sub2video skip pts:%"PRId64"\n", picref->pts);
+            av_frame_free(&picref);
+            return 0;
+        }
+        ass->last_image = image != NULL;
+    }
+
     if (detect_change)
-        av_log(ctx, AV_LOG_DEBUG, "Change happened at time ms:%f\n", time_ms);
+        av_log(ctx, AV_LOG_DEBUG, "Change happened at time ms:%"PRId64"\n", time_ms);
 
     overlay_ass_image(ass, picref, image);
 
     return ff_filter_frame(outlink, picref);
+}
+
+static void get_max_timestamp(AVFilterContext *ctx)
+{
+    AssContext *ass = ctx->priv;
+    int i;
+
+    ass->max_ts_ms = 0;
+    if (ass->track) {
+        for (i = 0; i < ass->track->n_events; i++) {
+            ASS_Event *event = ass->track->events + i;
+            ass->max_ts_ms = FFMAX(event->Start + event->Duration, ass->max_ts_ms);
+        }
+    }
 }
 
 static const AVFilterPad ass_inputs[] = {
@@ -262,10 +313,6 @@ static const AVFilterPad ass_inputs[] = {
 
 static const AVOption ass_options[] = {
     COMMON_OPTIONS
-    {"shaping", "set shaping engine", OFFSET(shaping), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 1, FLAGS, .unit = "shaping_mode"},
-        {"auto", NULL,                 0, AV_OPT_TYPE_CONST, {.i64 = -1},                  INT_MIN, INT_MAX, FLAGS, .unit = "shaping_mode"},
-        {"simple",  "simple shaping",  0, AV_OPT_TYPE_CONST, {.i64 = ASS_SHAPING_SIMPLE},  INT_MIN, INT_MAX, FLAGS, .unit = "shaping_mode"},
-        {"complex", "complex shaping", 0, AV_OPT_TYPE_CONST, {.i64 = ASS_SHAPING_COMPLEX}, INT_MIN, INT_MAX, FLAGS, .unit = "shaping_mode"},
     {NULL},
 };
 
@@ -289,6 +336,9 @@ static av_cold int init_ass(AVFilterContext *ctx)
                ass->filename);
         return AVERROR(EINVAL);
     }
+
+    get_max_timestamp(ctx);
+
     return 0;
 }
 
@@ -310,8 +360,8 @@ const FFFilter ff_vf_ass = {
 static const AVOption subtitles_options[] = {
     COMMON_OPTIONS
     {"charenc",      "set input character encoding", OFFSET(charenc),      AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, FLAGS},
-    {"stream_index", "set stream index",             OFFSET(stream_index), AV_OPT_TYPE_INT,    { .i64 = -1 }, -1,       INT_MAX,  FLAGS},
-    {"si",           "set stream index",             OFFSET(stream_index), AV_OPT_TYPE_INT,    { .i64 = -1 }, -1,       INT_MAX,  FLAGS},
+    {"stream_index", "set stream index",             OFFSET(stream_index), AV_OPT_TYPE_INT,    { .i64 = -1 }, -1, INT_MAX, FLAGS},
+    {"si",           "set stream index",             OFFSET(stream_index), AV_OPT_TYPE_INT,    { .i64 = -1 }, -1, INT_MAX, FLAGS},
     {"force_style",  "force subtitle style",         OFFSET(force_style),  AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, FLAGS},
 #if FF_ASS_FEATURE_WRAP_UNICODE
     {"wrap_unicode", "break lines according to the Unicode Line Breaking Algorithm", OFFSET(wrap_unicode), AV_OPT_TYPE_BOOL, { .i64 = -1 }, -1, 1, FLAGS },
@@ -539,6 +589,8 @@ static av_cold int init_subtitles(AVFilterContext *ctx)
         av_packet_unref(&pkt);
         avsubtitle_free(&sub);
     }
+
+    get_max_timestamp(ctx);
 
 end:
     av_dict_free(&codec_opts);

@@ -69,6 +69,12 @@ endef
 
 $(foreach P,$(AVPROGS-yes),$(eval $(call DOFFTOOL,$(P))))
 
+ifdef HAVE_GNU_WINDRES
+ifneq (,$(wildcard fftools/fftools.ico))
+CC_DEPFLAGS += -DHAVE_FFTOOLS_ICO
+endif
+endif
+
 all: $(AVPROGS)
 
 fftools/ffprobe.o fftools/cmdutils.o: libavutil/ffversion.h | fftools

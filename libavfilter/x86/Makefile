@@ -1,5 +1,7 @@
 OBJS-$(CONFIG_NOISE_FILTER)                  += x86/vf_noise.o
 OBJS-$(CONFIG_SPP_FILTER)                    += x86/vf_spp.o
+OBJS-$(CONFIG_TONEMAPX_FILTER)               += x86/vf_tonemapx_intrin_sse.o \
+                                                x86/vf_tonemapx_intrin_avx.o
 
 X86ASM-OBJS-$(CONFIG_SCENE_SAD)              += x86/scene_sad.o x86/scene_sad_init.o
 

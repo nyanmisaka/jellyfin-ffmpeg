@@ -16,8 +16,27 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#define REFERENCE_WHITE_ALT 203.0f
+#define REFERENCE_WHITE_HLG 3.17955f
+
+// BT.2446 Method B parameters for HLG to SDR
+#define BT2446B_HLG_LW 291.0f
+#define BT2446B_HLG_GAMMA 1.03f
+
 #define ST2084_MAX_LUMINANCE 10000.0f
-#define REFERENCE_WHITE 100.0f
+#define ARIB_B67_MAX_LUMINANCE 1000.0f
+
+#define ST2084_M1 0.1593017578125f
+#define ST2084_M2 78.84375f
+#define ST2084_C1 0.8359375f
+#define ST2084_C2 18.8515625f
+#define ST2084_C3 18.6875f
+
+#define ARIB_B67_A 0.17883277f
+#define ARIB_B67_B 0.28466892f
+#define ARIB_B67_C 0.55991073f
+
+#define FLOAT_EPS 1e-6f
 
 #if chroma_loc == 1
     #define chroma_sample(a,b,c,d) (((a) + (c)) * 0.5f)
@@ -33,88 +52,123 @@
     #define chroma_sample(a,b,c,d) (((a) + (b) + (c) + (d)) * 0.25f)
 #endif
 
-constant const float ST2084_M1 = 0.1593017578125f;
-constant const float ST2084_M2 = 78.84375f;
-constant const float ST2084_C1 = 0.8359375f;
-constant const float ST2084_C2 = 18.8515625f;
-constant const float ST2084_C3 = 18.6875f;
-
 float get_luma_dst(float3 c) {
     return luma_dst.x * c.x + luma_dst.y * c.y + luma_dst.z * c.z;
+}
+
+float4 get_luma_dstx4(float4 r4, float4 g4, float4 b4) {
+    return luma_dst.x * r4 + luma_dst.y * g4 + luma_dst.z * b4;
 }
 
 float get_luma_src(float3 c) {
     return luma_src.x * c.x + luma_src.y * c.y + luma_src.z * c.z;
 }
 
+float4 get_luma_srcx4(float4 r4, float4 g4, float4 b4) {
+    return luma_src.x * r4 + luma_src.y * g4 + luma_src.z * b4;
+}
+
 float3 get_chroma_sample(float3 a, float3 b, float3 c, float3 d) {
     return chroma_sample(a, b, c, d);
 }
 
+// linearizer for PQ/ST2084
+float eotf_st2084_common(float x) {
+    x = fmax(x, 0.0f);
+    float xpow = native_powr(x, 1.0f / ST2084_M2);
+    float num = fmax(xpow - ST2084_C1, 0.0f);
+    float den = fmax(ST2084_C2 - ST2084_C3 * xpow, FLOAT_EPS);
+    x = native_powr(num / den, 1.0f / ST2084_M1);
+    return x;
+}
+
 float eotf_st2084(float x) {
-    float p = powr(x, 1.0f / ST2084_M2);
-    float a = max(p -ST2084_C1, 0.0f);
-    float b = max(ST2084_C2 - ST2084_C3 * p, 1e-6f);
-    float c  = powr(a / b, 1.0f / ST2084_M1);
-    return x > 0.0f ? c * ST2084_MAX_LUMINANCE / REFERENCE_WHITE : 0.0f;
+    return eotf_st2084_common(x) * ST2084_MAX_LUMINANCE / REFERENCE_WHITE_ALT;
 }
 
-__constant const float HLG_A = 0.17883277f;
-__constant const float HLG_B = 0.28466892f;
-__constant const float HLG_C = 0.55991073f;
-
-// linearizer for HLG
-float inverse_oetf_hlg(float x) {
-    float a = 4.0f * x * x;
-    float b = exp((x - HLG_C) / HLG_A) + HLG_B;
-    return x < 0.5f ? a : b;
+// delinearizer for PQ/ST2084
+float inverse_eotf_st2084_common(float x) {
+    x = fmax(x, 0.0f);
+    float xpow = native_powr(x, ST2084_M1);
+#if 0
+    // Original formulation from SMPTE ST 2084:2014 publication.
+    float num = ST2084_C1 + ST2084_C2 * xpow;
+    float den = 1.0f + ST2084_C3 * xpow;
+    return native_powr(num / den, ST2084_M2);
+#else
+    // More stable arrangement that avoids some cancellation error.
+    float num = (ST2084_C1 - 1.0f) + (ST2084_C2 - ST2084_C3) * xpow;
+    float den = 1.0f + ST2084_C3 * xpow;
+    return native_powr(1.0f + num / den, ST2084_M2);
+#endif
 }
 
-// delinearizer for HLG
-float oetf_hlg(float x) {
-    float a = 0.5f * sqrt(x);
-    float b = HLG_A * log(x - HLG_B) + HLG_C;
-    return x <= 1.0f ? a : b;
+float inverse_eotf_st2084(float x) {
+    x *= REFERENCE_WHITE_ALT / ST2084_MAX_LUMINANCE;
+    return inverse_eotf_st2084_common(x);
 }
 
-float3 ootf_hlg(float3 c, float peak) {
-    float luma = get_luma_src(c);
-    float gamma =  1.2f + 0.42f * log10(peak * REFERENCE_WHITE / 1000.0f);
-    gamma = max(1.0f, gamma);
-    float factor = peak * powr(luma, gamma - 1.0f) / powr(12.0f, gamma);
-    return c * factor;
+float3 eotf_st2084x3(float3 x) {
+    x.x = eotf_st2084_common(x.x);
+    x.y = eotf_st2084_common(x.y);
+    x.z = eotf_st2084_common(x.z);
+    return x * ST2084_MAX_LUMINANCE / REFERENCE_WHITE_ALT;
 }
 
-float3 inverse_ootf_hlg(float3 c, float peak) {
-    float gamma = 1.2f + 0.42f * log10(peak * REFERENCE_WHITE / 1000.0f);
-    c *=  powr(12.0f, gamma) / peak;
-    c /= powr(get_luma_dst(c), (gamma - 1.0f) / gamma);
-    return c;
+float4 eotf_st2084x4(float4 x) {
+    x.x = eotf_st2084_common(x.x);
+    x.y = eotf_st2084_common(x.y);
+    x.z = eotf_st2084_common(x.z);
+    x.w = eotf_st2084_common(x.w);
+    return x * ST2084_MAX_LUMINANCE / REFERENCE_WHITE_ALT;
 }
 
-float inverse_eotf_bt1886(float c) {
-    return c < 0.0f ? 0.0f : powr(c, 1.0f / 2.4f);
+float4 inverse_eotf_st2084x4(float4 x) {
+    x *= REFERENCE_WHITE_ALT / ST2084_MAX_LUMINANCE;
+    x.x = inverse_eotf_st2084_common(x.x);
+    x.y = inverse_eotf_st2084_common(x.y);
+    x.z = inverse_eotf_st2084_common(x.z);
+    x.w = inverse_eotf_st2084_common(x.w);
+    return x;
 }
 
-float oetf_bt709(float c) {
-    c = c < 0.0f ? 0.0f : c;
-    float r1 = 4.5f * c;
-    float r2 = 1.099f * powr(c, 0.45f) - 0.099f;
-    return c < 0.018f ? r1 : r2;
+// linearizer for HLG/ARIB-B67
+float3 eotf_arib_b67x3(float3 x) {
+    float peak = ARIB_B67_MAX_LUMINANCE / REFERENCE_WHITE_ALT;
+    float gamma = 1.2f;
+#ifdef HLG_EOTF_BT2446B
+    peak = BT2446B_HLG_LW / REFERENCE_WHITE_ALT;
+    gamma = BT2446B_HLG_GAMMA;
+#endif
+    float3 a = 4.0f * x * x;
+    float3 b = native_exp((x - ARIB_B67_C) * (1.0f / ARIB_B67_A)) + ARIB_B67_B;
+    x = select(a, b, isgreater(x, (float3)(0.5f))) * (1.0f / 12.0f);
+    float luma = get_luma_src(x);
+    return x * peak * native_powr(max(luma, 0.0f), gamma - 1.0f);
 }
-float inverse_oetf_bt709(float c) {
-    float r1 = c / 4.5f;
-    float r2 = powr((c + 0.099f) / 1.099f, 1.0f / 0.45f);
-    return c < 0.081f ? r1 : r2;
+
+// delinearizer for BT709, BT2020-10
+float inverse_eotf_bt1886(float x) {
+    return x > 0.0f ? native_powr(x, 1.0f / 2.4f) : 0.0f;
+}
+
+float3 inverse_eotf_bt1886x3(float3 x) {
+    x.x = inverse_eotf_bt1886(x.x);
+    x.y = inverse_eotf_bt1886(x.y);
+    x.z = inverse_eotf_bt1886(x.z);
+    return x;
 }
 
 float3 yuv2rgb(float y, float u, float v) {
-#ifdef FULL_RANGE_IN
-    u -= 0.5f; v -= 0.5f;
+    y += mix(0.0f, input_quantization_offset, y > 0.0f);
+    u += mix(0.0f, input_quantization_offset, u > 0.0f);
+    v += mix(0.0f, input_quantization_offset, v > 0.0f);
+#ifndef FULL_RANGE_IN
+    y = input_y_scale * y - 0.07305936073f;
+    u = input_uv_scale * u - 0.5714285714f;
+    v = input_uv_scale * v - 0.5714285714f;
 #else
-    y = (y * 255.0f -  16.0f) / 219.0f;
-    u = (u * 255.0f - 128.0f) / 224.0f;
-    v = (v * 255.0f - 128.0f) / 224.0f;
+    u -= 0.5f; v -= 0.5f;
 #endif
     float r = y * rgb_matrix[0] + u * rgb_matrix[1] + v * rgb_matrix[2];
     float g = y * rgb_matrix[3] + u * rgb_matrix[4] + v * rgb_matrix[5];
@@ -125,10 +179,7 @@ float3 yuv2rgb(float y, float u, float v) {
 float3 yuv2lrgb(float3 yuv) {
     float3 rgb = yuv2rgb(yuv.x, yuv.y, yuv.z);
 #ifdef linearize
-    float r = linearize(rgb.x);
-    float g = linearize(rgb.y);
-    float b = linearize(rgb.z);
-    return (float3)(r, g, b);
+    return linearize(rgb);
 #else
     return rgb;
 #endif
@@ -138,42 +189,50 @@ float3 rgb2yuv(float r, float g, float b) {
     float y = r*yuv_matrix[0] + g*yuv_matrix[1] + b*yuv_matrix[2];
     float u = r*yuv_matrix[3] + g*yuv_matrix[4] + b*yuv_matrix[5];
     float v = r*yuv_matrix[6] + g*yuv_matrix[7] + b*yuv_matrix[8];
-#ifdef FULL_RANGE_OUT
-    u += 0.5f; v += 0.5f;
+#ifndef FULL_RANGE_OUT
+  #ifdef RESCALE_LIMITED_RANGE_OUTPUT
+    y = floor(((219.0f * y + 16.0f) * 256.0f) + 0.5f) / 65535.0f;
+    u = floor(((224.0f * u + 128.0f) * 256.0f) + 0.5f) / 65535.0f;
+    v = floor(((224.0f * v + 128.0f) * 256.0f) + 0.5f) / 65535.0f;
+  #else
+    y = floor((219.0f * y + 16.0f) + 0.5f) / 255.0f;
+    u = floor((224.0f * u + 128.0f) + 0.5f) / 255.0f;
+    v = floor((224.0f * v + 128.0f) + 0.5f) / 255.0f;
+  #endif
 #else
-    y = (219.0f * y + 16.0f) / 255.0f;
-    u = (224.0f * u + 128.0f) / 255.0f;
-    v = (224.0f * v + 128.0f) / 255.0f;
+    u += 0.5f; v += 0.5f;
 #endif
+    y -= mix(0.0f, output_quantization_offset, y > 0.0f);
+    u -= mix(0.0f, output_quantization_offset, u > 0.0f);
+    v -= mix(0.0f, output_quantization_offset, v > 0.0f);
     return (float3)(y, u, v);
 }
 
 float rgb2y(float r, float g, float b) {
     float y = r*yuv_matrix[0] + g*yuv_matrix[1] + b*yuv_matrix[2];
-    y = (219.0f * y + 16.0f) / 255.0f;
+#ifndef FULL_RANGE_OUT
+  #ifdef RESCALE_LIMITED_RANGE_OUTPUT
+    y = floor(((219.0f * y + 16.0f) * 256.0f) + 0.5f) / 65535.0f;
+  #else
+    y = floor((219.0f * y + 16.0f) + 0.5f) / 255.0f;
+  #endif
+#endif
+    y -= mix(0.0f, output_quantization_offset, y > 0.0f);
     return y;
 }
 
 float3 lrgb2yuv(float3 c) {
 #ifdef delinearize
-    float r = delinearize(c.x);
-    float g = delinearize(c.y);
-    float b = delinearize(c.z);
-    return rgb2yuv(r, g, b);
-#else
-    return rgb2yuv(c.x, c.y, c.z);
+    c = delinearize(c);
 #endif
+    return rgb2yuv(c.x, c.y, c.z);
 }
 
 float lrgb2y(float3 c) {
 #ifdef delinearize
-    float r = delinearize(c.x);
-    float g = delinearize(c.y);
-    float b = delinearize(c.z);
-    return rgb2y(r, g, b);
-#else
-    return rgb2y(c.x, c.y, c.z);
+    c = delinearize(c);
 #endif
+    return rgb2y(c.x, c.y, c.z);
 }
 
 float3 lrgb2lrgb(float3 c) {
@@ -188,18 +247,94 @@ float3 lrgb2lrgb(float3 c) {
 #endif
 }
 
-float3 ootf(float3 c, float peak) {
-#ifdef ootf_impl
-    return ootf_impl(c, peak);
+float3 rgb2lrgb(float3 c) {
+#ifdef linearize
+    return linearize(c);
 #else
     return c;
 #endif
 }
 
-float3 inverse_ootf(float3 c, float peak) {
-#ifdef inverse_ootf_impl
-    return inverse_ootf_impl(c, peak);
-#else
-    return c;
+#ifdef DOVI_RESHAPE
+float3 ycc2rgb(float y, float cb, float cr) {
+    float r = y * rgb_matrix[0] + cb * rgb_matrix[1] + cr * rgb_matrix[2];
+    float g = y * rgb_matrix[3] + cb * rgb_matrix[4] + cr * rgb_matrix[5];
+    float b = y * rgb_matrix[6] + cb * rgb_matrix[7] + cr * rgb_matrix[8];
+    return (float3)(r, g, b) + ycc2rgb_offset;
+}
+
+float3 lms2rgb(float r, float g, float b) {
+    r = eotf_st2084_common(r);
+    g = eotf_st2084_common(g);
+    b = eotf_st2084_common(b);
+    float rr = r * lms2rgb_matrix[0] + g * lms2rgb_matrix[1] + b * lms2rgb_matrix[2];
+    float gg = r * lms2rgb_matrix[3] + g * lms2rgb_matrix[4] + b * lms2rgb_matrix[5];
+    float bb = r * lms2rgb_matrix[6] + g * lms2rgb_matrix[7] + b * lms2rgb_matrix[8];
+    rr = inverse_eotf_st2084_common(rr);
+    gg = inverse_eotf_st2084_common(gg);
+    bb = inverse_eotf_st2084_common(bb);
+    return (float3)(rr, gg, bb);
+}
 #endif
+
+#ifdef TONE_MODE_ITP
+// The following assumes bt2020
+void lrgb2ictcp(float4 r4, float4 g4, float4 b4, float4* i4, float4* ct4, float4* cp4) {
+    float4 l4 = 0.412109375000000f * r4 + 0.523925781250000f * g4 + 0.063964843750000f * b4;
+    float4 m4 = 0.166748046875000f * r4 + 0.720458984375000f * g4 + 0.112792968750000f * b4;
+    float4 s4 = 0.024169921875000f * r4 + 0.075439453125000f * g4 + 0.900390625000000f * b4;
+    l4 = inverse_eotf_st2084x4(l4);
+    m4 = inverse_eotf_st2084x4(m4);
+    s4 = inverse_eotf_st2084x4(s4);
+    *i4 = 0.5f * l4 + 0.5f * m4;
+    *ct4 = 1.613769531250000f * l4 - 3.323486328125000f * m4 + 1.709716796875000f * s4;
+    *cp4 = 4.378173828125000f * l4 - 4.245605468750000f * m4 - 0.132568359375000f * s4;
+}
+
+void ictcp2lrgb(float4 i4, float4 ct4, float4 cp4, float4* r4, float4* g4, float4* b4) {
+    float4 ll4 = i4 + 0.008609037037933f * ct4 + 0.111029625003026f * cp4;
+    float4 mm4 = i4 - 0.008609037037933f * ct4 - 0.111029625003026f * cp4;
+    float4 ss4 = i4 + 0.560031335710679f * ct4 - 0.320627174987319f * cp4;
+    ll4 = eotf_st2084x4(ll4);
+    mm4 = eotf_st2084x4(mm4);
+    ss4 = eotf_st2084x4(ss4);
+    *r4 = 3.436606694333079f * ll4 - 2.506452118656270f * mm4 + 0.069845424323191f * ss4;
+    *g4 = -0.791329555598929f * ll4 + 1.983600451792291f * mm4 - 0.192270896193362f * ss4;
+    *b4 = -0.025949899690593f * ll4 - 0.098913714711726f * mm4 + 1.124863614402319f * ss4;
+}
+#endif
+
+float parabolic(float x, float t0, float x0, float y0) {
+    float s = (y0 - t0) / native_sqrt(x0 - y0);
+    float ox = t0 - s * s * 0.25f;
+    float oy = t0 - s * native_sqrt(s * s * 0.25f);
+    return (x < t0 ? x : s * native_sqrt(x - ox) + oy);
+}
+
+float3 gamut_compress(float3 rgb) {
+    // BT.709 boundary info
+    #define cyan_limit 1.5187050250638159f
+    #define magenta_limit 1.0750082769546088f
+    #define yellow_limit 1.0887800403483898f
+    #define cyan_threshold 1.050508660266247f
+    #define magenta_threshold 0.940509816042432f
+    #define yellow_threshold 0.9771607996420639f
+
+    // Achromatic axis
+    float ac = fmax(fmax(rgb.x, rgb.y), rgb.z);
+
+    // Inverse RGB Ratios: distance from achromatic axis
+    float3 d = ac == 0.0f ? (float3)(0.0f, 0.0f, 0.0f) : (ac - rgb) / fabs(ac);
+
+    // Compressed distance
+    float3 cd = (float3)(
+        parabolic(d.x, cyan_threshold, cyan_limit, 1.0f),
+        parabolic(d.y, magenta_threshold, magenta_limit, 1.0f),
+        parabolic(d.z, yellow_threshold, yellow_limit, 1.0f)
+    );
+
+    // Inverse RGB Ratios to RGB
+    float3 crgb = ac - cd * fabs(ac);
+
+    return crgb;
 }

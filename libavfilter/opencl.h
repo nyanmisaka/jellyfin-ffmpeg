@@ -206,17 +206,17 @@ do {                                                                            
 } while(0)
 
 /**
- * Perform a blocking write to a buffer.
+ * Perform a blocking write to a buffer with offset.
  *
  * Requires the presence of a local cl_int variable named cle and a fail label for error
  * handling.
  */
-#define CL_BLOCKING_WRITE_BUFFER(queue, buffer, size, host_ptr, event) do {                     \
+#define CL_BLOCKING_WRITE_BUFFER_OFFSET(queue, buffer, offset, size, host_ptr, event) do {      \
     cle = clEnqueueWriteBuffer(                                                                 \
         queue,                                                                                  \
         buffer,                                                                                 \
         CL_TRUE,                                                                                \
-        0,                                                                                      \
+        offset,                                                                                 \
         size,                                                                                   \
         host_ptr,                                                                               \
         0,                                                                                      \
@@ -225,6 +225,15 @@ do {                                                                            
     );                                                                                          \
     CL_FAIL_ON_ERROR(AVERROR(EIO), "Failed to write buffer to device: %d.\n", cle);             \
 } while(0)
+
+/**
+ * Perform a blocking write to a buffer.
+ *
+ * Requires the presence of a local cl_int variable named cle and a fail label for error
+ * handling.
+ */
+#define CL_BLOCKING_WRITE_BUFFER(queue, buffer, size, host_ptr, event) \
+    CL_BLOCKING_WRITE_BUFFER_OFFSET(queue, buffer, 0, size, host_ptr, event)
 
 /**
  * Create a buffer with the given information.
@@ -247,6 +256,9 @@ int ff_opencl_filter_config_input(AVFilterLink *inlink);
  */
 int ff_opencl_filter_config_output(AVFilterLink *outlink);
 
+int ff_opencl_filter_config_output2(AVFilterLink *outlink,
+                                    OpenCLFilterContext *ctx);
+
 /**
  * Initialise an OpenCL filter context.
  */
@@ -257,6 +269,9 @@ int ff_opencl_filter_init(AVFilterContext *avctx);
  */
 void ff_opencl_filter_uninit(AVFilterContext *avctx);
 
+void ff_opencl_filter_uninit2(AVFilterContext *avctx,
+                              OpenCLFilterContext *ctx);
+
 /**
  * Load a new OpenCL program from strings in memory.
  *
@@ -266,6 +281,11 @@ void ff_opencl_filter_uninit(AVFilterContext *avctx);
 int ff_opencl_filter_load_program(AVFilterContext *avctx,
                                   const char **program_source_array,
                                   int nb_strings);
+
+int ff_opencl_filter_load_program2(AVFilterContext *avctx,
+                                   OpenCLFilterContext *ctx,
+                                   const char **program_source_array,
+                                   int nb_strings);
 
 /**
  * Load a new OpenCL program from a file.

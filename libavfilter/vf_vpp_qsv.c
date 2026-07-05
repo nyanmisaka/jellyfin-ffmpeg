@@ -388,6 +388,30 @@ static mfxStatus get_mfx_version(const AVFilterContext *ctx, mfxVersion *mfx_ver
     return MFXQueryVersion(device_hwctx->session, mfx_version);
 }
 
+static mfxStatus get_mfx_platform(const AVFilterContext *ctx, mfxPlatform *mfx_platform)
+{
+    const FilterLink *l = ff_filter_link(ctx->inputs[0]);
+    AVBufferRef *device_ref;
+    AVHWDeviceContext *device_ctx;
+    AVQSVDeviceContext *device_hwctx;
+
+    if (l->hw_frames_ctx) {
+        AVHWFramesContext *frames_ctx = (AVHWFramesContext *)l->hw_frames_ctx->data;
+        device_ref = frames_ctx->device_ref;
+    } else if (ctx->hw_device_ctx) {
+        device_ref = ctx->hw_device_ctx;
+    } else {
+        mfx_platform->CodeName = 0;
+        mfx_platform->DeviceId = 0;
+        return MFX_ERR_NONE;
+    }
+
+    device_ctx   = (AVHWDeviceContext *)device_ref->data;
+    device_hwctx = device_ctx->hwctx;
+
+    return MFXVideoCORE_QueryPlatform(device_hwctx->session, mfx_platform);
+}
+
 static int vpp_set_frame_ext_params(AVFilterContext *ctx, const AVFrame *in, AVFrame *out,  QSVVPPFrameParam *fp)
 {
 #if QSV_ONEVPL
@@ -402,7 +426,7 @@ static int vpp_set_frame_ext_params(AVFilterContext *ctx, const AVFrame *in, AVF
     fp->num_ext_buf = 0;
 
     if (!in || !out ||
-        !QSV_RUNTIME_VERSION_ATLEAST(qsvvpp->ver, 2, 0))
+        !QSV_RUNTIME_VERSION_ATLEAST(qsvvpp->ver, 1, 255)) // (2, 0)
         return 0;
 
     memset(&invsi_conf, 0, sizeof(mfxExtVideoSignalInfo));
@@ -461,14 +485,19 @@ static int vpp_set_frame_ext_params(AVFilterContext *ctx, const AVFrame *in, AVF
 
     memset(&clli_conf, 0, sizeof(mfxExtContentLightLevelInfo));
     sd = av_frame_get_side_data(in, AV_FRAME_DATA_CONTENT_LIGHT_LEVEL);
-    if (vpp->tonemap && sd) {
-        AVContentLightMetadata *clm = (AVContentLightMetadata *)sd->data;
+    if (vpp->tonemap) {
+        AVContentLightMetadata *clm = sd ? (AVContentLightMetadata *)sd->data : NULL;
 
-        clli_conf.Header.BufferId         = MFX_EXTBUFF_CONTENT_LIGHT_LEVEL_INFO;
-        clli_conf.Header.BufferSz         = sizeof(mfxExtContentLightLevelInfo);
-        clli_conf.MaxContentLightLevel    = FFMIN(clm->MaxCLL,  65535);
-        clli_conf.MaxPicAverageLightLevel = FFMIN(clm->MaxFALL, 65535);
-        tm = 1;
+        // Dumped from VP HAL, VPL requires at least one type of the metadata to trigger tone-mapping
+        #define HAL_HDR_DEFAULT_MAXCLL 4000
+        #define HAL_HDR_DEFAULT_MAXFALL 400
+        if (clm || !tm) {
+            clli_conf.Header.BufferId         = MFX_EXTBUFF_CONTENT_LIGHT_LEVEL_INFO;
+            clli_conf.Header.BufferSz         = sizeof(mfxExtContentLightLevelInfo);
+            clli_conf.MaxContentLightLevel    = FFMIN(clm ? clm->MaxCLL  : HAL_HDR_DEFAULT_MAXCLL,  65535);
+            clli_conf.MaxPicAverageLightLevel = FFMIN(clm ? clm->MaxFALL : HAL_HDR_DEFAULT_MAXFALL, 65535);
+            tm = 1;
+        }
     }
 
     if (tm) {
@@ -494,9 +523,9 @@ static int vpp_set_frame_ext_params(AVFilterContext *ctx, const AVFrame *in, AVF
     outvsi_conf.Header.BufferId          = MFX_EXTBUFF_VIDEO_SIGNAL_INFO_OUT;
     outvsi_conf.Header.BufferSz          = sizeof(mfxExtVideoSignalInfo);
     outvsi_conf.VideoFullRange           = (out->color_range == AVCOL_RANGE_JPEG);
-    outvsi_conf.ColourPrimaries          = (out->color_primaries == AVCOL_PRI_UNSPECIFIED) ? AVCOL_PRI_BT709 : out->color_primaries;
-    outvsi_conf.TransferCharacteristics  = (out->color_trc == AVCOL_TRC_UNSPECIFIED) ? AVCOL_TRC_BT709 : out->color_trc;
-    outvsi_conf.MatrixCoefficients       = (out->colorspace == AVCOL_SPC_UNSPECIFIED) ? AVCOL_SPC_BT709 : out->colorspace;
+    outvsi_conf.ColourPrimaries          = (out->color_primaries == AVCOL_PRI_UNSPECIFIED) ? invsi_conf.ColourPrimaries : out->color_primaries;
+    outvsi_conf.TransferCharacteristics  = (out->color_trc == AVCOL_TRC_UNSPECIFIED) ? invsi_conf.TransferCharacteristics : out->color_trc;
+    outvsi_conf.MatrixCoefficients       = (out->colorspace == AVCOL_SPC_UNSPECIFIED) ? invsi_conf.MatrixCoefficients : out->colorspace;
     outvsi_conf.ColourDescriptionPresent = 1;
 
     if (memcmp(&vpp->invsi_conf, &invsi_conf, sizeof(mfxExtVideoSignalInfo)) ||
@@ -689,12 +718,28 @@ static int config_output(AVFilterLink *outlink)
 
     if (inlink->w != outlink->w || inlink->h != outlink->h || in_format != vpp->out_format) {
         if (QSV_RUNTIME_VERSION_ATLEAST(mfx_version, 1, 19)) {
+            mfxPlatform mfx_platform;
+            int compute = 0;
             int mode = vpp->scale_mode;
+            int vpl = QSV_RUNTIME_VERSION_ATLEAST(mfx_version, 1, 255);
 
-#if QSV_ONEVPL
-            if (mode > 2)
-                mode = MFX_SCALING_MODE_VENDOR + mode - 2;
-#endif
+            /* Compute mode is only available on DG2+ platforms */
+            if (vpl && get_mfx_platform(ctx, &mfx_platform) == MFX_ERR_NONE) {
+                const AVPixFmtDescriptor *in_desc = av_pix_fmt_desc_get(in_format);
+                int code_name = mfx_platform.CodeName;
+                compute = code_name >= 45 &&
+                          code_name <= 54 &&
+                          code_name != 50;
+                /* When used with tonemap, only 4:2:0 chroma is supported */
+                if (vpp->tonemap && in_desc &&
+                    !(in_desc->log2_chroma_w && in_desc->log2_chroma_h))
+                    compute = 0;
+            }
+
+            if (mode == -1)
+                mode = (vpl && compute) ? 1001 : MFX_SCALING_MODE_DEFAULT;
+            else if (mode > 2)
+                mode = vpl ? (1000 + mode - 2) : MFX_SCALING_MODE_DEFAULT;
 
             INIT_MFX_EXTBUF(scale_conf, MFX_EXTBUFF_VPP_SCALING);
             SET_MFX_PARAM_FIELD(scale_conf, ScalingMode, mode);
@@ -705,6 +750,13 @@ static int config_output(AVFilterLink *outlink)
 
 #undef INIT_MFX_EXTBUF
 #undef SET_MFX_PARAM_FIELD
+
+    if (vpp->tonemap) {
+        av_frame_side_data_remove(&outlink->side_data, &outlink->nb_side_data,
+                                  AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
+        av_frame_side_data_remove(&outlink->side_data, &outlink->nb_side_data,
+                                  AV_FRAME_DATA_CONTENT_LIGHT_LEVEL);
+    }
 
     if (vpp->use_frc || vpp->use_crop || vpp->deinterlace || vpp->denoise ||
         vpp->detail || vpp->procamp || vpp->rotate || vpp->hflip ||
@@ -884,19 +936,13 @@ static const AVOption vpp_options[] = {
     { "height", "Output video height(0=input video height, -1=keep input video aspect)", OFFSET(oh), AV_OPT_TYPE_STRING, { .str="w*ch/cw" }, 0, 255, .flags = FLAGS },
     { "format", "Output pixel format", OFFSET(output_format_str), AV_OPT_TYPE_STRING, { .str = "same" }, .flags = FLAGS },
     { "async_depth", "Internal parallelization depth, the higher the value the higher the latency.", OFFSET(qsv.async_depth), AV_OPT_TYPE_INT, { .i64 = 4 }, 0, INT_MAX, .flags = FLAGS },
-#if QSV_ONEVPL
-    { "scale_mode", "scaling & format conversion mode (mode compute(3), vd(4) and ve(5) are only available on some platforms)", OFFSET(scale_mode), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 5, .flags = FLAGS, .unit = "scale mode" },
-#else
-    { "scale_mode", "scaling & format conversion mode", OFFSET(scale_mode), AV_OPT_TYPE_INT, { .i64 = MFX_SCALING_MODE_DEFAULT }, MFX_SCALING_MODE_DEFAULT, MFX_SCALING_MODE_QUALITY, .flags = FLAGS, .unit = "scale mode" },
-#endif
+    { "scale_mode", "scaling & format conversion mode (mode compute(3), vd(4) and ve(5) are only available on some platforms)", OFFSET(scale_mode), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 5, .flags = FLAGS, .unit = "scale mode" },
     { "auto",      "auto mode",             0,    AV_OPT_TYPE_CONST,  { .i64 = MFX_SCALING_MODE_DEFAULT},  INT_MIN, INT_MAX, FLAGS, .unit = "scale mode"},
     { "low_power", "low power mode",        0,    AV_OPT_TYPE_CONST,  { .i64 = MFX_SCALING_MODE_LOWPOWER}, INT_MIN, INT_MAX, FLAGS, .unit = "scale mode"},
     { "hq",        "high quality mode",     0,    AV_OPT_TYPE_CONST,  { .i64 = MFX_SCALING_MODE_QUALITY},  INT_MIN, INT_MAX, FLAGS, .unit = "scale mode"},
-#if QSV_ONEVPL
     { "compute",   "compute",               0,    AV_OPT_TYPE_CONST,  { .i64 = 3},  INT_MIN, INT_MAX, FLAGS, .unit = "scale mode"},
     { "vd",        "vd",                    0,    AV_OPT_TYPE_CONST,  { .i64 = 4},  INT_MIN, INT_MAX, FLAGS, .unit = "scale mode"},
     { "ve",        "ve",                    0,    AV_OPT_TYPE_CONST,  { .i64 = 5},  INT_MIN, INT_MAX, FLAGS, .unit = "scale mode"},
-#endif
 
     { "rate", "Generate output at frame rate or field rate, available only for deinterlace mode",
       OFFSET(field_rate), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, FLAGS, .unit = "rate" },
@@ -927,8 +973,9 @@ static const AVOption vpp_options[] = {
     { "out_color_transfer", "Output color transfer characteristics",
       OFFSET(color_transfer_str),  AV_OPT_TYPE_STRING, { .str = NULL }, .flags = FLAGS },
 
-    {"tonemap", "Perform tonemapping (0=disable tonemapping, 1=perform tonemapping if the input has HDR metadata)", OFFSET(tonemap), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 1, .flags = FLAGS},
+    { "tonemap", "Perform tonemapping (0=disable tonemapping, 1=perform tonemapping if the input has HDR metadata)", OFFSET(tonemap), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 1, .flags = FLAGS },
 
+    { "passthrough", "Apply pass through mode if possible.", OFFSET(has_passthrough), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, .flags = FLAGS },
     { NULL }
 };
 
@@ -984,19 +1031,14 @@ static const AVOption qsvscale_options[] = {
     { "h",      "Output video height(0=input video height, -1=keep input video aspect)", OFFSET(oh), AV_OPT_TYPE_STRING, { .str = "ih"   }, .flags = FLAGS },
     { "format", "Output pixel format", OFFSET(output_format_str), AV_OPT_TYPE_STRING, { .str = "same" }, .flags = FLAGS },
 
-#if QSV_ONEVPL
-    { "mode",      "scaling & format conversion mode (mode compute(3), vd(4) and ve(5) are only available on some platforms)",    OFFSET(scale_mode),    AV_OPT_TYPE_INT,    { .i64 = 0}, 0, 5, FLAGS, .unit = "mode"},
-#else
-    { "mode",      "scaling & format conversion mode",    OFFSET(scale_mode),    AV_OPT_TYPE_INT,    { .i64 = MFX_SCALING_MODE_DEFAULT}, MFX_SCALING_MODE_DEFAULT, MFX_SCALING_MODE_QUALITY, FLAGS, .unit = "mode"},
-#endif
+    { "mode",      "scaling & format conversion mode (mode compute(3), vd(4) and ve(5) are only available on some platforms)",    OFFSET(scale_mode),    AV_OPT_TYPE_INT,    { .i64 = -1}, -1, 5, FLAGS, .unit = "mode"},
     { "low_power", "low power mode",        0,             AV_OPT_TYPE_CONST,  { .i64 = MFX_SCALING_MODE_LOWPOWER}, INT_MIN, INT_MAX, FLAGS, .unit = "mode"},
     { "hq",        "high quality mode",     0,             AV_OPT_TYPE_CONST,  { .i64 = MFX_SCALING_MODE_QUALITY},  INT_MIN, INT_MAX, FLAGS, .unit = "mode"},
-#if QSV_ONEVPL
     { "compute",   "compute",               0,             AV_OPT_TYPE_CONST,  { .i64 = 3},  INT_MIN, INT_MAX, FLAGS, .unit = "mode"},
     { "vd",        "vd",                    0,             AV_OPT_TYPE_CONST,  { .i64 = 4},  INT_MIN, INT_MAX, FLAGS, .unit = "mode"},
     { "ve",        "ve",                    0,             AV_OPT_TYPE_CONST,  { .i64 = 5},  INT_MIN, INT_MAX, FLAGS, .unit = "mode"},
-#endif
 
+    { "async_depth", "Internal parallelization depth, the higher the value the higher the latency.", OFFSET(qsv.async_depth), AV_OPT_TYPE_INT, { .i64 = 4 }, 0, INT_MAX, .flags = FLAGS },
     { NULL },
 };
 
@@ -1021,6 +1063,7 @@ static const AVOption qsvdeint_options[] = {
     { "bob",   "bob algorithm",                  0, AV_OPT_TYPE_CONST,      {.i64 = MFX_DEINTERLACING_BOB}, MFX_DEINTERLACING_BOB, MFX_DEINTERLACING_ADVANCED, FLAGS, .unit = "mode"},
     { "advanced", "Motion adaptive algorithm",   0, AV_OPT_TYPE_CONST, {.i64 = MFX_DEINTERLACING_ADVANCED}, MFX_DEINTERLACING_BOB, MFX_DEINTERLACING_ADVANCED, FLAGS, .unit = "mode"},
 
+    { "async_depth", "Internal parallelization depth, the higher the value the higher the latency.", OFFSET(qsv.async_depth), AV_OPT_TYPE_INT, { .i64 = 4 }, 0, INT_MAX, .flags = FLAGS },
     { NULL },
 };
 

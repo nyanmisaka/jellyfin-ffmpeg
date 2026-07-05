@@ -61,7 +61,17 @@ typedef struct FFDrawColor {
 /**
   * Process alpha pixel component.
   */
-#define FF_DRAW_PROCESS_ALPHA 1
+#define FF_DRAW_PROCESS_ALPHA         (1 << 0)
+
+/**
+  * Set source alpha opaque when blending masks.
+  */
+#define FF_DRAW_MASK_SRC_ALPHA_OPAQUE (1 << 1)
+
+/**
+  * Unpremultiply when blending masks on RGB32/BGR32.
+  */
+#define FF_DRAW_MASK_UNPREMUL_RGB32   (1 << 2)
 
 /**
  * Init a draw context.

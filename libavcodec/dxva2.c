@@ -44,6 +44,12 @@ DEFINE_GUID(ff_DXVA2_ModeVC1_D,          0x1b81beA3, 0xa0c7,0x11d3,0xb9,0x84,0x0
 DEFINE_GUID(ff_DXVA2_ModeVC1_D2010,      0x1b81beA4, 0xa0c7,0x11d3,0xb9,0x84,0x00,0xc0,0x4f,0x2e,0x73,0xc5);
 DEFINE_GUID(ff_DXVA2_ModeHEVC_VLD_Main,  0x5b11d51b, 0x2f4c,0x4452,0xbc,0xc3,0x09,0xf2,0xa1,0x16,0x0c,0xc0);
 DEFINE_GUID(ff_DXVA2_ModeHEVC_VLD_Main10,0x107af0e0, 0xef1a,0x4d19,0xab,0xa8,0x67,0xa1,0x63,0x07,0x3d,0x13);
+DEFINE_GUID(ff_DXVA2_ModeHEVC_VLD_Main12_Intel,     0x8ff8a3aa, 0xc456,0x4132,0xb6,0xef,0x69,0xd9,0xdd,0x72,0x57,0x1d);
+DEFINE_GUID(ff_DXVA2_ModeHEVC_VLD_Main422_10_Intel, 0xe484dcb8, 0xcac9,0x4859,0x99,0xf5,0x5c,0x0d,0x45,0x06,0x90,0x89);
+DEFINE_GUID(ff_DXVA2_ModeHEVC_VLD_Main422_12_Intel, 0xc23dd857, 0x874b,0x423c,0xb6,0xe0,0x82,0xce,0xaa,0x9b,0x11,0x8a);
+DEFINE_GUID(ff_DXVA2_ModeHEVC_VLD_Main444_Intel,    0x41a5af96, 0xe415,0x4b0c,0x9d,0x03,0x90,0x78,0x58,0xe2,0x3e,0x78);
+DEFINE_GUID(ff_DXVA2_ModeHEVC_VLD_Main444_10_Intel, 0x6a6a81ba, 0x912a,0x485d,0xb5,0x7f,0xcc,0xd2,0xd3,0x7b,0x8d,0x94);
+DEFINE_GUID(ff_DXVA2_ModeHEVC_VLD_Main444_12_Intel, 0x5b08e35d, 0x0c66,0x4c51,0xa6,0xf1,0x89,0xd0,0x0c,0xb2,0xc1,0x97);
 DEFINE_GUID(ff_DXVA2_ModeVP9_VLD_Profile0,0x463707f8,0xa1d0,0x4585,0x87,0x6d,0x83,0xaa,0x6d,0x60,0xb8,0x9e);
 DEFINE_GUID(ff_DXVA2_ModeVP9_VLD_10bit_Profile2,0xa4c749ef,0x6ecf,0x48aa,0x84,0x48,0x50,0xa7,0xa1,0x16,0x5f,0xf7);
 DEFINE_GUID(ff_DXVA2_ModeAV1_VLD_Profile0,0xb8be4ccb,0xcf53,0x46ba,0x8d,0x59,0xd6,0xb8,0xa6,0xda,0x5d,0x2a);
@@ -70,6 +76,8 @@ static const int prof_hevc_main[]    = {AV_PROFILE_HEVC_MAIN,
                                         AV_PROFILE_UNKNOWN};
 static const int prof_hevc_main10[]  = {AV_PROFILE_HEVC_MAIN_10,
                                         AV_PROFILE_UNKNOWN};
+static const int prof_hevc_main_rext[] = {AV_PROFILE_HEVC_REXT,
+                                          AV_PROFILE_UNKNOWN};
 static const int prof_vp9_profile0[] = {AV_PROFILE_VP9_0,
                                         AV_PROFILE_UNKNOWN};
 static const int prof_vp9_profile2[] = {AV_PROFILE_VP9_2,
@@ -98,6 +106,14 @@ static const dxva_mode dxva_modes[] = {
     { &ff_DXVA2_ModeHEVC_VLD_Main10, AV_CODEC_ID_HEVC, prof_hevc_main10 },
     { &ff_DXVA2_ModeHEVC_VLD_Main,   AV_CODEC_ID_HEVC, prof_hevc_main },
 
+    /* Intel specific HEVC/H.265 Main Rext mode */
+    { &ff_DXVA2_ModeHEVC_VLD_Main12_Intel,     AV_CODEC_ID_HEVC, prof_hevc_main_rext },
+    { &ff_DXVA2_ModeHEVC_VLD_Main422_10_Intel, AV_CODEC_ID_HEVC, prof_hevc_main_rext },
+    { &ff_DXVA2_ModeHEVC_VLD_Main422_12_Intel, AV_CODEC_ID_HEVC, prof_hevc_main_rext },
+    { &ff_DXVA2_ModeHEVC_VLD_Main444_Intel,    AV_CODEC_ID_HEVC, prof_hevc_main_rext },
+    { &ff_DXVA2_ModeHEVC_VLD_Main444_10_Intel, AV_CODEC_ID_HEVC, prof_hevc_main_rext },
+    { &ff_DXVA2_ModeHEVC_VLD_Main444_12_Intel, AV_CODEC_ID_HEVC, prof_hevc_main_rext },
+
     /* VP8/9 */
     { &ff_DXVA2_ModeVP9_VLD_Profile0,       AV_CODEC_ID_VP9, prof_vp9_profile0 },
     { &ff_DXVA2_ModeVP9_VLD_10bit_Profile2, AV_CODEC_ID_VP9, prof_vp9_profile2 },
@@ -107,6 +123,22 @@ static const dxva_mode dxva_modes[] = {
 
     { NULL,                          0 },
 };
+
+static enum AVPixelFormat dxva_map_sw_to_sw_format(enum AVPixelFormat pix_fmt)
+{
+    switch (pix_fmt) {
+    case AV_PIX_FMT_YUV420P:   return AV_PIX_FMT_NV12;
+    case AV_PIX_FMT_YUV420P10: return AV_PIX_FMT_P010;
+    case AV_PIX_FMT_YUV420P12: return AV_PIX_FMT_P012;
+    case AV_PIX_FMT_YUV422P:   return AV_PIX_FMT_YUYV422;
+    case AV_PIX_FMT_YUV422P10: return AV_PIX_FMT_Y210;
+    case AV_PIX_FMT_YUV422P12: return AV_PIX_FMT_Y212;
+    case AV_PIX_FMT_YUV444P:   return AV_PIX_FMT_VUYX;
+    case AV_PIX_FMT_YUV444P10: return AV_PIX_FMT_XV30;
+    case AV_PIX_FMT_YUV444P12: return AV_PIX_FMT_XV36;
+    default:                   return AV_PIX_FMT_NV12;
+    }
+}
 
 static int dxva_get_decoder_configuration(AVCodecContext *avctx,
                                           const void *cfg_list,
@@ -246,7 +278,14 @@ static void dxva_list_guids_debug(AVCodecContext *avctx, void *service,
 #if CONFIG_DXVA2
         if (sctx->pix_fmt == AV_PIX_FMT_DXVA2_VLD) {
             const D3DFORMAT formats[] = {MKTAG('N', 'V', '1', '2'),
-                                         MKTAG('P', '0', '1', '0')};
+                                         MKTAG('P', '0', '1', '0'),
+                                         MKTAG('P', '0', '1', '6'),
+                                         MKTAG('Y', 'U', 'Y', '2'),
+                                         MKTAG('Y', '2', '1', '0'),
+                                         MKTAG('Y', '2', '1', '6'),
+                                         MKTAG('A', 'Y', 'U', 'V'),
+                                         MKTAG('Y', '4', '1', '0'),
+                                         MKTAG('Y', '4', '1', '6')};
             int i;
             for (i = 0; i < FF_ARRAY_ELEMS(formats); i++) {
                 if (dxva2_validate_output(service, *guid, &formats[i]))
@@ -259,12 +298,13 @@ static void dxva_list_guids_debug(AVCodecContext *avctx, void *service,
 }
 
 static int dxva_get_decoder_guid(AVCodecContext *avctx, void *service, void *surface_format,
-                                 unsigned guid_count, const GUID *guid_list, GUID *decoder_guid)
+                                 unsigned guid_count, const GUID *guid_list, GUID *decoder_guid, int guid_debug)
 {
     FFDXVASharedContext *sctx = DXVA_SHARED_CONTEXT(avctx);
     unsigned i, j;
 
-    dxva_list_guids_debug(avctx, service, guid_count, guid_list);
+    if (guid_debug)
+        dxva_list_guids_debug(avctx, service, guid_count, guid_list);
 
     *decoder_guid = ff_GUID_NULL;
     for (i = 0; dxva_modes[i].guid; i++) {
@@ -340,14 +380,28 @@ static int dxva2_get_decoder_configuration(AVCodecContext *avctx, const GUID *de
     return ret;
 }
 
+static D3DFORMAT dxva2_map_sw_to_hw_format(enum AVPixelFormat pix_fmt)
+{
+    switch (pix_fmt) {
+    case AV_PIX_FMT_NV12:    return MKTAG('N', 'V', '1', '2');
+    case AV_PIX_FMT_P010:    return MKTAG('P', '0', '1', '0');
+    case AV_PIX_FMT_P012:    return MKTAG('P', '0', '1', '6');
+    case AV_PIX_FMT_YUYV422: return MKTAG('Y', 'U', 'Y', '2');
+    case AV_PIX_FMT_Y210:    return MKTAG('Y', '2', '1', '0');
+    case AV_PIX_FMT_Y212:    return MKTAG('Y', '2', '1', '6');
+    case AV_PIX_FMT_VUYX:    return MKTAG('A', 'Y', 'U', 'V');
+    case AV_PIX_FMT_XV30:    return MKTAG('Y', '4', '1', '0');
+    case AV_PIX_FMT_XV36:    return MKTAG('Y', '4', '1', '6');
+    default:                 return D3DFMT_UNKNOWN;
+    }
+}
+
 static int dxva2_create_decoder(AVCodecContext *avctx)
 {
     FFDXVASharedContext *sctx = DXVA_SHARED_CONTEXT(avctx);
     GUID *guid_list;
     unsigned guid_count;
     GUID device_guid;
-    D3DFORMAT surface_format = avctx->sw_pix_fmt == AV_PIX_FMT_YUV420P10 ?
-                               MKTAG('P', '0', '1', '0') : MKTAG('N', 'V', '1', '2');
     DXVA2_VideoDesc desc = { 0 };
     DXVA2_ConfigPictureDecode config;
     HRESULT hr;
@@ -356,6 +410,7 @@ static int dxva2_create_decoder(AVCodecContext *avctx)
     AVHWFramesContext *frames_ctx = (AVHWFramesContext*)avctx->hw_frames_ctx->data;
     AVDXVA2FramesContext *frames_hwctx = frames_ctx->hwctx;
     AVDXVA2DeviceContext *device_hwctx = frames_ctx->device_ctx->hwctx;
+    D3DFORMAT surface_format = dxva2_map_sw_to_hw_format(frames_ctx->sw_format);
 
     hr = IDirect3DDeviceManager9_OpenDeviceHandle(device_hwctx->devmgr,
                                                   &device_handle);
@@ -380,7 +435,7 @@ static int dxva2_create_decoder(AVCodecContext *avctx)
     }
 
     ret = dxva_get_decoder_guid(avctx, sctx->dxva2_service, &surface_format,
-                                guid_count, guid_list, &device_guid);
+                                guid_count, guid_list, &device_guid, 1);
     CoTaskMemFree(guid_list);
     if (ret < 0) {
         goto fail;
@@ -456,34 +511,47 @@ static int d3d11va_get_decoder_configuration(AVCodecContext *avctx,
 static DXGI_FORMAT d3d11va_map_sw_to_hw_format(enum AVPixelFormat pix_fmt)
 {
     switch (pix_fmt) {
-    case AV_PIX_FMT_NV12:       return DXGI_FORMAT_NV12;
-    case AV_PIX_FMT_P010:       return DXGI_FORMAT_P010;
-    case AV_PIX_FMT_YUV420P:    return DXGI_FORMAT_420_OPAQUE;
-    default:                    return DXGI_FORMAT_UNKNOWN;
+    case AV_PIX_FMT_NV12:    return DXGI_FORMAT_NV12;
+    case AV_PIX_FMT_P010:    return DXGI_FORMAT_P010;
+    case AV_PIX_FMT_P012:    return DXGI_FORMAT_P016;
+    case AV_PIX_FMT_YUYV422: return DXGI_FORMAT_YUY2;
+    case AV_PIX_FMT_Y210:    return DXGI_FORMAT_Y210;
+    case AV_PIX_FMT_Y212:    return DXGI_FORMAT_Y216;
+    case AV_PIX_FMT_VUYX:    return DXGI_FORMAT_AYUV;
+    case AV_PIX_FMT_XV30:    return DXGI_FORMAT_Y410;
+    case AV_PIX_FMT_XV36:    return DXGI_FORMAT_Y416;
+    case AV_PIX_FMT_YUV420P: return DXGI_FORMAT_420_OPAQUE;
+    default:                 return DXGI_FORMAT_UNKNOWN;
     }
 }
 
-static int d3d11va_create_decoder(AVCodecContext *avctx)
+static unsigned d3d11va_prefer_array_of_tex(const AVCodecContext *avctx,
+                                            D3D11_VIDEO_DECODER_CONFIG config)
 {
-    FFDXVASharedContext *sctx = DXVA_SHARED_CONTEXT(avctx);
+    switch (avctx->codec_id) {
+    case AV_CODEC_ID_H264:
+    case AV_CODEC_ID_HEVC:
+    case AV_CODEC_ID_VP9:
+    case AV_CODEC_ID_AV1:
+        return (config.ConfigDecoderSpecific >> 14) & 1;
+    default:
+        return 0;
+    }
+}
+
+static int d3d11va_get_decoder_desc_and_config(AVCodecContext *avctx,
+                                               AVHWFramesContext *frames_ctx,
+                                               int guid_debug,
+                                               GUID *decoder_guid,
+                                               D3D11_VIDEO_DECODER_DESC *desc,
+                                               D3D11_VIDEO_DECODER_CONFIG *config)
+{
     GUID *guid_list;
     unsigned guid_count, i;
-    GUID decoder_guid;
-    D3D11_VIDEO_DECODER_DESC desc = { 0 };
-    D3D11_VIDEO_DECODER_CONFIG config;
-    AVHWFramesContext *frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
     AVD3D11VADeviceContext *device_hwctx = frames_ctx->device_ctx->hwctx;
-    AVD3D11VAFramesContext *frames_hwctx = frames_ctx->hwctx;
     DXGI_FORMAT surface_format = d3d11va_map_sw_to_hw_format(frames_ctx->sw_format);
-    D3D11_TEXTURE2D_DESC texdesc;
     HRESULT hr;
     int ret;
-
-    if (!frames_hwctx->texture) {
-        av_log(avctx, AV_LOG_ERROR, "AVD3D11VAFramesContext.texture not set.\n");
-        return AVERROR(EINVAL);
-    }
-    ID3D11Texture2D_GetDesc(frames_hwctx->texture, &texdesc);
 
     guid_count = ID3D11VideoDevice_GetVideoDecoderProfileCount(device_hwctx->video_device);
     guid_list = av_malloc_array(guid_count, sizeof(*guid_list));
@@ -502,36 +570,71 @@ static int d3d11va_create_decoder(AVCodecContext *avctx)
     }
 
     ret = dxva_get_decoder_guid(avctx, device_hwctx->video_device, &surface_format,
-                                guid_count, guid_list, &decoder_guid);
+                                guid_count, guid_list, decoder_guid, guid_debug);
     av_free(guid_list);
     if (ret < 0)
         return AVERROR(EINVAL);
 
-    desc.SampleWidth  = avctx->coded_width;
-    desc.SampleHeight = avctx->coded_height;
-    desc.OutputFormat = surface_format;
-    desc.Guid         = decoder_guid;
+    desc->SampleWidth  = avctx->coded_width;
+    desc->SampleHeight = avctx->coded_height;
+    desc->OutputFormat = surface_format;
+    desc->Guid         = *decoder_guid;
 
-    ret = d3d11va_get_decoder_configuration(avctx, device_hwctx->video_device, &desc, &config);
+    ret = d3d11va_get_decoder_configuration(avctx, device_hwctx->video_device, desc, config);
     if (ret < 0)
         return AVERROR(EINVAL);
 
-    sctx->d3d11_views = av_calloc(texdesc.ArraySize, sizeof(sctx->d3d11_views[0]));
+    return 0;
+}
+
+static int d3d11va_create_decoder(AVCodecContext *avctx)
+{
+    FFDXVASharedContext *sctx = DXVA_SHARED_CONTEXT(avctx);
+    unsigned i;
+    GUID decoder_guid;
+    D3D11_VIDEO_DECODER_DESC desc = { 0 };
+    D3D11_VIDEO_DECODER_CONFIG config;
+    AVHWFramesContext *frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
+    AVD3D11VADeviceContext *device_hwctx = frames_ctx->device_ctx->hwctx;
+    AVD3D11VAFramesContext *frames_hwctx = frames_ctx->hwctx;
+    HRESULT hr;
+    int ret, array_of_tex;
+
+    if ((ret = d3d11va_get_decoder_desc_and_config(avctx, frames_ctx, 1, &decoder_guid, &desc, &config)) < 0)
+        return AVERROR(EINVAL);
+
+    array_of_tex = !frames_hwctx->texture && d3d11va_prefer_array_of_tex(avctx, config);
+    av_log(avctx, AV_LOG_VERBOSE, "Creating the decoder with %s.\n",
+           array_of_tex ? "an array of textures" : "a texture array");
+
+    if (array_of_tex) {
+        for (i = 0; i < frames_ctx->initial_pool_size; i++) {
+            if (!frames_hwctx->texture_infos || !frames_hwctx->texture_infos[i].texture) {
+                av_log(avctx, AV_LOG_ERROR, "AVD3D11VAFramesContext.texture_infos[%d].texture not set.\n", i);
+                return AVERROR(EINVAL);
+            }
+        }
+    } else if (!frames_hwctx->texture) {
+        av_log(avctx, AV_LOG_ERROR, "AVD3D11VAFramesContext.texture not set.\n");
+        return AVERROR(EINVAL);
+    }
+
+    sctx->d3d11_views = av_calloc(frames_ctx->initial_pool_size, sizeof(sctx->d3d11_views[0]));
     if (!sctx->d3d11_views)
         return AVERROR(ENOMEM);
-    sctx->nb_d3d11_views = texdesc.ArraySize;
+    sctx->nb_d3d11_views = frames_ctx->initial_pool_size;
 
     for (i = 0; i < sctx->nb_d3d11_views; i++) {
         D3D11_VIDEO_DECODER_OUTPUT_VIEW_DESC viewDesc = {
             .DecodeProfile = decoder_guid,
             .ViewDimension = D3D11_VDOV_DIMENSION_TEXTURE2D,
             .Texture2D = {
-                .ArraySlice = i,
+                .ArraySlice = array_of_tex ? 0 : i,
             }
         };
+        ID3D11Texture2D *tex = array_of_tex ? frames_hwctx->texture_infos[i].texture : frames_hwctx->texture;
         hr = ID3D11VideoDevice_CreateVideoDecoderOutputView(device_hwctx->video_device,
-                                                            (ID3D11Resource*) frames_hwctx->texture,
-                                                            &viewDesc,
+                                                            (ID3D11Resource*) tex, &viewDesc,
                                                             (ID3D11VideoDecoderOutputView**) &sctx->d3d11_views[i]);
         if (FAILED(hr)) {
             av_log(avctx, AV_LOG_ERROR, "Could not create the decoder output view %d\n", i);
@@ -547,7 +650,8 @@ static int d3d11va_create_decoder(AVCodecContext *avctx)
     }
 
     sctx->d3d11_config = config;
-    sctx->d3d11_texture = frames_hwctx->texture;
+    sctx->d3d11_texture = array_of_tex ? NULL : frames_hwctx->texture;
+    sctx->d3d11_texture_infos = array_of_tex ? frames_hwctx->texture_infos : NULL;
 
     sctx->decoder_ref = bufref_wrap_interface((IUnknown *)sctx->d3d11_decoder);
     if (!sctx->decoder_ref)
@@ -616,6 +720,18 @@ int ff_dxva2_common_frame_params(AVCodecContext *avctx,
     else
         surface_alignment = 16;
 
+#if CONFIG_D3D11VA
+    /* align surfaces to 32 on Intel to keep in line with the MSDK impl,
+    which avoids the unnecessary resizing when mapping to QSV */
+    if (device_ctx->type == AV_HWDEVICE_TYPE_D3D11VA) {
+        AVD3D11VADeviceContext *device_hwctx = device_ctx->hwctx;
+        if (device_hwctx->device_desc.VendorId == 0x8086) {
+            av_log(avctx, AV_LOG_DEBUG, "Intel DX11 device found, alignment changed!\n");
+            surface_alignment = 32;
+        }
+    }
+#endif
+
     /* 1 base work surface */
     num_surfaces = 1;
 
@@ -623,12 +739,11 @@ int ff_dxva2_common_frame_params(AVCodecContext *avctx,
     if (avctx->codec_id == AV_CODEC_ID_H264 || avctx->codec_id == AV_CODEC_ID_HEVC)
         num_surfaces += 16;
     else if (avctx->codec_id == AV_CODEC_ID_VP9 || avctx->codec_id == AV_CODEC_ID_AV1)
-        num_surfaces += 8;
+        num_surfaces += 8 + 4; /* 4 base work surface in vpp async */
     else
-        num_surfaces += 2;
+        num_surfaces += 2 + 4; /* 4 base work surface in vpp async */
 
-    frames_ctx->sw_format = avctx->sw_pix_fmt == AV_PIX_FMT_YUV420P10 ?
-                            AV_PIX_FMT_P010 : AV_PIX_FMT_NV12;
+    frames_ctx->sw_format = dxva_map_sw_to_sw_format(avctx->sw_pix_fmt);
     frames_ctx->width = FFALIGN(avctx->coded_width, surface_alignment);
     frames_ctx->height = FFALIGN(avctx->coded_height, surface_alignment);
     frames_ctx->initial_pool_size = num_surfaces;
@@ -645,8 +760,20 @@ int ff_dxva2_common_frame_params(AVCodecContext *avctx,
 #if CONFIG_D3D11VA
     if (frames_ctx->format == AV_PIX_FMT_D3D11) {
         AVD3D11VAFramesContext *frames_hwctx = frames_ctx->hwctx;
+        AVD3D11VADeviceContext *device_hwctx = device_ctx->hwctx;
+        GUID decoder_guid;
+        D3D11_VIDEO_DECODER_DESC desc = { 0 };
+        D3D11_VIDEO_DECODER_CONFIG config;
 
         frames_hwctx->BindFlags |= D3D11_BIND_DECODER;
+        frames_hwctx->require_sync = device_hwctx->device_desc.VendorId == 0x8086;
+
+        if (!d3d11va_get_decoder_desc_and_config(avctx, frames_ctx, 0, &decoder_guid, &desc, &config)) {
+            frames_hwctx->array_of_tex = d3d11va_prefer_array_of_tex(avctx, config);
+
+            if (frames_hwctx->array_of_tex && device_hwctx->device_desc.VendorId == 0x1002)
+                frames_hwctx->require_sync = 1;
+        }
     }
 #endif
 
@@ -751,14 +878,40 @@ int ff_dxva2_decode_uninit(AVCodecContext *avctx)
     return 0;
 }
 
+#if CONFIG_D3D11VA
+static int d3d11va_get_surface_index(const AVCodecContext *avctx,
+                                     const AVFrame *frame)
+{
+    if (frame->format == AV_PIX_FMT_D3D11) {
+        FFDXVASharedContext *sctx = DXVA_SHARED_CONTEXT(avctx);
+        AVDXVAContext *ctx = DXVA_CONTEXT(avctx);
+        int i, array_of_tex = !sctx->d3d11_texture &&
+            d3d11va_prefer_array_of_tex(avctx, *(D3D11VA_CONTEXT(ctx)->cfg));
+        ID3D11Texture2D *tex = (ID3D11Texture2D *)frame->data[0];
+        intptr_t index = (intptr_t)frame->data[1];
+
+        if (array_of_tex) {
+            for (i = 0; i < sctx->nb_d3d11_views; i++) {
+                if (sctx->d3d11_texture_infos[i].texture == tex)
+                    return i;
+            }
+        } else
+            return index;
+    }
+    return -1;
+}
+#endif
+
 static void *get_surface(const AVCodecContext *avctx, const AVFrame *frame)
 {
 #if CONFIG_D3D11VA
     if (frame->format == AV_PIX_FMT_D3D11) {
         FFDXVASharedContext *sctx = DXVA_SHARED_CONTEXT(avctx);
-        intptr_t index = (intptr_t)frame->data[1];
+        ID3D11Texture2D *tex = (ID3D11Texture2D *)frame->data[0];
+        int index = d3d11va_get_surface_index(avctx, frame);
+
         if (index < 0 || index >= sctx->nb_d3d11_views ||
-            sctx->d3d11_texture != (ID3D11Texture2D *)frame->data[0]) {
+            (sctx->d3d11_texture && sctx->d3d11_texture != tex)) {
             av_log((void *)avctx, AV_LOG_ERROR, "get_buffer frame is invalid!\n");
             return NULL;
         }
@@ -780,8 +933,10 @@ unsigned ff_dxva2_get_surface_index(const AVCodecContext *avctx,
     }
 #endif
 #if CONFIG_D3D11VA
-    if (avctx->pix_fmt == AV_PIX_FMT_D3D11)
-        return (intptr_t)frame->data[1];
+    if (avctx->pix_fmt == AV_PIX_FMT_D3D11) {
+        int index = d3d11va_get_surface_index(avctx, frame);
+        return FFMAX(index, 0);
+    }
     if (avctx->pix_fmt == AV_PIX_FMT_D3D11VA_VLD) {
         D3D11_VIDEO_DECODER_OUTPUT_VIEW_DESC viewDesc;
         ID3D11VideoDecoderOutputView_GetDesc((ID3D11VideoDecoderOutputView*) surface, &viewDesc);

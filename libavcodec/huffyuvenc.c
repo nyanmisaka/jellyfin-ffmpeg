@@ -28,6 +28,13 @@
  * huffyuv encoder
  */
 
+ // GCC Vectorize with AVX will break huffyuv unit tests.
+#if defined(__GNUC__) && !defined(__clang__)
+    #if (__GNUC__ > 6)
+        #pragma GCC optimize ("no-tree-vectorize")
+    #endif
+#endif
+
 #include "config_components.h"
 
 #include "avcodec.h"

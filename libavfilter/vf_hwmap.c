@@ -22,6 +22,16 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 
+#if HAVE_OPENCL_D3D11
+#include "libavutil/hwcontext_d3d11va.h"
+#endif
+
+#if CONFIG_VULKAN
+#include "libavutil/hwcontext_vulkan.h"
+#include "libavutil/vulkan_loader.h"
+#include "libavutil/vulkan.h"
+#endif
+
 #include "avfilter.h"
 #include "filters.h"
 #include "formats.h"
@@ -35,6 +45,11 @@ typedef struct HWMapContext {
     int            mode;
     char          *derive_device_type;
     int            reverse;
+
+#if CONFIG_VULKAN
+    FFVulkanFunctions vkfn;
+    int               vkfn_loaded;
+#endif
 } HWMapContext;
 
 static int hwmap_query_formats(const AVFilterContext *avctx,
@@ -126,6 +141,12 @@ static int hwmap_config_output(AVFilterLink *outlink)
                 goto fail;
             }
 
+            if (hwfc->initial_pool_size) {
+                outlink->fixed_pool_size = hwfc->initial_pool_size;
+                av_log(avctx, AV_LOG_DEBUG, "Saved the fixed_pool_size from "
+                       "initial_pool_size: %d\n", outlink->fixed_pool_size);
+            }
+
         } else if (inlink->format == hwfc->format &&
                    (desc->flags & AV_PIX_FMT_FLAG_HWACCEL) &&
                    ctx->reverse) {
@@ -135,6 +156,9 @@ static int hwmap_config_output(AVFilterLink *outlink)
             // mapped from that back to the source type.
             AVBufferRef *source;
             AVHWFramesContext *frames;
+#if HAVE_OPENCL_D3D11
+            D3D11_TEXTURE2D_DESC texDesc = { .BindFlags = D3D11_BIND_DECODER, };
+#endif
 
             ctx->hwframes_ref = av_hwframe_ctx_alloc(device);
             if (!ctx->hwframes_ref) {
@@ -148,8 +172,19 @@ static int hwmap_config_output(AVFilterLink *outlink)
             frames->width     = hwfc->width;
             frames->height    = hwfc->height;
 
-            if (avctx->extra_hw_frames >= 0)
-                frames->initial_pool_size = 2 + avctx->extra_hw_frames;
+            if (inlink->fixed_pool_size)
+                frames->initial_pool_size = inlink->fixed_pool_size;
+
+            if (frames->initial_pool_size == 0) {
+                // Dynamic allocation.
+            } else {
+                frames->initial_pool_size += (avctx->extra_hw_frames > 2 ? avctx->extra_hw_frames : 2);
+            }
+
+#if HAVE_OPENCL_D3D11
+            if (frames->format == AV_PIX_FMT_D3D11)
+                frames->user_opaque = &texDesc;
+#endif
 
             err = av_hwframe_ctx_init(ctx->hwframes_ref);
             if (err < 0) {
@@ -168,6 +203,18 @@ static int hwmap_config_output(AVFilterLink *outlink)
                        "derived source frames context: %d.\n", err);
                 goto fail;
             }
+
+#if CONFIG_VULKAN
+            if (inl->hw_frames_ctx && inlink->format == AV_PIX_FMT_VULKAN) {
+                AVHWFramesContext     *hwfc_src = (AVHWFramesContext *)inl->hw_frames_ctx->data;
+                AVVulkanFramesContext *vkfc_src = hwfc_src->hwctx;
+                AVHWFramesContext     *hwfc_dst = (AVHWFramesContext *)source->data;
+                AVVulkanFramesContext *vkfc_dst = hwfc_dst->hwctx;
+
+                // Passthrough the VK_IMAGE_USAGE_*_BIT
+                vkfc_dst->usage = vkfc_src->usage;
+            }
+#endif
 
             // Here is the naughty bit.  This overwriting changes what
             // ff_get_video_buffer() in the previous filter returns -
@@ -350,6 +397,45 @@ static int hwmap_filter_frame(AVFilterLink *link, AVFrame *input)
     err = av_frame_copy_props(map, input);
     if (err < 0)
         goto fail;
+
+#if CONFIG_VULKAN
+    if (ctx->reverse &&
+        input->hw_frames_ctx && map->hw_frames_ctx &&
+        input->format == AV_PIX_FMT_VULKAN &&
+        (map->format == AV_PIX_FMT_VAAPI ||
+         map->format == AV_PIX_FMT_DRM_PRIME)) {
+        // If we mapped backwards from vulkan to drm_prime, we need
+        // to wait for the AVVkFrame semaphores to be signaled.
+        AVHWFramesContext     *hwfc    = (AVHWFramesContext *)input->hw_frames_ctx->data;
+        AVVulkanDeviceContext *vk_dev  = hwfc->device_ctx->hwctx;
+        AVVkFrame             *vkf     = (AVVkFrame *)input->data[0];
+        const int              nb_sems = vkf ? ff_vk_count_images(vkf) : 0;
+
+        if (hwfc->device_ctx->type != AV_HWDEVICE_TYPE_VULKAN || !vkf || !nb_sems)
+            goto exit;
+
+        if (!ctx->vkfn_loaded) {
+            uint64_t exts = ff_vk_extensions_to_mask(vk_dev->enabled_dev_extensions,
+                                                     vk_dev->nb_enabled_dev_extensions);
+            err = ff_vk_load_functions(hwfc->device_ctx, &ctx->vkfn, exts, 1, 1);
+            if (err < 0)
+                goto fail;
+            ctx->vkfn_loaded = 1;
+        }
+        if (ctx->vkfn.WaitSemaphores) {
+            VkSemaphoreWaitInfo wait_info = {
+                .sType          = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+                .flags          = 0x0,
+                .semaphoreCount = nb_sems,
+                .pSemaphores    = vkf->sem,
+                .pValues        = vkf->sem_value,
+            };
+            ctx->vkfn.WaitSemaphores(vk_dev->act_dev, &wait_info, UINT64_MAX);
+            av_log(avctx, AV_LOG_DEBUG, "Vulkan sems for reverse-mapped DRM objects signaled!\n");
+        }
+    }
+exit:
+#endif
 
     av_frame_free(&input);
 

@@ -23,6 +23,7 @@
 #include "libavutil/bswap.h"
 #include "libavutil/crc.h"
 #include "libavutil/dict.h"
+#include "libavutil/dovi_meta.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/mathematics.h"
 #include "libavutil/mem.h"
@@ -38,6 +39,7 @@
 
 #include "avformat.h"
 #include "avio_internal.h"
+#include "dovi_isom.h"
 #include "internal.h"
 #include "mpegts.h"
 #include "mux.h"
@@ -350,6 +352,52 @@ static void put_registration_descriptor(uint8_t **q_ptr, uint32_t tag)
     *q++ = tag >> 16;
     *q++ = tag >> 24;
     *q_ptr = q;
+}
+
+static int put_dovi_descriptor(AVFormatContext *s, uint8_t **q_ptr,
+                               const AVDOVIDecoderConfigurationRecord *dovi)
+{
+    uint16_t val16;
+    uint8_t *q = *q_ptr;
+
+    if (!dovi)
+        return AVERROR(ENOMEM);
+
+    if (!dovi->bl_present_flag) {
+        av_log(s, AV_LOG_ERROR,
+               "EL only DOVI stream is not supported!\n");
+        return AVERROR_INVALIDDATA;
+    }
+
+    put_registration_descriptor(&q, MKTAG('D', 'O', 'V', 'I')); // format_identifier
+
+    /* DOVI Video Stream Descriptor Syntax */
+    *q++ = 0xb0;        // descriptor_tag
+    *q++ = 0x05;        // descriptor_length
+    *q++ = dovi->dv_version_major;
+    *q++ = dovi->dv_version_minor;
+
+    val16 = (dovi->dv_profile       & 0x7f) << 9 | // 7 bits
+            (dovi->dv_level         & 0x3f) << 3 | // 6 bits
+            (dovi->rpu_present_flag & 0x01) << 2 | // 1 bit
+            (dovi->el_present_flag  & 0x01) << 1 | // 1 bit
+            (dovi->bl_present_flag  & 0x01);       // 1 bit
+    put16(&q, val16);
+
+#if 0
+    // TODO: support dependency_pid (EL only stream)
+    // descriptor_length: 0x05->0x07
+    if (!bl_present_flag) {
+        val16 = (dependency_pid & 0x1fff) << 3; // 13+3 bits
+        put16(&q, val16);
+    }
+#endif
+
+    *q++ = (dovi->dv_bl_signal_compatibility_id & 0x0f) << 4; // 4+4 bits
+
+    *q_ptr = q;
+
+    return 0;
 }
 
 static int get_dvb_stream_type(AVFormatContext *s, AVStream *st)
@@ -807,7 +855,18 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
             } else if (stream_type == STREAM_TYPE_VIDEO_VC1) {
                 put_registration_descriptor(&q, MKTAG('V', 'C', '-', '1'));
             } else if (stream_type == STREAM_TYPE_VIDEO_HEVC && s->strict_std_compliance <= FF_COMPLIANCE_NORMAL) {
-                put_registration_descriptor(&q, MKTAG('H', 'E', 'V', 'C'));
+                const AVPacketSideData *sd = av_packet_side_data_get(st->codecpar->coded_side_data,
+                                                                     st->codecpar->nb_coded_side_data, AV_PKT_DATA_DOVI_CONF);
+                const AVDOVIDecoderConfigurationRecord *dovi = sd ? (const AVDOVIDecoderConfigurationRecord *)sd->data : NULL;
+                if (dovi &&
+                    dovi->bl_present_flag &&
+                    s->strict_std_compliance <= FF_COMPLIANCE_UNOFFICIAL &&
+                    !ff_isom_validate_dovi_config(dovi, st->codecpar, MKTAG('d', 'v', 'h', '1'))) { // always assume tag is valid
+                    if (put_dovi_descriptor(s, &q, dovi) < 0)
+                        break;
+                } else {
+                    put_registration_descriptor(&q, MKTAG('H', 'E', 'V', 'C'));
+                }
             } else if (stream_type == STREAM_TYPE_VIDEO_CAVS || stream_type == STREAM_TYPE_VIDEO_AVS2 ||
                        stream_type == STREAM_TYPE_VIDEO_AVS3) {
                 put_registration_descriptor(&q, MKTAG('A', 'V', 'S', 'V'));

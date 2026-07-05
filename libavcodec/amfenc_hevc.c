@@ -16,9 +16,11 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/avassert.h"
 #include "libavutil/internal.h"
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
+#include "libavutil/pixdesc.h"
 #include "amfenc.h"
 #include "codec_internal.h"
 #include <AMF/components/PreAnalysis.h>
@@ -87,7 +89,7 @@ static const AVOption options[] = {
     { "gop",            "", 0, AV_OPT_TYPE_CONST, { .i64 = AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE_GOP_ALIGNED }, 0, 0, VE, .unit = "hdrmode" },
     { "idr",            "", 0, AV_OPT_TYPE_CONST, { .i64 = AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE_IDR_ALIGNED }, 0, 0, VE, .unit = "hdrmode" },
 
-    { "async_depth",    "Set maximum encoding parallelism. Higher values increase output latency.",             OFFSET(hwsurfaces_in_queue_max), AV_OPT_TYPE_INT, {.i64 = 16 }, 1, MAX_LOOKAHEAD_DEPTH + 1, VE },
+    { "async_depth",    "Set maximum encoding parallelism. Higher values increase output latency.",             OFFSET(hwsurfaces_in_queue_max), AV_OPT_TYPE_INT, {.i64 = 8 }, 1, MAX_LOOKAHEAD_DEPTH + 1, VE },
 
     { "high_motion_quality_boost_enable",   "Enable High motion quality boost mode",  OFFSET(hw_high_motion_quality_boost), AV_OPT_TYPE_BOOL,   {.i64 = -1 }, -1, 1, VE },
     { "gops_per_idr",   "GOPs per IDR 0-no IDR will be inserted",   OFFSET(gops_per_idr),  AV_OPT_TYPE_INT,  { .i64 = 1  },  0, INT_MAX, VE },
@@ -106,7 +108,7 @@ static const AVOption options[] = {
     { "me_half_pel",    "Enable ME Half Pixel",                     OFFSET(me_half_pel),   AV_OPT_TYPE_BOOL,{ .i64 = -1 },  -1, 1, VE },
     { "me_quarter_pel", "Enable ME Quarter Pixel ",                 OFFSET(me_quarter_pel),AV_OPT_TYPE_BOOL,{ .i64 = -1 },  -1, 1, VE },
 
-    { "forced_idr",     "Force I frames to be IDR frames",          OFFSET(forced_idr)    ,AV_OPT_TYPE_BOOL,{ .i64 = 0  }, 0, 1, VE },
+    { "forced_idr",     "Force I frames to be IDR frames",          OFFSET(forced_idr)    ,AV_OPT_TYPE_BOOL,{ .i64 = 1  }, 0, 1, VE },
     { "aud",            "Inserts AU Delimiter NAL unit",            OFFSET(aud)           ,AV_OPT_TYPE_BOOL,{ .i64 = -1 }, -1, 1, VE },
 
     { "smart_access_video",     "Enable Smart Access Video to enhance  performance by utilizing both APU and dGPU memory access",        OFFSET(smart_access_video), AV_OPT_TYPE_BOOL, {.i64 = -1  }, -1, 1, VE},
@@ -166,6 +168,7 @@ static av_cold int amf_encode_init_hevc(AVCodecContext *avctx)
     AMFEncoderContext  *ctx = avctx->priv_data;
     AMFVariantStruct    var = {0};
     amf_int64           profile = 0;
+    amf_int64           profile_from_bitdepth = 0;
     amf_int64           profile_level = 0;
     AMFBuffer          *buffer;
     AMFGuid             guid;
@@ -175,6 +178,7 @@ static av_cold int amf_encode_init_hevc(AVCodecContext *avctx)
     amf_int64           bit_depth;
     amf_int64           color_profile;
     enum                AVPixelFormat pix_fmt;
+    const AVPixFmtDescriptor *pix_desc;
 
     if (avctx->framerate.num > 0 && avctx->framerate.den > 0) {
         framerate = AMFConstructRate(avctx->framerate.num, avctx->framerate.den);
@@ -243,31 +247,41 @@ static av_cold int amf_encode_init_hevc(AVCodecContext *avctx)
 
     // Color bit depth
     pix_fmt = avctx->hw_frames_ctx ? ((AVHWFramesContext*)avctx->hw_frames_ctx->data)->sw_format
-                                    : avctx->pix_fmt;
-
+                                   : avctx->pix_fmt;
+    pix_desc = av_pix_fmt_desc_get(pix_fmt);
+    av_assert0(pix_desc);
     bit_depth = ctx->bit_depth;
-    if(bit_depth == AMF_COLOR_BIT_DEPTH_UNDEFINED){
-        bit_depth = pix_fmt == AV_PIX_FMT_P010 ? AMF_COLOR_BIT_DEPTH_10 : AMF_COLOR_BIT_DEPTH_8;
+    if (bit_depth == AMF_COLOR_BIT_DEPTH_UNDEFINED) {
+        bit_depth = pix_desc->comp[0].depth >= 10 ? AMF_COLOR_BIT_DEPTH_10 : AMF_COLOR_BIT_DEPTH_8;
     }
     AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_COLOR_BIT_DEPTH, bit_depth);
+
+    // HEVC profile follows target bit depth
+    profile_from_bitdepth = bit_depth == AMF_COLOR_BIT_DEPTH_10 ? AMF_VIDEO_ENCODER_HEVC_PROFILE_MAIN_10
+                                                                : AMF_VIDEO_ENCODER_HEVC_PROFILE_MAIN;
+    if (profile != profile_from_bitdepth) {
+        AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_PROFILE, profile_from_bitdepth);
+        if (profile != 0) {
+            av_log(avctx, AV_LOG_WARNING, "The video profile and bit depth did not match, but this has been corrected\n");
+        }
+    }
+    avctx->profile = bit_depth == AMF_COLOR_BIT_DEPTH_10 ? AV_PROFILE_HEVC_MAIN_10 : AV_PROFILE_HEVC_MAIN;
 
     // Color profile
     color_profile = ff_amf_get_color_profile(avctx);
     AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_OUTPUT_COLOR_PROFILE, color_profile);
 
     // Color Range (Support for older Drivers)
-    AMF_ASSIGN_PROPERTY_BOOL(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_NOMINAL_RANGE, !!(avctx->color_range == AVCOL_RANGE_JPEG));
+    AMF_ASSIGN_PROPERTY_BOOL(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_OUTPUT_FULL_RANGE_COLOR, (avctx->color_range == AVCOL_RANGE_JPEG));
 
-    // Color Transfer Characteristics (AMF matches ISO/IEC)
-    if(avctx->color_trc != AVCOL_TRC_UNSPECIFIED && (pix_fmt == AV_PIX_FMT_NV12 || pix_fmt == AV_PIX_FMT_P010)){
+    if (!(pix_desc->flags & AV_PIX_FMT_FLAG_RGB)) {
+        // Color Transfer Characteristics (AMF matches ISO/IEC)
         // if input is YUV, color_trc is for VUI only - any value
         // AMF VCN color conversion supports only specific output transfer characteristic SMPTE2084 for 10-bit and BT709 for 8-bit
         // vpp_amf supports more
         AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_OUTPUT_TRANSFER_CHARACTERISTIC, avctx->color_trc);
-    }
 
-    // Color Primaries (AMF matches ISO/IEC)
-    if(avctx->color_primaries != AVCOL_PRI_UNSPECIFIED && (pix_fmt == AV_PIX_FMT_NV12 || pix_fmt == AV_PIX_FMT_P010)){
+        // Color Primaries (AMF matches ISO/IEC)
         // if input is YUV, color_primaries are for VUI only
         // AMF VCN color conversion supports only specific output primaries BT2020 for 10-bit and BT709 for 8-bit
         // vpp_amf supports more
@@ -472,29 +486,56 @@ static av_cold int amf_encode_init_hevc(AVCodecContext *avctx)
         AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MAX_AU_SIZE, ctx->max_au_size);
     }
 
-    if (ctx->min_qp_i != -1) {
-        AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MIN_QP_I, ctx->min_qp_i);
-    } else if (avctx->qmin != -1) {
-        int qval = avctx->qmin > 51 ? 51 : avctx->qmin;
-        AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MIN_QP_I, qval);
-    }
-    if (ctx->max_qp_i != -1) {
-        AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MAX_QP_I, ctx->max_qp_i);
-    } else if (avctx->qmax != -1) {
-        int qval = avctx->qmax > 51 ? 51 : avctx->qmax;
-        AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MAX_QP_I, qval);
-    }
-    if (ctx->min_qp_p != -1) {
-        AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MIN_QP_P, ctx->min_qp_p);
-    } else if (avctx->qmin != -1) {
-        int qval = avctx->qmin > 51 ? 51 : avctx->qmin;
-        AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MIN_QP_P, qval);
-    }
-    if (ctx->max_qp_p != -1) {
-        AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MAX_QP_P, ctx->max_qp_p);
-    } else if (avctx->qmax != -1) {
-        int qval = avctx->qmax > 51 ? 51 : avctx->qmax;
-        AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MAX_QP_P, qval);
+    if (ctx->rate_control_mode == AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_CONSTANT_QP) {
+        AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MIN_QP_I, 0);
+        AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MAX_QP_I, 51);
+        AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MIN_QP_P, 0);
+        AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MAX_QP_P, 51);
+    } else {
+        if (ctx->min_qp_i != -1) {
+            AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MIN_QP_I, ctx->min_qp_i);
+        } else if (avctx->qmin != -1) {
+            int qval = avctx->qmin > 51 ? 51 : avctx->qmin;
+            AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MIN_QP_I, qval);
+        }
+        if (ctx->max_qp_i != -1) {
+           AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MAX_QP_I, ctx->max_qp_i);
+        } else if (avctx->qmax != -1) {
+            int qval = avctx->qmax > 51 ? 51 : avctx->qmax;
+            AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MAX_QP_I, qval);
+        }
+        if (ctx->min_qp_p != -1) {
+            AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MIN_QP_P, ctx->min_qp_p);
+        } else if (avctx->qmin != -1) {
+            int qval = avctx->qmin > 51 ? 51 : avctx->qmin;
+            AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MIN_QP_P, qval);
+        }
+        if (ctx->max_qp_p != -1) {
+            AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MAX_QP_P, ctx->max_qp_p);
+        } else if (avctx->qmax != -1) {
+            int qval = avctx->qmax > 51 ? 51 : avctx->qmax;
+            AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MAX_QP_P, qval);
+        }
+        /* Custom tuning */
+        if (ctx->min_qp_i == -1 && ctx->max_qp_i == -1 && ctx->min_qp_p == -1 && ctx->max_qp_p == -1 &&
+            avctx->qmin == -1 && avctx->qmax == -1) {
+            switch (ctx->usage) {
+            case AMF_VIDEO_ENCODER_HEVC_USAGE_TRANSCONDING:
+                AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MIN_QP_I, 18);
+                AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MAX_QP_I, 46);
+                AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MIN_QP_P, 18);
+                AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MAX_QP_P, 46);
+                break;
+            case AMF_VIDEO_ENCODER_HEVC_USAGE_ULTRA_LOW_LATENCY:
+            case AMF_VIDEO_ENCODER_HEVC_USAGE_LOW_LATENCY:
+            case AMF_VIDEO_ENCODER_HEVC_USAGE_WEBCAM:
+                AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MIN_QP_I, 22);
+                AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MAX_QP_I, 48);
+                AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MIN_QP_P, 22);
+                AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_HEVC_MAX_QP_P, 48);
+                break;
+            }
+        }
     }
 
     if (ctx->qp_p != -1) {
@@ -570,7 +611,7 @@ const FFCodec ff_hevc_amf_encoder = {
                       AV_CODEC_CAP_DR1,
     .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE |
                       FF_CODEC_CAP_INIT_CLEANUP,
-    CODEC_PIXFMTS_ARRAY(ff_amf_pix_fmts),
+    CODEC_PIXFMTS_ARRAY(ff_amf_pix_fmts_10b_8b),
     .color_ranges   = AVCOL_RANGE_MPEG | AVCOL_RANGE_JPEG,
     .p.wrapper_name = "amf",
     .hw_configs     = ff_amfenc_hw_configs,

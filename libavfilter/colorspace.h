@@ -23,10 +23,71 @@
 #include "libavutil/csp.h"
 #include "libavutil/frame.h"
 #include "libavutil/pixfmt.h"
+#include "libavutil/dovi_meta.h"
 
 #define REFERENCE_WHITE 100.0f
+#define REFERENCE_WHITE_ALT 203.0f
+#define REFERENCE_WHITE_HLG 3.17955f
+// BT.2446 Method B parameters for HLG to SDR
+#define BT2446B_HLG_LW 291.0f
+#define BT2446B_HLG_GAMMA 1.03f
+#define ST2084_MAX_LUMINANCE 10000.0f
+#define ARIB_B67_MAX_LUMINANCE 1000.0f
+#define ST2084_M1 0.1593017578125f
+#define ST2084_M2 78.84375f
+#define ST2084_C1 0.8359375f
+#define ST2084_C2 18.8515625f
+#define ST2084_C3 18.6875f
+#define ARIB_B67_A 0.17883277f
+#define ARIB_B67_B 0.28466892f
+#define ARIB_B67_C 0.55991073f
+#define FLOAT_EPS 1e-6f
+
+/*
+ * Pre-calculated constants used for YCbCr narrow to full range scaling
+ * The base formula is the quantization formula derived from BT.2100 Table 9:
+ * Where Y' = Round [(219 * E′ + 16) * 2^(n−8)],
+ * Cb',Cr' = Round [(224 * E′ + 128) * 2^(n−8)]
+ * where E' is the signal value in [0,1] range and n is the bit depth. Round is rounding towards 0.
+ * For inputs, the inverse is used where we are solving for E' for a given Y'Cb'Cr' normalized by GPU
+ * in [0,1] range. The GPU will interpret color as a 16bit int value, and solving for E' becomes:
+ * E' = (Y' - 2^(n-4)) / (219 * 2^(n-8))
+ * E' = (Cb'Cr' - 2^(n-1)) / (7 * 2^(n-3))
+ * Y' and Cb'Cr' is in the range of [0, 2^n - 1] in original formula, we need to scale the value normalized to [0,1]:
+ * C = Y'Cb'Cr' * (2^n - 1)
+ * Which means the input scale = (2^n - 1) / (219 * 2^(n-8)) and input offset = 2^(n-4)) / (219 * 2^(n-8)) for Y' and
+ * 2^(n-1)) / (7 * 2^(n-3)) for Cb'Cr'
+ */
+#define INPUT_Y_SCALE(n)  ((double)((1 << (n)) - 1) / (219 * (1 << ((n) - 8))))
+#define INPUT_UV_SCALE(n) ((double)((1 << (n)) - 1) / (224 * (1 << ((n) - 8))))
+
+/*
+ * GPU will interpret 10bit and 12bit color as 16bit int
+ * but that will introduce a slight (2^(16-n))/2^16 quantization offset which we want to compensate for
+*/
+#define QUANTIZATION_OFFSET(n) ((double)(1 << (16 - (n))) / ((1 << 16) - 1))
+
+// Parsed metadata from the Dolby Vision RPU
+struct FFDOVIMetadataRemap {
+    float nonlinear_offset[3];      // input offset ("ycc_to_rgb_offset")
+    double nonlinear[3][3];  // before PQ, also called "ycc_to_rgb"
+    double linear[3][3];     // after PQ, also called "rgb_to_lms"
+
+    // Reshape data, grouped by component
+    struct FFDOVIReshapeData {
+        uint8_t num_pivots;
+        float pivots[9]; // normalized to [0.0, 1.0] based on BL bit depth
+        uint8_t method[8]; // 0 = polynomial, 1 = MMR
+        // Note: these must be normalized (divide by coefficient_log2_denom)
+        float poly_coeffs[8][3]; // x^0, x^1, x^2, unused must be 0
+        uint8_t mmr_order[8]; // 1, 2 or 3
+        float mmr_constant[8];
+        float mmr_coeffs[8][3 /* order */][7];
+    } comp[3];
+};
 
 void ff_matrix_invert_3x3(const double in[3][3], double out[3][3]);
+void ff_matrix_transpose_3x3(const double in[3][3], double out[3][3]);
 void ff_matrix_mul_3x3(double dst[3][3],
                const double src1[3][3], const double src2[3][3]);
 void ff_matrix_mul_3x3_vec(double dst[3], const double vec[3], const double mat[3][3]);
@@ -37,5 +98,20 @@ void ff_fill_rgb2yuv_table(const AVLumaCoefficients *coeffs,
                            double rgb2yuv[3][3]);
 double ff_determine_signal_peak(AVFrame *in);
 void ff_update_hdr_metadata(AVFrame *in, double peak);
+
+double ff_determine_dovi_signal_peak(const AVDOVIMetadata *data, int l0_only);
+void ff_map_dovi_metadata(struct FFDOVIMetadataRemap *out, const AVDOVIMetadata *data);
+
+float ff_eotf_st2084_common(float x);
+float ff_eotf_st2084(float x, float ref_white);
+float ff_inverse_eotf_st2084_common(float x);
+float ff_inverse_eotf_st2084(float x, float ref_white);
+float ff_eotf_arib_b67(float x, float ref_white, int bt2446b);
+float ff_inverse_eotf_bt1886(float x);
+
+int ff_get_range_off(int *off, int *y_rng, int *uv_rng,
+                     enum AVColorRange rng, int depth);
+void ff_get_yuv_coeffs(int out[3][3][8], double (*table)[3],
+                       int depth, int y_rng, int uv_rng, int yuv2rgb);
 
 #endif

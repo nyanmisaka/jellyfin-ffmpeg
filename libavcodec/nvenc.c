@@ -24,6 +24,9 @@
 
 #include "nvenc.h"
 #include "hevc/sei.h"
+#ifndef NVENC_HAVE_HEVC_AND_AV1_MASTERING_METADATA
+#include "put_bits.h"
+#endif
 #if CONFIG_AV1_NVENC_ENCODER
 #include "av1.h"
 #endif
@@ -591,12 +594,24 @@ static int nvenc_check_capabilities(AVCodecContext *avctx)
 #ifdef NVENC_HAVE_BFRAME_REF_MODE
     tmp = (ctx->b_ref_mode >= 0) ? ctx->b_ref_mode : NV_ENC_BFRAME_REF_MODE_DISABLED;
     ret = nvenc_check_cap(avctx, NV_ENC_CAPS_SUPPORT_BFRAME_REF_MODE);
-    if (tmp == NV_ENC_BFRAME_REF_MODE_EACH && ret != 1 && ret != 3) {
-        av_log(avctx, AV_LOG_WARNING, "Each B frame as reference is not supported\n");
-        return AVERROR(ENOSYS);
-    } else if (tmp != NV_ENC_BFRAME_REF_MODE_DISABLED && ret == 0) {
-        av_log(avctx, AV_LOG_WARNING, "B frames as references are not supported\n");
-        return AVERROR(ENOSYS);
+    switch (tmp) {
+    case NV_ENC_BFRAME_REF_MODE_DISABLED:
+        break;
+    case NV_ENC_BFRAME_REF_MODE_EACH:
+        if (!(ret & 1)) {
+            av_log(avctx, AV_LOG_WARNING, "Each B frame reference mode is not supported\n");
+            return AVERROR(ENOSYS);
+        }
+        break;
+    case NV_ENC_BFRAME_REF_MODE_MIDDLE:
+        if (!(ret & 2)) {
+            av_log(avctx, AV_LOG_WARNING, "Middle B frame reference mode is not supported\n");
+            return AVERROR(ENOSYS);
+        }
+        break;
+    default:
+        av_log(avctx, AV_LOG_ERROR, "Unknown B frame reference mode!\n");
+        return AVERROR_BUG;
     }
 #else
     tmp = (ctx->b_ref_mode >= 0) ? ctx->b_ref_mode : 0;
@@ -682,7 +697,9 @@ static int nvenc_check_capabilities(AVCodecContext *avctx)
 
 #ifdef NVENC_HAVE_MVHEVC
     ctx->multiview_supported = nvenc_check_cap(avctx, NV_ENC_CAPS_SUPPORT_MVHEVC_ENCODE) > 0;
-    if(ctx->profile == NV_ENC_HEVC_PROFILE_MULTIVIEW_MAIN && !ctx->multiview_supported) {
+    if (avctx->codec_id == AV_CODEC_ID_HEVC &&
+        ctx->profile == NV_ENC_HEVC_PROFILE_MULTIVIEW_MAIN &&
+        !ctx->multiview_supported) {
         av_log(avctx, AV_LOG_WARNING, "Multiview not supported by the device\n");
         return AVERROR(ENOSYS);
     }
@@ -1162,6 +1179,13 @@ static av_cold int nvenc_setup_rate_control(AVCodecContext *avctx)
 #ifdef NVENC_HAVE_QP_CHROMA_OFFSETS
     ctx->encode_config.rcParams.cbQPIndexOffset = ctx->qp_cb_offset;
     ctx->encode_config.rcParams.crQPIndexOffset = ctx->qp_cr_offset;
+
+    if (avctx->codec->id == AV_CODEC_ID_AV1 &&
+        ctx->qp_cr_offset != ctx->qp_cb_offset)
+        av_log(avctx, AV_LOG_WARNING,
+               "av1_nvenc: qp_cr_offset is currently ignored by the NVENC driver "
+               "(deltaQ_v_ac is forced equal to deltaQ_u_ac); only qp_cb_offset "
+               "takes effect.\n");
 #else
     if (ctx->qp_cb_offset || ctx->qp_cr_offset)
         av_log(avctx, AV_LOG_WARNING, "Failed setting QP CB/CR offsets, SDK 11.1 or greater required at compile time.\n");
@@ -1358,6 +1382,11 @@ static av_cold int nvenc_setup_h264_config(AVCodecContext *avctx)
         case NV_ENC_H264_PROFILE_BASELINE:
             cc->profileGUID = NV_ENC_H264_PROFILE_BASELINE_GUID;
             avctx->profile = AV_PROFILE_H264_BASELINE;
+            if (cc->frameIntervalP > 1) {
+                av_log(avctx, AV_LOG_WARNING,
+                       "B-frames are not supported by H.264 Baseline profile, disabling.\n");
+                cc->frameIntervalP = 1;
+            }
             break;
         case NV_ENC_H264_PROFILE_MAIN:
             cc->profileGUID = NV_ENC_H264_PROFILE_MAIN_GUID;
@@ -2908,6 +2937,82 @@ static int prepare_sei_data_array(AVCodecContext *avctx, const AVFrame *frame)
             }
         }
     }
+
+#ifndef NVENC_HAVE_HEVC_AND_AV1_MASTERING_METADATA
+    if (avctx->codec->id == AV_CODEC_ID_HEVC) {
+        AVFrameSideData *sd = av_frame_get_side_data(frame, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
+
+        if (sd) {
+            AVMasteringDisplayMetadata *mdm = (AVMasteringDisplayMetadata *)sd->data;
+            // HEVC uses a g,b,r ordering, which we convert from a more natural r,g,b
+            const int mapping[3] = {2, 0, 1};
+            const int chroma_den = 50000;
+            const int luma_den = 10000;
+
+            if (mdm->has_primaries && mdm->has_luminance) {
+                void *tmp = av_fast_realloc(ctx->sei_data,
+                                            &ctx->sei_data_size,
+                                            (sei_count + 1) * sizeof(*ctx->sei_data));
+                if (!tmp) {
+                    res = AVERROR(ENOMEM);
+                    goto error;
+                } else {
+                    ctx->sei_data = tmp;
+                    ctx->sei_data[sei_count].payloadSize = 24;
+                    ctx->sei_data[sei_count].payloadType = SEI_TYPE_MASTERING_DISPLAY_COLOUR_VOLUME;
+                    ctx->sei_data[sei_count].payload = av_mallocz(ctx->sei_data[sei_count].payloadSize);
+                    if (ctx->sei_data[sei_count].payload) {
+                        PutBitContext pb;
+
+                        init_put_bits(&pb, ctx->sei_data[sei_count].payload, ctx->sei_data[sei_count].payloadSize);
+                        for (i = 0; i < 3; i++) {
+                            const int j = mapping[i];
+                            put_bits(&pb, 16, (uint16_t)(chroma_den * av_q2d(mdm->display_primaries[j][0])));
+                            put_bits(&pb, 16, (uint16_t)(chroma_den * av_q2d(mdm->display_primaries[j][1])));
+                        }
+                        put_bits(&pb, 16, (uint16_t)(chroma_den * av_q2d(mdm->white_point[0])));
+                        put_bits(&pb, 16, (uint16_t)(chroma_den * av_q2d(mdm->white_point[1])));
+                        put_bits(&pb, 32, (uint32_t)(luma_den * av_q2d(mdm->max_luminance)));
+                        put_bits(&pb, 32, (uint32_t)(luma_den * av_q2d(mdm->min_luminance)));
+                        flush_put_bits(&pb);
+
+                        sei_count++;
+                    }
+                }
+            }
+        }
+    }
+
+    if (avctx->codec->id == AV_CODEC_ID_HEVC) {
+        AVFrameSideData *sd = av_frame_get_side_data(frame, AV_FRAME_DATA_CONTENT_LIGHT_LEVEL);
+
+        if (sd) {
+            AVContentLightMetadata *clm = (AVContentLightMetadata *)sd->data;
+            void *tmp = av_fast_realloc(ctx->sei_data,
+                                        &ctx->sei_data_size,
+                                        (sei_count + 1) * sizeof(*ctx->sei_data));
+            if (!tmp) {
+                res = AVERROR(ENOMEM);
+                goto error;
+            } else {
+                ctx->sei_data = tmp;
+                ctx->sei_data[sei_count].payloadSize = 4;
+                ctx->sei_data[sei_count].payloadType = SEI_TYPE_CONTENT_LIGHT_LEVEL_INFO;
+                ctx->sei_data[sei_count].payload = av_mallocz(ctx->sei_data[sei_count].payloadSize);
+                if (ctx->sei_data[sei_count].payload) {
+                    PutBitContext pb;
+
+                    init_put_bits(&pb, ctx->sei_data[sei_count].payload, ctx->sei_data[sei_count].payloadSize);
+                    put_bits(&pb, 16, (uint16_t)(FFMIN(clm->MaxCLL, 65535)));
+                    put_bits(&pb, 16, (uint16_t)(FFMIN(clm->MaxFALL, 65535)));
+                    flush_put_bits(&pb);
+
+                    sei_count++;
+                }
+            }
+        }
+    }
+#endif
 
     if (!ctx->udu_sei)
         return sei_count;

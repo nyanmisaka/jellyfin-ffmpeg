@@ -2041,6 +2041,13 @@ typedef struct AVHWAccel {
 #define AV_HWACCEL_FLAG_UNSAFE_OUTPUT (1 << 3)
 
 /**
+ * Some hardware decoders (like VideoToolbox) supports decode session priority
+ * that run decode pipeline at a lower priority than is used for realtime decoding.
+ * This will be useful for background processing without interrupting normal playback.
+ */
+#define AV_HWACCEL_FLAG_LOW_PRIORITY (1 << 4)
+
+/**
  * @}
  */
 

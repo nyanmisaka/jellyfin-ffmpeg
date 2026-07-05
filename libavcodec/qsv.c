@@ -409,8 +409,16 @@ static int qsv_load_plugins(mfxSession session, const char *load_plugins,
                             void *logctx)
 {
 #if QSV_HAVE_USER_PLUGIN
+    mfxVersion ver;
     if (!load_plugins || !*load_plugins)
         return 0;
+
+    // Plugins have been removed in VPL runtime, don't load them
+    // if using the VPL runtime with MSDK loader to avoid failure.
+    if (MFXQueryVersion(session, &ver) == MFX_ERR_NONE &&
+        QSV_RUNTIME_VERSION_ATLEAST(ver, 1, 255)) {
+        return 0;
+    }
 
     while (*load_plugins) {
         mfxPluginUID uid;
@@ -490,6 +498,17 @@ static int ff_qsv_set_display_handle(AVCodecContext *avctx, QSVSession *qs)
     return 0;
 }
 #endif //AVCODEC_QSV_LINUX_SESSION_HANDLE
+
+#if !QSV_ONEVPL || HAVE_LIBVPL_LEGACY_MFXINIT
+
+static int qsv_create_mfx_session_legacy(AVCodecContext *avctx,
+                                         mfxIMPL implementation,
+                                         mfxVersion *pver,
+                                         int gpu_copy,
+                                         mfxSession *psession,
+                                         void **ploader);
+
+#endif
 
 #if QSV_ONEVPL
 static int qsv_new_mfx_loader(AVCodecContext *avctx,
@@ -631,6 +650,16 @@ static int qsv_create_mfx_session(AVCodecContext *avctx,
     return 0;
 
 fail:
+#if HAVE_LIBVPL_LEGACY_MFXINIT
+    av_log(avctx, AV_LOG_VERBOSE, "Error creating a MFX session using oneVPL, "
+           "falling back to retry with the legacy Media SDK path\n");
+    if (!qsv_create_mfx_session_legacy(avctx, implementation, pver, gpu_copy, psession, ploader)) {
+        if (!*ploader)
+            *ploader = loader;
+        return 0;
+    }
+#endif
+
     if (!*ploader && loader)
         MFXUnload(loader);
 
@@ -645,6 +674,20 @@ static int qsv_create_mfx_session(AVCodecContext *avctx,
                                   int gpu_copy,
                                   mfxSession *psession,
                                   void **ploader)
+{
+    return qsv_create_mfx_session_legacy(avctx, implementation, pver, gpu_copy, psession, ploader);
+}
+
+#endif
+
+#if !QSV_ONEVPL || HAVE_LIBVPL_LEGACY_MFXINIT
+
+static int qsv_create_mfx_session_legacy(AVCodecContext *avctx,
+                                         mfxIMPL implementation,
+                                         mfxVersion *pver,
+                                         int gpu_copy,
+                                         mfxSession *psession,
+                                         void **ploader)
 {
     mfxInitParam init_par = { MFX_IMPL_AUTO_ANY };
     mfxSession session = NULL;

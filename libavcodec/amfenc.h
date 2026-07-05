@@ -161,7 +161,8 @@ int ff_amf_receive_packet(AVCodecContext *avctx, AVPacket *avpkt);
 /**
 * Supported formats
 */
-extern const enum AVPixelFormat ff_amf_pix_fmts[];
+extern const enum AVPixelFormat ff_amf_pix_fmts_10b_8b[];
+extern const enum AVPixelFormat ff_amf_pix_fmts_8b[];
 
 int ff_amf_get_color_profile(AVCodecContext *avctx);
 

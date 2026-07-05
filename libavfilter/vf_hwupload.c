@@ -23,10 +23,18 @@
 #include "libavutil/pixdesc.h"
 #include "libavutil/opt.h"
 
+#if HAVE_OPENCL_D3D11
+#include "libavutil/hwcontext_d3d11va.h"
+#endif
+
 #include "avfilter.h"
 #include "filters.h"
 #include "formats.h"
 #include "video.h"
+
+#if CONFIG_QSVVPP
+extern int ff_qsvvpp_check_dynamic_pool_supported(AVHWDeviceContext *device_ctx);
+#endif
 
 typedef struct HWUploadContext {
     const AVClass *class;
@@ -39,42 +47,34 @@ typedef struct HWUploadContext {
     char *device_type;
 } HWUploadContext;
 
-static int hwupload_init(AVFilterContext *avctx)
+static int hwupload_query_formats(AVFilterContext *avctx)
 {
     HWUploadContext *ctx = avctx->priv;
-    int err;
-
-    if (!avctx->hw_device_ctx) {
-        av_log(ctx, AV_LOG_ERROR, "A hardware device reference is required "
-               "to upload frames to.\n");
-        return AVERROR(EINVAL);
-    }
-
-    if (ctx->device_type) {
-        err = av_hwdevice_ctx_create_derived(
-            &ctx->hwdevice_ref,
-            av_hwdevice_find_type_by_name(ctx->device_type),
-            avctx->hw_device_ctx, 0);
-        if (err < 0)
-            return err;
-    } else {
-        ctx->hwdevice_ref = av_buffer_ref(avctx->hw_device_ctx);
-        if (!ctx->hwdevice_ref)
-            return AVERROR(ENOMEM);
-    }
-
-    return 0;
-}
-
-static int hwupload_query_formats(const AVFilterContext *avctx,
-                                  AVFilterFormatsConfig **cfg_in,
-                                  AVFilterFormatsConfig **cfg_out)
-{
-    const HWUploadContext *ctx = avctx->priv;
     AVHWFramesConstraints *constraints = NULL;
     const enum AVPixelFormat *input_pix_fmts, *output_pix_fmts;
     AVFilterFormats *input_formats = NULL;
     int err, i;
+
+    if (ctx->hwdevice_ref) {
+        /* We already have a specified device. */
+    } else if (avctx->hw_device_ctx) {
+        if (ctx->device_type) {
+            err = av_hwdevice_ctx_create_derived(
+                &ctx->hwdevice_ref,
+                av_hwdevice_find_type_by_name(ctx->device_type),
+                avctx->hw_device_ctx, 0);
+            if (err < 0)
+                return err;
+        } else {
+            ctx->hwdevice_ref = av_buffer_ref(avctx->hw_device_ctx);
+            if (!ctx->hwdevice_ref)
+                return AVERROR(ENOMEM);
+        }
+    } else {
+        av_log(ctx, AV_LOG_ERROR, "A hardware device reference is required "
+               "to upload frames to.\n");
+        return AVERROR(EINVAL);
+    }
 
     constraints = av_hwdevice_get_hwframe_constraints(ctx->hwdevice_ref, NULL);
     if (!constraints) {
@@ -98,15 +98,16 @@ static int hwupload_query_formats(const AVFilterContext *avctx,
         }
     }
 
-    if ((err = ff_formats_ref(input_formats, &cfg_in[0]->formats)) < 0 ||
+    if ((err = ff_formats_ref(input_formats, &avctx->inputs[0]->outcfg.formats)) < 0 ||
         (err = ff_formats_ref(ff_make_pixel_format_list(output_pix_fmts),
-                              &cfg_out[0]->formats)) < 0)
+                              &avctx->outputs[0]->incfg.formats)) < 0)
         goto fail;
 
     av_hwframe_constraints_free(&constraints);
     return 0;
 
 fail:
+    av_buffer_unref(&ctx->hwdevice_ref);
     av_hwframe_constraints_free(&constraints);
     return err;
 }
@@ -119,6 +120,9 @@ static int hwupload_config_output(AVFilterLink *outlink)
     FilterLink        *inl = ff_filter_link(inlink);
     HWUploadContext   *ctx = avctx->priv;
     int err;
+#if HAVE_OPENCL_D3D11
+    D3D11_TEXTURE2D_DESC texDesc = { .BindFlags = D3D11_BIND_DECODER, };
+#endif
 
     av_buffer_unref(&ctx->hwframes_ref);
 
@@ -159,6 +163,20 @@ static int hwupload_config_output(AVFilterLink *outlink)
 
     if (avctx->extra_hw_frames >= 0)
         ctx->hwframes->initial_pool_size = 2 + avctx->extra_hw_frames;
+
+#if HAVE_OPENCL_D3D11
+    if (ctx->hwframes->format == AV_PIX_FMT_D3D11)
+        ctx->hwframes->user_opaque = &texDesc;
+#endif
+
+#if CONFIG_QSVVPP
+    if (ctx->hwframes->format == AV_PIX_FMT_QSV) {
+        AVHWDeviceContext *qsv_ctx = (AVHWDeviceContext *)ctx->hwdevice_ref->data;
+        if (!ff_qsvvpp_check_dynamic_pool_supported(qsv_ctx)) {
+            ctx->hwframes->initial_pool_size = 0;
+        }
+    }
+#endif
 
     err = av_hwframe_ctx_init(ctx->hwframes_ref);
     if (err < 0)
@@ -262,11 +280,10 @@ const FFFilter ff_vf_hwupload = {
     .p.description = NULL_IF_CONFIG_SMALL("Upload a normal frame to a hardware frame"),
     .p.priv_class  = &hwupload_class,
     .p.flags       = AVFILTER_FLAG_HWDEVICE,
-    .init          = hwupload_init,
     .uninit        = hwupload_uninit,
     .priv_size     = sizeof(HWUploadContext),
     FILTER_INPUTS(hwupload_inputs),
     FILTER_OUTPUTS(hwupload_outputs),
-    FILTER_QUERY_FUNC2(hwupload_query_formats),
+    FILTER_QUERY_FUNC(hwupload_query_formats),
     .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 };

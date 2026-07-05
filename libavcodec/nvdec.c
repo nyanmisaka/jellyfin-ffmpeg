@@ -413,8 +413,8 @@ int ff_nvdec_decode_init(AVCodecContext *avctx)
     params.OutputFormat        = output_format;
     params.CodecType           = cuvid_codec_type;
     params.ChromaFormat        = cuvid_chroma_format;
-    params.ulNumDecodeSurfaces = frames_ctx->initial_pool_size;
-    params.ulNumOutputSurfaces = unsafe_output ? frames_ctx->initial_pool_size : 1;
+    params.ulNumDecodeSurfaces = FFMIN(frames_ctx->initial_pool_size, 32);
+    params.ulNumOutputSurfaces = unsafe_output ? FFMIN(frames_ctx->initial_pool_size, 64) : 1;
 
     ret = nvdec_decoder_create(&ctx->decoder, frames_ctx->device_ref, &params, avctx);
     if (ret < 0) {
@@ -438,7 +438,7 @@ int ff_nvdec_decode_init(AVCodecContext *avctx)
         ret = AVERROR(ENOMEM);
         goto fail;
     }
-    pool->dpb_size = frames_ctx->initial_pool_size;
+    pool->dpb_size = FFMIN(frames_ctx->initial_pool_size, 32);
 
     ctx->decoder_pool = av_refstruct_pool_alloc_ext(sizeof(unsigned int), 0, pool,
                                                     nvdec_decoder_frame_init,
@@ -543,7 +543,6 @@ static int nvdec_retrieve_data(void *logctx, AVFrame *frame)
         goto copy_fail;
 
     unmap_data->idx = cf->idx;
-    unmap_data->idx_ref = av_refstruct_ref(cf->idx_ref);
     unmap_data->decoder = av_refstruct_ref(cf->decoder);
 
     av_pix_fmt_get_chroma_sub_sample(hwctx->sw_format, &shift_h, &shift_v);
@@ -733,8 +732,18 @@ int ff_nvdec_frame_params(AVCodecContext *avctx,
     chroma_444 = supports_444 && cuvid_chroma_format == cudaVideoChromaFormat_444;
 
     frames_ctx->format            = AV_PIX_FMT_CUDA;
-    frames_ctx->width             = (avctx->coded_width + 1) & ~1;
-    frames_ctx->height            = (avctx->coded_height + 1) & ~1;
+    // NVDEC target dimensions must be even-aligned for internal surface allocation.
+    // For chroma-subsampled formats (420/422), the output dimensions must also be
+    // even. For monochrome/444, keep the original output dimensions and only
+    // even-align the NVDEC target — the frame copy will crop to avctx dimensions.
+    if (cuvid_chroma_format == cudaVideoChromaFormat_420 ||
+        cuvid_chroma_format == cudaVideoChromaFormat_422) {
+        frames_ctx->width         = (avctx->coded_width  + 1) & ~1;
+        frames_ctx->height        = (avctx->coded_height + 1) & ~1;
+    } else {
+        frames_ctx->width         = avctx->coded_width;
+        frames_ctx->height        = avctx->coded_height;
+    }
     /*
      * We add two extra frames to the pool to account for deinterlacing filters
      * holding onto their frames.

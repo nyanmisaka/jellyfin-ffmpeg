@@ -16,6 +16,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+// GCC Vectorize with AVX will break huffyuv unit tests.
+#if defined(__GNUC__) && !defined(__clang__)
+    #if (__GNUC__ > 6)
+        #pragma GCC optimize ("no-tree-vectorize")
+    #endif
+#endif
+
 #include <stdint.h>
 
 #include "config.h"

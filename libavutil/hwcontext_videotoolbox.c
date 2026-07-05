@@ -831,6 +831,14 @@ static int vt_device_create(AVHWDeviceContext *ctx, const char *device,
     return 0;
 }
 
+static int vt_device_derive(AVHWDeviceContext *device_ctx,
+                            AVHWDeviceContext *src_ctx, AVDictionary *opts,
+                            int flags)
+{
+    // There is no context to be setup with VT, just return.
+    return 0;
+}
+
 const HWContextType ff_hwcontext_type_videotoolbox = {
     .type                 = AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
     .name                 = "videotoolbox",
@@ -838,6 +846,7 @@ const HWContextType ff_hwcontext_type_videotoolbox = {
     .frames_hwctx_size    = sizeof(VTFramesContext),
 
     .device_create        = vt_device_create,
+    .device_derive        = vt_device_derive,
     .frames_init          = vt_frames_init,
     .frames_get_buffer    = vt_get_buffer,
     .frames_get_constraints = vt_frames_get_constraints,

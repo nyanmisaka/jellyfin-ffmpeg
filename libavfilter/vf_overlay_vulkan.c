@@ -35,6 +35,7 @@ typedef struct OverlayVulkanContext {
     FFVkExecPool e;
     AVVulkanDeviceQueueFamily *qf;
     FFVulkanShader shd;
+    FFVulkanShader shd_pass;
 
     /* Push constants / options */
     struct {
@@ -46,6 +47,10 @@ typedef struct OverlayVulkanContext {
     int overlay_y;
     int overlay_w;
     int overlay_h;
+
+    int opt_repeatlast;
+    int opt_shortest;
+    int opt_eof_action;
 } OverlayVulkanContext;
 
 static const char overlay_noalpha[] = {
@@ -85,12 +90,13 @@ static av_cold int init_filter(AVFilterContext *ctx)
     uint8_t *spv_data;
     size_t spv_len;
     void *spv_opaque = NULL;
+    void *spv_opaque_pass = NULL;
     OverlayVulkanContext *s = ctx->priv;
     FFVulkanContext *vkctx = &s->vkctx;
     const int planes = av_pix_fmt_count_planes(s->vkctx.output_format);
     const int ialpha = av_pix_fmt_desc_get(s->vkctx.input_format)->flags & AV_PIX_FMT_FLAG_ALPHA;
     const AVPixFmtDescriptor *pix_desc = av_pix_fmt_desc_get(s->vkctx.output_format);
-    FFVulkanShader *shd = &s->shd;
+    FFVulkanShader *shd;
     FFVkSPIRVCompiler *spv;
     FFVulkanDescriptorSetBinding *desc;
 
@@ -108,12 +114,15 @@ static av_cold int init_filter(AVFilterContext *ctx)
     }
 
     RET(ff_vk_exec_pool_init(vkctx, s->qf, &s->e, s->qf->num*4, 0, 0, 0, NULL));
+
+    /* overlay */
     RET(ff_vk_shader_init(vkctx, &s->shd, "overlay",
                           VK_SHADER_STAGE_COMPUTE_BIT,
                           NULL, 0,
                           32, 32, 1,
                           0));
 
+    shd = &s->shd;
     GLSLC(0, layout(push_constant, std430) uniform pushConstants {        );
     GLSLC(1,    ivec2 o_offset[3];                                        );
     GLSLC(1,    ivec2 o_size[3];                                          );
@@ -169,9 +178,9 @@ static av_cold int init_filter(AVFilterContext *ctx)
     GLSLC(1,     }                                                        );
     GLSLC(0, }                                                            );
 
-    RET(spv->compile_shader(vkctx, spv, shd, &spv_data, &spv_len, "main",
+    RET(spv->compile_shader(vkctx, spv, &s->shd, &spv_data, &spv_len, "main",
                             &spv_opaque));
-    RET(ff_vk_shader_link(vkctx, shd, spv_data, spv_len, "main"));
+    RET(ff_vk_shader_link(vkctx, &s->shd, spv_data, spv_len, "main"));
 
     RET(ff_vk_shader_register_exec(vkctx, &s->e, &s->shd));
 
@@ -189,11 +198,59 @@ static av_cold int init_filter(AVFilterContext *ctx)
     s->opts.o_size[4] = s->opts.o_size[0] >> pix_desc->log2_chroma_w;
     s->opts.o_size[5] = s->opts.o_size[1] >> pix_desc->log2_chroma_h;
 
+    /* overlay_pass */
+    RET(ff_vk_shader_init(vkctx, &s->shd_pass, "overlay_pass",
+                          VK_SHADER_STAGE_COMPUTE_BIT,
+                          NULL, 0,
+                          32, 32, 1,
+                          0));
+
+    desc = (FFVulkanDescriptorSetBinding []) {
+        {
+            .name       = "main_img",
+            .type       = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .mem_layout = ff_vk_shader_rep_fmt(s->vkctx.input_format, FF_VK_REP_FLOAT),
+            .mem_quali  = "readonly",
+            .dimensions = 2,
+            .elems      = planes,
+            .stages     = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+        {
+            .name       = "output_img",
+            .type       = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .mem_layout = ff_vk_shader_rep_fmt(s->vkctx.output_format, FF_VK_REP_FLOAT),
+            .mem_quali  = "writeonly",
+            .dimensions = 2,
+            .elems      = planes,
+            .stages     = VK_SHADER_STAGE_COMPUTE_BIT,
+        },
+    };
+
+    RET(ff_vk_shader_add_descriptor_set(vkctx, &s->shd_pass, desc, 2, 0, 0));
+
+    shd = &s->shd_pass;
+    GLSLC(0, void main()                                                  );
+    GLSLC(0, {                                                            );
+    GLSLC(1,     ivec2 pos = ivec2(gl_GlobalInvocationID.xy);             );
+    GLSLF(1,     int planes = %i;                                  ,planes);
+    GLSLC(1,     for (int i = 0; i < planes; i++) {                       );
+    GLSLC(2,         vec4 res = imageLoad(main_img[i], pos);              );
+    GLSLC(2,         imageStore(output_img[i], pos, res);                 );
+    GLSLC(1,     }                                                        );
+    GLSLC(0, }                                                            );
+
+    RET(spv->compile_shader(vkctx, spv, &s->shd_pass, &spv_data, &spv_len, "main",
+                            &spv_opaque_pass));
+    RET(ff_vk_shader_link(vkctx, &s->shd_pass, spv_data, spv_len, "main"));
+    RET(ff_vk_shader_register_exec(vkctx, &s->e, &s->shd_pass));
+
     s->initialized = 1;
 
 fail:
     if (spv_opaque)
         spv->free_shader(spv, &spv_opaque);
+    if (spv_opaque_pass)
+        spv->free_shader(spv, &spv_opaque_pass);
     if (spv)
         spv->uninit(&spv);
 
@@ -215,22 +272,11 @@ static int overlay_vulkan_blend(FFFrameSync *fs)
     if (err < 0)
         goto fail;
 
-    if (!input_main || !input_overlay)
-        return 0;
+    if (!input_main)
+        return AVERROR_BUG;
 
-    if (!s->initialized) {
-        AVHWFramesContext *main_fc = (AVHWFramesContext*)input_main->hw_frames_ctx->data;
-        AVHWFramesContext *overlay_fc = (AVHWFramesContext*)input_overlay->hw_frames_ctx->data;
-        if (main_fc->sw_format != overlay_fc->sw_format) {
-            av_log(ctx, AV_LOG_ERROR, "Mismatching sw formats!\n");
-            return AVERROR(EINVAL);
-        }
-
-        s->overlay_w = input_overlay->width;
-        s->overlay_h = input_overlay->height;
-
+    if (!s->initialized)
         RET(init_filter(ctx));
-    }
 
     out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
     if (!out) {
@@ -238,9 +284,14 @@ static int overlay_vulkan_blend(FFFrameSync *fs)
         goto fail;
     }
 
-    RET(ff_vk_filter_process_Nin(&s->vkctx, &s->e, &s->shd,
-                                 out, (AVFrame *[]){ input_main, input_overlay }, 2,
-                                 VK_NULL_HANDLE, &s->opts, sizeof(s->opts)));
+    if (input_overlay)
+        RET(ff_vk_filter_process_Nin(&s->vkctx, &s->e, &s->shd,
+                                     out, (AVFrame *[]){ input_main, input_overlay }, 2,
+                                     VK_NULL_HANDLE, &s->opts, sizeof(s->opts)));
+    else /* passthrough */
+        RET(ff_vk_filter_process_simple(&s->vkctx, &s->e, &s->shd_pass,
+                                        out, input_main, VK_NULL_HANDLE,
+                                        &s->opts, sizeof(s->opts)));
 
     err = av_frame_copy_props(out, input_main);
     if (err < 0)
@@ -258,6 +309,20 @@ static int overlay_vulkan_config_output(AVFilterLink *outlink)
     int err;
     AVFilterContext *avctx = outlink->src;
     OverlayVulkanContext *s = avctx->priv;
+    AVFilterLink *inlink = avctx->inputs[0];
+    AVFilterLink *inlink_overlay = avctx->inputs[1];
+    FilterLink *inl = ff_filter_link(inlink);
+    FilterLink *inl_overlay = ff_filter_link(inlink_overlay);
+    AVHWFramesContext *main_fc = (AVHWFramesContext*)inl->hw_frames_ctx->data;
+    AVHWFramesContext *overlay_fc = (AVHWFramesContext*)inl_overlay->hw_frames_ctx->data;
+
+    if (main_fc->sw_format != overlay_fc->sw_format) {
+        av_log(avctx, AV_LOG_ERROR, "Mismatching sw formats!\n");
+        return AVERROR(EINVAL);
+    }
+
+    s->overlay_w = inlink_overlay->w;
+    s->overlay_h = inlink_overlay->h;
 
     err = ff_vk_filter_config_output(outlink);
     if (err < 0)
@@ -266,6 +331,11 @@ static int overlay_vulkan_config_output(AVFilterLink *outlink)
     err = ff_framesync_init_dualinput(&s->fs, avctx);
     if (err < 0)
         return err;
+
+    s->fs.opt_repeatlast = s->opt_repeatlast;
+    s->fs.opt_shortest = s->opt_shortest;
+    s->fs.opt_eof_action = s->opt_eof_action;
+    s->fs.time_base = outlink->time_base = inlink->time_base;
 
     return ff_framesync_configure(&s->fs);
 }
@@ -293,6 +363,7 @@ static void overlay_vulkan_uninit(AVFilterContext *avctx)
 
     ff_vk_exec_pool_free(vkctx, &s->e);
     ff_vk_shader_free(vkctx, &s->shd);
+    ff_vk_shader_free(vkctx, &s->shd_pass);
 
     ff_vk_uninit(&s->vkctx);
     ff_framesync_uninit(&s->fs);
@@ -305,6 +376,14 @@ static void overlay_vulkan_uninit(AVFilterContext *avctx)
 static const AVOption overlay_vulkan_options[] = {
     { "x", "Set horizontal offset", OFFSET(overlay_x), AV_OPT_TYPE_INT, {.i64 = 0}, 0, INT_MAX, .flags = FLAGS },
     { "y", "Set vertical offset",   OFFSET(overlay_y), AV_OPT_TYPE_INT, {.i64 = 0}, 0, INT_MAX, .flags = FLAGS },
+    { "eof_action", "Action to take when encountering EOF from secondary input ",
+        OFFSET(opt_eof_action), AV_OPT_TYPE_INT, { .i64 = EOF_ACTION_REPEAT },
+        EOF_ACTION_REPEAT, EOF_ACTION_PASS, .flags = FLAGS, .unit = "eof_action" },
+        { "repeat", "Repeat the previous frame.",   0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_REPEAT }, .flags = FLAGS, .unit = "eof_action" },
+        { "endall", "End both streams.",            0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_ENDALL }, .flags = FLAGS, .unit = "eof_action" },
+        { "pass",   "Pass through the main input.", 0, AV_OPT_TYPE_CONST, { .i64 = EOF_ACTION_PASS },   .flags = FLAGS, .unit = "eof_action" },
+    { "shortest", "force termination when the shortest input terminates", OFFSET(opt_shortest), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
+    { "repeatlast", "repeat overlay of the last overlay frame", OFFSET(opt_repeatlast), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
     { NULL },
 };
 

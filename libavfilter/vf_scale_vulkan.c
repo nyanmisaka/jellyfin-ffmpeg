@@ -104,11 +104,38 @@ static const char write_nv12[] = {
     C(0, }                                                                      )
 };
 
+static const char write_nv16[] = {
+    C(0, void write_nv16(vec4 src, ivec2 pos)                                   )
+    C(0, {                                                                      )
+    C(1,     imageStore(output_img[0], pos, vec4(src.r, 0.0, 0.0, 0.0));        )
+    C(1,     pos.x >>= 1;                                                       )
+    C(1,     imageStore(output_img[1], pos, vec4(src.g, src.b, 0.0, 0.0));      )
+    C(0, }                                                                      )
+};
+
+static const char write_nv24[] = {
+    C(0, void write_nv24(vec4 src, ivec2 pos)                                   )
+    C(0, {                                                                      )
+    C(1,     imageStore(output_img[0], pos, vec4(src.r, 0.0, 0.0, 0.0));        )
+    C(1,     imageStore(output_img[1], pos, vec4(src.g, src.b, 0.0, 0.0));      )
+    C(0, }                                                                      )
+};
+
 static const char write_420[] = {
     C(0, void write_420(vec4 src, ivec2 pos)                                    )
     C(0, {                                                                      )
     C(1,     imageStore(output_img[0], pos, vec4(src.r, 0.0, 0.0, 0.0));        )
     C(1,     pos /= ivec2(2);                                                   )
+    C(1,     imageStore(output_img[1], pos, vec4(src.g, 0.0, 0.0, 0.0));        )
+    C(1,     imageStore(output_img[2], pos, vec4(src.b, 0.0, 0.0, 0.0));        )
+    C(0, }                                                                      )
+};
+
+static const char write_422[] = {
+    C(0, void write_422(vec4 src, ivec2 pos)                                    )
+    C(0, {                                                                      )
+    C(1,     imageStore(output_img[0], pos, vec4(src.r, 0.0, 0.0, 0.0));        )
+    C(1,     pos.x >>= 1;                                                       )
     C(1,     imageStore(output_img[1], pos, vec4(src.g, 0.0, 0.0, 0.0));        )
     C(1,     imageStore(output_img[2], pos, vec4(src.b, 0.0, 0.0, 0.0));        )
     C(0, }                                                                      )
@@ -134,9 +161,30 @@ static int init_scale_shader(AVFilterContext *ctx, FFVulkanShader *shd,
     }
 
     switch (s->vkctx.output_format) {
-    case AV_PIX_FMT_NV12:    GLSLD(write_nv12); break;
-    case AV_PIX_FMT_YUV420P: GLSLD( write_420); break;
-    case AV_PIX_FMT_YUV444P: GLSLD( write_444); break;
+    case AV_PIX_FMT_NV12:
+    case AV_PIX_FMT_P010:
+    case AV_PIX_FMT_P012:
+    case AV_PIX_FMT_P016:      GLSLD(write_nv12); break;
+    case AV_PIX_FMT_NV16:
+    case AV_PIX_FMT_P210:
+    case AV_PIX_FMT_P212:
+    case AV_PIX_FMT_P216:      GLSLD(write_nv16); break;
+    case AV_PIX_FMT_NV24:
+    case AV_PIX_FMT_P410:
+    case AV_PIX_FMT_P412:
+    case AV_PIX_FMT_P416:      GLSLD(write_nv24); break;
+    case AV_PIX_FMT_YUV420P:
+    case AV_PIX_FMT_YUV420P10:
+    case AV_PIX_FMT_YUV420P12:
+    case AV_PIX_FMT_YUV420P16: GLSLD( write_420); break;
+    case AV_PIX_FMT_YUV422P:
+    case AV_PIX_FMT_YUV422P10:
+    case AV_PIX_FMT_YUV422P12:
+    case AV_PIX_FMT_YUV422P16: GLSLD( write_422); break;
+    case AV_PIX_FMT_YUV444P:
+    case AV_PIX_FMT_YUV444P10:
+    case AV_PIX_FMT_YUV444P12:
+    case AV_PIX_FMT_YUV444P16: GLSLD( write_444); break;
     default: break;
     }
 
@@ -149,7 +197,8 @@ static int init_scale_shader(AVFilterContext *ctx, FFVulkanShader *shd,
     GLSLC(1,     vec2 c_o = vec2(crop_x, crop_y) / in_d;                     );
     GLSLC(0,                                                                 );
 
-    if (s->vkctx.output_format == s->vkctx.input_format) {
+    if (s->vkctx.output_format == s->vkctx.input_format ||
+        !ff_vk_mt_is_np_rgb(s->vkctx.input_format)) {
         for (int i = 0; i < desc[1].elems; i++) {
             GLSLF(1,  size = imageSize(output_img[%i]);                    ,i);
             GLSLC(1,  if (IS_WITHIN(pos, size)) {                            );
@@ -166,16 +215,38 @@ static int init_scale_shader(AVFilterContext *ctx, FFVulkanShader *shd,
         GLSLC(1, vec4 res = scale_bilinear(0, pos, c_r, c_o);                );
         GLSLF(1, res = rgb2yuv(res, %i);    ,s->out_range == AVCOL_RANGE_JPEG);
         switch (s->vkctx.output_format) {
-        case AV_PIX_FMT_NV12:    GLSLC(1, write_nv12(res, pos); ); break;
-        case AV_PIX_FMT_YUV420P: GLSLC(1,  write_420(res, pos); ); break;
-        case AV_PIX_FMT_YUV444P: GLSLC(1,  write_444(res, pos); ); break;
+        case AV_PIX_FMT_NV12:
+        case AV_PIX_FMT_P010:
+        case AV_PIX_FMT_P012:
+        case AV_PIX_FMT_P016:      GLSLC(1, write_nv12(res, pos); ); break;
+        case AV_PIX_FMT_NV16:
+        case AV_PIX_FMT_P210:
+        case AV_PIX_FMT_P212:
+        case AV_PIX_FMT_P216:      GLSLC(1, write_nv16(res, pos); ); break;
+        case AV_PIX_FMT_NV24:
+        case AV_PIX_FMT_P410:
+        case AV_PIX_FMT_P412:
+        case AV_PIX_FMT_P416:      GLSLC(1, write_nv24(res, pos); ); break;
+        case AV_PIX_FMT_YUV420P:
+        case AV_PIX_FMT_YUV420P10:
+        case AV_PIX_FMT_YUV420P12:
+        case AV_PIX_FMT_YUV420P16: GLSLC(1,  write_420(res, pos); ); break;
+        case AV_PIX_FMT_YUV422P:
+        case AV_PIX_FMT_YUV422P10:
+        case AV_PIX_FMT_YUV422P12:
+        case AV_PIX_FMT_YUV422P16: GLSLC(1,  write_422(res, pos); ); break;
+        case AV_PIX_FMT_YUV444P:
+        case AV_PIX_FMT_YUV444P10:
+        case AV_PIX_FMT_YUV444P12:
+        case AV_PIX_FMT_YUV444P16: GLSLC(1,  write_444(res, pos); ); break;
         default: return AVERROR(EINVAL);
         }
     }
 
     GLSLC(0, }                                                               );
 
-    if (s->vkctx.output_format != s->vkctx.input_format) {
+    if (s->vkctx.output_format != s->vkctx.input_format &&
+        ff_vk_mt_is_np_rgb(s->vkctx.input_format)) {
         const AVLumaCoefficients *lcoeffs;
         double tmp_mat[3][3];
 
@@ -385,7 +456,8 @@ static int scale_vulkan_filter_frame(AVFilterLink *link, AVFrame *in)
 
     if (s->out_range != AVCOL_RANGE_UNSPECIFIED)
         out->color_range = s->out_range;
-    if (s->vkctx.output_format != s->vkctx.input_format)
+    if (s->vkctx.output_format != s->vkctx.input_format &&
+        ff_vk_mt_is_np_rgb(s->vkctx.input_format))
         out->chroma_location = AVCHROMA_LOC_TOPLEFT;
 
     av_frame_free(&in);
@@ -440,13 +512,58 @@ static int scale_vulkan_config_output(AVFilterLink *outlink)
             return AVERROR_PATCHWELCOME;
         }
     } else if (s->vkctx.output_format != s->vkctx.input_format) {
-        if (!ff_vk_mt_is_np_rgb(s->vkctx.input_format)) {
+        const AVPixFmtDescriptor *idesc = av_pix_fmt_desc_get(s->vkctx.input_format);
+        const AVPixFmtDescriptor *odesc = av_pix_fmt_desc_get(s->vkctx.output_format);
+        const int iplanes = av_pix_fmt_count_planes(s->vkctx.input_format);
+        const int oplanes = av_pix_fmt_count_planes(s->vkctx.output_format);
+
+        const int irgb = idesc->flags & AV_PIX_FMT_FLAG_RGB;
+        const int iyuv = !irgb && idesc->nb_components >= 2;
+        const int iplanar = idesc->flags & AV_PIX_FMT_FLAG_PLANAR;
+        const int orgb = odesc->flags & AV_PIX_FMT_FLAG_RGB;
+        const int oyuv = !orgb && idesc->nb_components >= 2;
+        const int oplanar = odesc->flags & AV_PIX_FMT_FLAG_PLANAR;
+
+        if (iyuv && oyuv && iplanar && oplanar && iplanes == oplanes && iplanes > 1) {
+            if (idesc->log2_chroma_w != odesc->log2_chroma_w ||
+                idesc->log2_chroma_h != odesc->log2_chroma_h) {
+                av_log(avctx, AV_LOG_ERROR, "Unsupported input format for conversion\n");
+                return AVERROR(EINVAL);
+            }
+            if (s->out_range != AVCOL_RANGE_UNSPECIFIED) {
+                av_log(avctx, AV_LOG_ERROR, "Cannot change range in yuv2yuv conversion\n");
+                return AVERROR(EINVAL);
+            }
+            if (inlink->w == outlink->w && inlink->h == outlink->h)
+                s->scaler = F_NEAREST;
+        } else if (!ff_vk_mt_is_np_rgb(s->vkctx.input_format)) {
             av_log(avctx, AV_LOG_ERROR, "Unsupported input format for conversion\n");
             return AVERROR(EINVAL);
         }
         if (s->vkctx.output_format != AV_PIX_FMT_NV12 &&
+            s->vkctx.output_format != AV_PIX_FMT_P010 &&
+            s->vkctx.output_format != AV_PIX_FMT_P012 &&
+            s->vkctx.output_format != AV_PIX_FMT_P016 &&
+            s->vkctx.output_format != AV_PIX_FMT_NV16 &&
+            s->vkctx.output_format != AV_PIX_FMT_P210 &&
+            s->vkctx.output_format != AV_PIX_FMT_P212 &&
+            s->vkctx.output_format != AV_PIX_FMT_P216 &&
+            s->vkctx.output_format != AV_PIX_FMT_NV24 &&
+            s->vkctx.output_format != AV_PIX_FMT_P410 &&
+            s->vkctx.output_format != AV_PIX_FMT_P412 &&
+            s->vkctx.output_format != AV_PIX_FMT_P416 &&
             s->vkctx.output_format != AV_PIX_FMT_YUV420P &&
-            s->vkctx.output_format != AV_PIX_FMT_YUV444P) {
+            s->vkctx.output_format != AV_PIX_FMT_YUV420P10 &&
+            s->vkctx.output_format != AV_PIX_FMT_YUV420P12 &&
+            s->vkctx.output_format != AV_PIX_FMT_YUV420P16 &&
+            s->vkctx.output_format != AV_PIX_FMT_YUV422P &&
+            s->vkctx.output_format != AV_PIX_FMT_YUV422P10 &&
+            s->vkctx.output_format != AV_PIX_FMT_YUV422P12 &&
+            s->vkctx.output_format != AV_PIX_FMT_YUV422P16 &&
+            s->vkctx.output_format != AV_PIX_FMT_YUV444P &&
+            s->vkctx.output_format != AV_PIX_FMT_YUV444P10 &&
+            s->vkctx.output_format != AV_PIX_FMT_YUV444P12 &&
+            s->vkctx.output_format != AV_PIX_FMT_YUV444P16) {
             av_log(avctx, AV_LOG_ERROR, "Unsupported output format\n");
             return AVERROR(EINVAL);
         }

@@ -1761,7 +1761,8 @@ static void mkv_write_blockadditionmapping(AVFormatContext *s, const MatroskaMux
         return;
 
     dovi = (const AVDOVIDecoderConfigurationRecord *)sd->data;
-    if (dovi->dv_profile <= 10) {
+    if (dovi->dv_profile <= 10 &&
+        !ff_isom_validate_dovi_config(dovi, par, (int)par->codec_tag)) {
         ebml_master mapping;
         uint8_t buf[ISOM_DVCC_DVVC_SIZE];
         uint32_t type;

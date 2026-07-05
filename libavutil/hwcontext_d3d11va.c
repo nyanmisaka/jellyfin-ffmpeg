@@ -235,7 +235,7 @@ static AVBufferRef *d3d11va_alloc_single(AVHWFramesContext *ctx)
         .ArraySize  = 1,
         .Usage      = D3D11_USAGE_DEFAULT,
         .BindFlags  = hwctx->BindFlags,
-        .MiscFlags  = hwctx->MiscFlags,
+        .MiscFlags  = hwctx->MiscFlags | D3D11_RESOURCE_MISC_SHARED,
     };
 
     hr = ID3D11Device_CreateTexture2D(device_hwctx->device, &texDesc, NULL, &tex);
@@ -304,8 +304,16 @@ static int d3d11va_frames_init(AVHWFramesContext *ctx)
         .ArraySize  = ctx->initial_pool_size,
         .Usage      = D3D11_USAGE_DEFAULT,
         .BindFlags  = hwctx->BindFlags,
-        .MiscFlags  = hwctx->MiscFlags,
+        .MiscFlags  = hwctx->MiscFlags | D3D11_RESOURCE_MISC_SHARED,
     };
+
+#if HAVE_OPENCL_D3D11
+    if (ctx->user_opaque) {
+        D3D11_TEXTURE2D_DESC *desc = ctx->user_opaque;
+        if (desc->BindFlags & D3D11_BIND_DECODER)
+            texDesc.BindFlags = D3D11_BIND_DECODER;
+    }
+#endif
 
     if (hwctx->texture) {
         D3D11_TEXTURE2D_DESC texDesc2;
@@ -321,7 +329,8 @@ static int d3d11va_frames_init(AVHWFramesContext *ctx)
         ctx->initial_pool_size = texDesc2.ArraySize;
         hwctx->BindFlags = texDesc2.BindFlags;
         hwctx->MiscFlags = texDesc2.MiscFlags;
-    } else if (texDesc.ArraySize > 0) {
+    } else if ((!(texDesc.BindFlags & D3D11_BIND_RENDER_TARGET) &&
+                !((texDesc.BindFlags & D3D11_BIND_DECODER) && hwctx->array_of_tex)) && texDesc.ArraySize > 0) {
         hr = ID3D11Device_CreateTexture2D(device_hwctx->device, &texDesc, NULL, &hwctx->texture);
         if (FAILED(hr)) {
             av_log(ctx, AV_LOG_ERROR, "Could not create the texture (%lx)\n", (long)hr);
@@ -614,6 +623,35 @@ static int d3d11va_device_find_adapter_by_vendor_id(AVHWDeviceContext *ctx, uint
     return -1;
 }
 
+static int d3d11va_check_uma_support(AVHWDeviceContext *ctx)
+{
+    AVD3D11VADeviceContext *device_hwctx = ctx->hwctx;
+    D3D11_FEATURE_DATA_D3D11_OPTIONS2 data = {};
+    HRESULT hr = ID3D11Device_CheckFeatureSupport(device_hwctx->device,
+                                                  D3D11_FEATURE_D3D11_OPTIONS2,
+                                                  &data, sizeof(data));
+    return SUCCEEDED(hr) && data.UnifiedMemoryArchitecture;
+}
+
+static void d3d11va_query_device_desc(AVHWDeviceContext *ctx,
+                                      DXGI_ADAPTER_DESC *desc)
+{
+    AVD3D11VADeviceContext *device_hwctx = ctx->hwctx;
+    IDXGIDevice *pDXGIDevice = NULL;
+    IDXGIAdapter *pDXGIAdapter = NULL;
+    HRESULT hr = ID3D11Device_QueryInterface(device_hwctx->device, &IID_IDXGIDevice,
+                                             (void **)&pDXGIDevice);
+    if (SUCCEEDED(hr) && pDXGIDevice) {
+        hr = IDXGIDevice_GetParent(pDXGIDevice, &IID_IDXGIAdapter,
+                                   (void **)&pDXGIAdapter);
+        if (SUCCEEDED(hr) && pDXGIAdapter) {
+            IDXGIAdapter_GetDesc(pDXGIAdapter, desc);
+            IDXGIAdapter_Release(pDXGIAdapter);
+        }
+        IDXGIDevice_Release(pDXGIDevice);
+    }
+}
+
 static int d3d11va_device_create(AVHWDeviceContext *ctx, const char *device,
                                  AVDictionary *opts, int flags)
 {
@@ -643,6 +681,8 @@ static int d3d11va_device_create(AVHWDeviceContext *ctx, const char *device,
         adapter = atoi(device);
     } else {
         AVDictionaryEntry *e = av_dict_get(opts, "vendor_id", NULL, 0);
+        if (!e || !e->value)
+            e = av_dict_get(opts, "vendor", NULL, 0); // for backward compatibility
         if (e && e->value) {
             adapter = d3d11va_device_find_adapter_by_vendor_id(ctx, creationFlags, e->value);
             if (adapter < 0) {
@@ -688,6 +728,9 @@ static int d3d11va_device_create(AVHWDeviceContext *ctx, const char *device,
         ID3D10Multithread_SetMultithreadProtected(pMultithread, TRUE);
         ID3D10Multithread_Release(pMultithread);
     }
+
+    device_hwctx->is_uma = d3d11va_check_uma_support(ctx);
+    d3d11va_query_device_desc(ctx, &device_hwctx->device_desc);
 
 #if !HAVE_UWP && HAVE_DXGIDEBUG_H
     if (is_debug) {

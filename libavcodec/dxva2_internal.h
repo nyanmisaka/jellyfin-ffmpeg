@@ -100,6 +100,7 @@ typedef struct FFDXVASharedContext {
     ID3D11VideoDecoderOutputView  **d3d11_views;
     int                          nb_d3d11_views;
     ID3D11Texture2D                *d3d11_texture;
+    AVD3D11FrameDescriptor         *d3d11_texture_infos;
 #endif
 
 #if CONFIG_DXVA2
@@ -133,6 +134,58 @@ typedef struct FFDXVASharedContext {
 #define DXVA_CONTEXT_VALID(avctx, ctx)          (DXVA_CONTEXT_DECODER(avctx, ctx) && \
                                                  DXVA_CONTEXT_CFG(avctx, ctx)     && \
                                                  (ff_dxva2_is_d3d11(avctx) || DXVA2_VAR(ctx, surface_count)))
+
+#if CONFIG_HEVC_D3D12VA_HWACCEL || CONFIG_HEVC_D3D11VA_HWACCEL || CONFIG_HEVC_D3D11VA2_HWACCEL || CONFIG_HEVC_DXVA2_HWACCEL
+/**
++ * Picture Parameters DXVA buffer struct for Rext is not specified in DXVA
++ * spec. The below structures come from Intel platform DDI definition, so they
++ * are currently Intel specific.
++ *
++ * For Nvidia and AMD platforms supporting HEVC Rext, it is expected
++ * the picture param information included in below structures is sufficient
++ * for underlying drivers supporting range extension.
++ */
+#pragma pack(push, 1)
+typedef struct
+{
+    DXVA_PicParams_HEVC main;
+
+    // HEVC Range Extension. Fields are named the same as in HEVC spec.
+    __C89_NAMELESS union {
+        __C89_NAMELESS struct {
+            UINT32 transform_skip_rotation_enabled_flag : 1;
+            UINT32 transform_skip_context_enabled_flag : 1;
+            UINT32 implicit_rdpcm_enabled_flag : 1;
+            UINT32 explicit_rdpcm_enabled_flag : 1;
+            UINT32 extended_precision_processing_flag : 1;
+            UINT32 intra_smoothing_disabled_flag : 1;
+            UINT32 high_precision_offsets_enabled_flag : 1;
+            UINT32 persistent_rice_adaptation_enabled_flag : 1;
+            UINT32 cabac_bypass_alignment_enabled_flag : 1;
+            UINT32 cross_component_prediction_enabled_flag : 1;
+            UINT32 chroma_qp_offset_list_enabled_flag : 1;
+            // Indicates if luma bit depth equals to 16. If its value is 1, the
+            // corresponding bit_depth_luma_minus8 must be set to 0.
+            UINT32 BitDepthLuma16 : 1;
+            // Indicates if chroma bit depth equals to 16. If its value is 1, the
+            // corresponding bit_depth_chroma_minus8 must be set to 0.
+            UINT32 BitDepthChroma16 : 1;
+            UINT32 ReservedBits8 : 19;
+        };
+        UINT32 dwRangeExtensionFlags;
+    };
+
+    UCHAR diff_cu_chroma_qp_offset_depth;    // [0..3]
+    UCHAR chroma_qp_offset_list_len_minus1;  // [0..5]
+    UCHAR log2_sao_offset_scale_luma;        // [0..6]
+    UCHAR log2_sao_offset_scale_chroma;      // [0..6]
+    UCHAR log2_max_transform_skip_block_size_minus2;
+    CHAR cb_qp_offset_list[6];  // [-12..12]
+    CHAR cr_qp_offset_list[6];  // [-12..12]
+
+} ff_DXVA_PicParams_HEVC_Rext;
+#pragma pack(pop)
+#endif
 
 #if CONFIG_D3D12VA
 unsigned ff_d3d12va_get_surface_index(const AVCodecContext *avctx,
@@ -172,7 +225,7 @@ void ff_dxva2_h264_fill_picture_parameters(const AVCodecContext *avctx, AVDXVACo
 void ff_dxva2_h264_fill_scaling_lists(const AVCodecContext *avctx, AVDXVAContext *ctx, DXVA_Qmatrix_H264 *qm);
 
 #if CONFIG_HEVC_D3D12VA_HWACCEL || CONFIG_HEVC_D3D11VA_HWACCEL || CONFIG_HEVC_D3D11VA2_HWACCEL || CONFIG_HEVC_DXVA2_HWACCEL
-void ff_dxva2_hevc_fill_picture_parameters(const AVCodecContext *avctx, AVDXVAContext *ctx, DXVA_PicParams_HEVC *pp);
+void ff_dxva2_hevc_fill_picture_parameters(const AVCodecContext *avctx, AVDXVAContext *ctx, ff_DXVA_PicParams_HEVC_Rext *ppext);
 
 void ff_dxva2_hevc_fill_scaling_lists(const AVCodecContext *avctx, AVDXVAContext *ctx, DXVA_Qmatrix_HEVC *qm);
 #endif

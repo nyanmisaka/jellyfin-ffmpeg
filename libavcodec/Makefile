@@ -65,6 +65,7 @@ OBJS = ac3_parser.o                                                     \
        xiph.o                                                           \
 
 SHLIBOBJS = float_scalarproduct.o                                       \
+            float_fmul_reverse.o                                        \
             timecode_internal.o                                         \
 
 # subsystems
@@ -219,6 +220,7 @@ OBJS-$(CONFIG_AC3_ENCODER)             += ac3enc_float.o ac3enc.o ac3tab.o \
                                           ac3.o kbdwin.o
 OBJS-$(CONFIG_AC3_FIXED_ENCODER)       += ac3enc_fixed.o ac3enc.o ac3tab.o ac3.o kbdwin.o
 OBJS-$(CONFIG_AC3_MF_ENCODER)          += mfenc.o mf_utils.o
+OBJS-$(CONFIG_AC4_DECODER)             += ac4dec.o kbdwin.o
 OBJS-$(CONFIG_ACELP_KELVIN_DECODER)    += g729dec.o lsp.o celp_filters.o acelp_filters.o acelp_pitch_delay.o acelp_vectors.o g729postfilter.o
 OBJS-$(CONFIG_AGM_DECODER)             += agm.o jpegquanttables.o
 OBJS-$(CONFIG_AHX_DECODER)             += mpegaudiodec_float.o
@@ -279,6 +281,7 @@ OBJS-$(CONFIG_AV1_MEDIACODEC_DECODER)  += mediacodecdec.o
 OBJS-$(CONFIG_AV1_MEDIACODEC_ENCODER)  += mediacodecenc.o
 OBJS-$(CONFIG_AV1_NVENC_ENCODER)       += nvenc_av1.o nvenc.o
 OBJS-$(CONFIG_AV1_QSV_ENCODER)         += qsvenc_av1.o
+OBJS-$(CONFIG_AV1_RKMPP_DECODER)       += rkmppdec.o
 OBJS-$(CONFIG_AV1_VAAPI_ENCODER)       += vaapi_encode_av1.o av1_levels.o
 OBJS-$(CONFIG_AV1_VULKAN_ENCODER)      += vulkan_encode.o vulkan_encode_av1.o \
                                           hw_base_encode.o av1_levels.o
@@ -423,6 +426,7 @@ OBJS-$(CONFIG_H263_DECODER)            += h263dec.o h263.o ituh263dec.o        \
 OBJS-$(CONFIG_H263I_DECODER)           += intelh263dec.o
 OBJS-$(CONFIG_H263_ENCODER)            += mpeg4video.o  \
                                           h263.o ituh263enc.o h263data.o
+OBJS-$(CONFIG_H263_RKMPP_DECODER)      += rkmppdec.o
 OBJS-$(CONFIG_H263_V4L2M2M_DECODER)    += v4l2_m2m_dec.o
 OBJS-$(CONFIG_H263_V4L2M2M_ENCODER)    += v4l2_m2m_enc.o
 OBJS-$(CONFIG_H264_DECODER)            += h264dec.o h264_cabac.o h264_cavlc.o \
@@ -539,7 +543,10 @@ OBJS-$(CONFIG_MJPEG_ENCODER)           += mjpegenc.o mjpegenc_common.o \
 OBJS-$(CONFIG_MJPEGB_DECODER)          += mjpegbdec.o
 OBJS-$(CONFIG_MJPEG_CUVID_DECODER)     += cuviddec.o
 OBJS-$(CONFIG_MJPEG_QSV_ENCODER)       += qsvenc_jpeg.o
+OBJS-$(CONFIG_MJPEG_RKMPP_DECODER)     += rkmppdec.o
+OBJS-$(CONFIG_MJPEG_RKMPP_ENCODER)     += rkmppenc.o
 OBJS-$(CONFIG_MJPEG_VAAPI_ENCODER)     += vaapi_encode_mjpeg.o
+OBJS-$(CONFIG_MJPEG_VIDEOTOOLBOX_ENCODER) += videotoolboxenc.o
 OBJS-$(CONFIG_MLP_DECODER)             += mlpdec.o mlpdsp.o
 OBJS-$(CONFIG_MLP_ENCODER)             += mlpenc.o mlp.o
 OBJS-$(CONFIG_MMVIDEO_DECODER)         += mmvideo.o
@@ -571,6 +578,7 @@ OBJS-$(CONFIG_MPEGVIDEO_DECODER)       += mpeg12dec.o mpeg12.o mpeg12data.o
 OBJS-$(CONFIG_MPEG1VIDEO_DECODER)      += mpeg12dec.o mpeg12.o mpeg12data.o
 OBJS-$(CONFIG_MPEG1VIDEO_ENCODER)      += mpeg12enc.o
 OBJS-$(CONFIG_MPEG1_CUVID_DECODER)     += cuviddec.o
+OBJS-$(CONFIG_MPEG1_RKMPP_DECODER)     += rkmppdec.o
 OBJS-$(CONFIG_MPEG1_V4L2M2M_DECODER)   += v4l2_m2m_dec.o
 OBJS-$(CONFIG_MPEG2_MMAL_DECODER)      += mmaldec.o
 OBJS-$(CONFIG_MPEG2_QSV_DECODER)       += qsvdec.o
@@ -579,6 +587,7 @@ OBJS-$(CONFIG_MPEG2VIDEO_DECODER)      += mpeg12dec.o mpeg12.o mpeg12data.o
 OBJS-$(CONFIG_MPEG2VIDEO_ENCODER)      += mpeg12enc.o
 OBJS-$(CONFIG_MPEG2_CUVID_DECODER)     += cuviddec.o
 OBJS-$(CONFIG_MPEG2_MEDIACODEC_DECODER) += mediacodecdec.o
+OBJS-$(CONFIG_MPEG2_RKMPP_DECODER)     += rkmppdec.o
 OBJS-$(CONFIG_MPEG2_VAAPI_ENCODER)     += vaapi_encode_mpeg2.o
 OBJS-$(CONFIG_MPEG2_V4L2M2M_DECODER)   += v4l2_m2m_dec.o
 OBJS-$(CONFIG_MPEG4_DECODER)           += mpeg4videodec.o mpeg4videodsp.o \
@@ -588,6 +597,7 @@ OBJS-$(CONFIG_MPEG4_CUVID_DECODER)     += cuviddec.o
 OBJS-$(CONFIG_MPEG4_MEDIACODEC_DECODER) += mediacodecdec.o
 OBJS-$(CONFIG_MPEG4_MEDIACODEC_ENCODER) += mediacodecenc.o
 OBJS-$(CONFIG_MPEG4_OMX_ENCODER)       += omx.o
+OBJS-$(CONFIG_MPEG4_RKMPP_DECODER)     += rkmppdec.o
 OBJS-$(CONFIG_MPEG4_V4L2M2M_DECODER)   += v4l2_m2m_dec.o
 OBJS-$(CONFIG_MPEG4_V4L2M2M_ENCODER)   += v4l2_m2m_enc.o
 OBJS-$(CONFIG_MPL2_DECODER)            += mpl2dec.o ass.o
@@ -1239,6 +1249,7 @@ OBJS-$(CONFIG_AAC_LATM_PARSER)         += latm_parser.o
 OBJS-$(CONFIG_AAC_PARSER)              += aac_parser.o aac_ac3_parser.o
 OBJS-$(CONFIG_AC3_PARSER)              += aac_ac3_parser.o ac3tab.o \
                                           ac3_channel_layout_tab.o
+OBJS-$(CONFIG_AC4_PARSER)              += ac4_parser.o
 OBJS-$(CONFIG_ADX_PARSER)              += adx_parser.o
 OBJS-$(CONFIG_AHX_PARSER)              += ahx_parser.o
 OBJS-$(CONFIG_AMR_PARSER)              += amr_parser.o

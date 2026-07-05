@@ -19,6 +19,9 @@
  */
 
 #include "dcadec.h"
+#include "libavutil/intreadwrite.h"
+
+#include "dca_syncwords.h"
 
 static void parse_xll_parameters(DCAExssParser *s, DCAExssAsset *asset)
 {
@@ -379,6 +382,9 @@ int ff_dca_exss_parse(DCAExssParser *s, const uint8_t *data, int size)
 {
     int i, ret, offset, wide_hdr, header_size;
 
+    s->x_syncword_present = 0;
+    s->x_imax_syncword_present = 0;
+
     if ((ret = init_get_bits8(&s->gb, data, size)) < 0)
         return ret;
 
@@ -508,6 +514,16 @@ int ff_dca_exss_parse(DCAExssParser *s, const uint8_t *data, int size)
         if (s->avctx)
             av_log(s->avctx, AV_LOG_ERROR, "Read past end of EXSS header\n");
         return AVERROR_INVALIDDATA;
+    }
+
+    if (s->exss_size - offset >= 10 && AV_RB48(data + offset) == DCA_SYNCWORD_X_AFTER_ASSETS) {
+        unsigned int extradata_syncword = AV_RB32(data + offset + 6);
+
+        if (extradata_syncword == DCA_SYNCWORD_XLL_X) {
+            s->x_syncword_present = 1;
+        } else if ((extradata_syncword >> 1) == (DCA_SYNCWORD_XLL_X_IMAX >> 1)) {
+            s->x_imax_syncword_present = 1;
+        }
     }
 
     return 0;

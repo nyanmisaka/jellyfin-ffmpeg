@@ -436,7 +436,8 @@ const FFFilter ff_vf_yadif_videotoolbox = {
     .p.name         = "yadif_videotoolbox",
     .p.description  = NULL_IF_CONFIG_SMALL("YADIF for VideoToolbox frames using Metal compute"),
     .p.priv_class   = &yadif_videotoolbox_class,
-    .p.flags        = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL,
+    .p.flags        = AVFILTER_FLAG_HWDEVICE |
+                      AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL,
     .priv_size      = YADIF_VT_CTX_SIZE,
     .init           = yadif_videotoolbox_init,
     .uninit         = yadif_videotoolbox_uninit,

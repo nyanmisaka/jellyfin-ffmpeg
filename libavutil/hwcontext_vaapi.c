@@ -171,6 +171,9 @@ static const VAAPIFormatDescriptor vaapi_format_map[] = {
 #ifdef VA_FOURCC_X2R10G10B10
     MAP(X2R10G10B10, RGB32_10, X2RGB10, 0),
 #endif
+#ifdef VA_FOURCC_X2B10G10R10
+    MAP(X2B10G10R10, RGB32_10, X2BGR10, 0),
+#endif
 #ifdef VA_FOURCC_Y410
     // libva doesn't include a fourcc for XV30 and the driver only declares
     // support for Y410, so we must fudge the mapping here.
@@ -1065,9 +1068,11 @@ static const struct {
     DRM_MAP(NV12, 1, DRM_FORMAT_NV12),
 #if defined(VA_FOURCC_P010) && defined(DRM_FORMAT_R16)
     DRM_MAP(P010, 2, DRM_FORMAT_R16, DRM_FORMAT_RG1616),
+    DRM_MAP(P010, 2, DRM_FORMAT_R16, DRM_FORMAT_GR1616),
 #endif
 #if defined(VA_FOURCC_P012) && defined(DRM_FORMAT_R16)
     DRM_MAP(P012, 2, DRM_FORMAT_R16, DRM_FORMAT_RG1616),
+    DRM_MAP(P012, 2, DRM_FORMAT_R16, DRM_FORMAT_GR1616),
 #endif
     DRM_MAP(BGRA, 1, DRM_FORMAT_ARGB8888),
     DRM_MAP(BGRX, 1, DRM_FORMAT_XRGB8888),
@@ -1090,6 +1095,9 @@ static const struct {
 #endif
 #if defined(VA_FOURCC_X2R10G10B10) && defined(DRM_FORMAT_XRGB2101010)
     DRM_MAP(X2R10G10B10, 1, DRM_FORMAT_XRGB2101010),
+#endif
+#if defined(VA_FOURCC_X2B10G10R10) && defined(DRM_FORMAT_XBGR2101010)
+    DRM_MAP(X2B10G10R10, 1, DRM_FORMAT_XBGR2101010),
 #endif
 };
 #undef DRM_MAP
@@ -1145,12 +1153,6 @@ static int vaapi_map_from_drm(AVHWFramesContext *src_fc, AVFrame *dst,
 #endif
 
     desc = (AVDRMFrameDescriptor*)src->data[0];
-
-    if (desc->nb_objects != 1) {
-        av_log(dst_fc, AV_LOG_ERROR, "VAAPI can only map frames "
-               "made from a single DRM object.\n");
-        return AVERROR(EINVAL);
-    }
 
     va_fourcc = 0;
     for (i = 0; i < FF_ARRAY_ELEMS(vaapi_drm_format_map); i++) {
@@ -1291,6 +1293,12 @@ static int vaapi_map_from_drm(AVHWFramesContext *src_fc, AVFrame *dst,
                                buffer_attrs, FF_ARRAY_ELEMS(buffer_attrs));
     }
 #else
+    if (desc->nb_objects != 1) {
+        av_log(dst_fc, AV_LOG_ERROR, "VAAPI can only map frames "
+               "made from a single DRM object.\n");
+        return AVERROR(EINVAL);
+    }
+
     buffer_handle = desc->objects[0].fd;
     buffer_desc.pixel_format = va_fourcc;
     buffer_desc.width        = src_fc->width;
@@ -1376,9 +1384,8 @@ static int vaapi_map_to_drm_esh(AVHWFramesContext *hwfc, AVFrame *dst,
 
         vas = vaSyncSurface(hwctx->display, surface_id);
         if (vas != VA_STATUS_SUCCESS) {
-            av_log(hwfc, AV_LOG_ERROR, "Failed to sync surface "
+            av_log(hwfc, AV_LOG_WARNING, "Failed to sync surface "
                    "%#x: %d (%s).\n", surface_id, vas, vaErrorStr(vas));
-            return AVERROR(EIO);
         }
     }
 
