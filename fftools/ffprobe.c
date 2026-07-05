@@ -70,6 +70,9 @@
 
 #include "libavutil/thread.h"
 
+#include "ffprobe.h"
+#include "ffprobe_hw.h"
+
 // attached as opaque_ref to packets/frames
 typedef struct FrameData {
     int64_t pkt_pos;
@@ -136,6 +139,11 @@ static const char *data_codec_name = NULL;
 static const char *subtitle_codec_name = NULL;
 static const char *video_codec_name = NULL;
 
+static int do_show_hwaccel = 0;
+static enum AVHWDeviceType hwaccel_type = AV_HWDEVICE_TYPE_NONE;
+static int hwaccel_flags = FFPROBE_HW_DEFAULT_PRINT_FLAGS;
+static char *hwaccel_device = NULL;
+
 #define SHOW_OPTIONAL_FIELDS_AUTO       -1
 #define SHOW_OPTIONAL_FIELDS_NEVER       0
 #define SHOW_OPTIONAL_FIELDS_ALWAYS      1
@@ -167,75 +175,6 @@ static int find_stream_info  = 1;
 
 /* section structure definition */
 
-typedef enum {
-    SECTION_ID_CHAPTER,
-    SECTION_ID_CHAPTER_TAGS,
-    SECTION_ID_CHAPTERS,
-    SECTION_ID_ERROR,
-    SECTION_ID_FORMAT,
-    SECTION_ID_FORMAT_TAGS,
-    SECTION_ID_FRAME,
-    SECTION_ID_FRAMES,
-    SECTION_ID_FRAME_TAGS,
-    SECTION_ID_FRAME_SIDE_DATA_LIST,
-    SECTION_ID_FRAME_SIDE_DATA,
-    SECTION_ID_FRAME_SIDE_DATA_TIMECODE_LIST,
-    SECTION_ID_FRAME_SIDE_DATA_TIMECODE,
-    SECTION_ID_FRAME_SIDE_DATA_COMPONENT_LIST,
-    SECTION_ID_FRAME_SIDE_DATA_COMPONENT,
-    SECTION_ID_FRAME_SIDE_DATA_PIECE_LIST,
-    SECTION_ID_FRAME_SIDE_DATA_PIECE,
-    SECTION_ID_FRAME_LOG,
-    SECTION_ID_FRAME_LOGS,
-    SECTION_ID_LIBRARY_VERSION,
-    SECTION_ID_LIBRARY_VERSIONS,
-    SECTION_ID_PACKET,
-    SECTION_ID_PACKET_TAGS,
-    SECTION_ID_PACKETS,
-    SECTION_ID_PACKETS_AND_FRAMES,
-    SECTION_ID_PACKET_SIDE_DATA_LIST,
-    SECTION_ID_PACKET_SIDE_DATA,
-    SECTION_ID_PIXEL_FORMAT,
-    SECTION_ID_PIXEL_FORMAT_FLAGS,
-    SECTION_ID_PIXEL_FORMAT_COMPONENT,
-    SECTION_ID_PIXEL_FORMAT_COMPONENTS,
-    SECTION_ID_PIXEL_FORMATS,
-    SECTION_ID_PROGRAM_STREAM_DISPOSITION,
-    SECTION_ID_PROGRAM_STREAM_TAGS,
-    SECTION_ID_PROGRAM,
-    SECTION_ID_PROGRAM_STREAMS,
-    SECTION_ID_PROGRAM_STREAM,
-    SECTION_ID_PROGRAM_TAGS,
-    SECTION_ID_PROGRAM_VERSION,
-    SECTION_ID_PROGRAMS,
-    SECTION_ID_STREAM_GROUP_STREAM_DISPOSITION,
-    SECTION_ID_STREAM_GROUP_STREAM_TAGS,
-    SECTION_ID_STREAM_GROUP,
-    SECTION_ID_STREAM_GROUP_COMPONENTS,
-    SECTION_ID_STREAM_GROUP_COMPONENT,
-    SECTION_ID_STREAM_GROUP_SUBCOMPONENTS,
-    SECTION_ID_STREAM_GROUP_SUBCOMPONENT,
-    SECTION_ID_STREAM_GROUP_PIECES,
-    SECTION_ID_STREAM_GROUP_PIECE,
-    SECTION_ID_STREAM_GROUP_SUBPIECES,
-    SECTION_ID_STREAM_GROUP_SUBPIECE,
-    SECTION_ID_STREAM_GROUP_BLOCKS,
-    SECTION_ID_STREAM_GROUP_BLOCK,
-    SECTION_ID_STREAM_GROUP_STREAMS,
-    SECTION_ID_STREAM_GROUP_STREAM,
-    SECTION_ID_STREAM_GROUP_DISPOSITION,
-    SECTION_ID_STREAM_GROUP_TAGS,
-    SECTION_ID_STREAM_GROUPS,
-    SECTION_ID_ROOT,
-    SECTION_ID_STREAM,
-    SECTION_ID_STREAM_DISPOSITION,
-    SECTION_ID_STREAMS,
-    SECTION_ID_STREAM_TAGS,
-    SECTION_ID_STREAM_SIDE_DATA_LIST,
-    SECTION_ID_STREAM_SIDE_DATA,
-    SECTION_ID_SUBTITLE,
-} SectionID;
-
 static const char *get_packet_side_data_type(const void *data)
 {
     const AVPacketSideData *sd = (const AVPacketSideData *)data;
@@ -259,7 +198,7 @@ static const char *get_stream_group_type(const void *data)
     return av_x_if_null(avformat_stream_group_name(stg->type), "unknown");
 }
 
-static const AVTextFormatSection sections[] = {
+const AVTextFormatSection sections[] = {
     [SECTION_ID_CHAPTERS] =           { SECTION_ID_CHAPTERS, "chapters", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_CHAPTER, -1 } },
     [SECTION_ID_CHAPTER] =            { SECTION_ID_CHAPTER, "chapter", 0, { SECTION_ID_CHAPTER_TAGS, -1 } },
     [SECTION_ID_CHAPTER_TAGS] =       { SECTION_ID_CHAPTER_TAGS, "tags", AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .element_name = "tag", .unique_name = "chapter_tags" },
@@ -321,7 +260,7 @@ static const AVTextFormatSection sections[] = {
     [SECTION_ID_ROOT] =               { SECTION_ID_ROOT, "root", AV_TEXTFORMAT_SECTION_FLAG_IS_WRAPPER,
                                         { SECTION_ID_CHAPTERS, SECTION_ID_FORMAT, SECTION_ID_FRAMES, SECTION_ID_PROGRAMS, SECTION_ID_STREAM_GROUPS, SECTION_ID_STREAMS,
                                           SECTION_ID_PACKETS, SECTION_ID_ERROR, SECTION_ID_PROGRAM_VERSION, SECTION_ID_LIBRARY_VERSIONS,
-                                          SECTION_ID_PIXEL_FORMATS, -1} },
+                                          SECTION_ID_PIXEL_FORMATS, SECTION_ID_HWACCEL_DEVICES, -1} },
     [SECTION_ID_STREAMS] =            { SECTION_ID_STREAMS, "streams", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM, -1 } },
     [SECTION_ID_STREAM] =             { SECTION_ID_STREAM, "stream", 0, { SECTION_ID_STREAM_DISPOSITION, SECTION_ID_STREAM_TAGS, SECTION_ID_STREAM_SIDE_DATA_LIST, -1 } },
     [SECTION_ID_STREAM_DISPOSITION] = { SECTION_ID_STREAM_DISPOSITION, "disposition", 0, { -1 }, .unique_name = "stream_disposition" },
@@ -329,6 +268,58 @@ static const AVTextFormatSection sections[] = {
     [SECTION_ID_STREAM_SIDE_DATA_LIST] ={ SECTION_ID_STREAM_SIDE_DATA_LIST, "side_data_list", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM_SIDE_DATA, -1 }, .element_name = "side_data", .unique_name = "stream_side_data_list" },
     [SECTION_ID_STREAM_SIDE_DATA] =     { SECTION_ID_STREAM_SIDE_DATA, "side_data", AV_TEXTFORMAT_SECTION_FLAG_HAS_TYPE|AV_TEXTFORMAT_SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .unique_name = "stream_side_data", .element_name = "side_datum", .get_type = get_packet_side_data_type },
     [SECTION_ID_SUBTITLE] =           { SECTION_ID_SUBTITLE, "subtitle", 0, { -1 } },
+
+
+    [SECTION_ID_HWACCEL_DEVICES] =    { SECTION_ID_HWACCEL_DEVICES, "hwaccel_devices", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_HWACCEL_DEVICE, -1 } },
+    [SECTION_ID_HWACCEL_DEVICE] =     { SECTION_ID_HWACCEL_DEVICE, "hwaccel_device", 0,
+                                        { SECTION_ID_DEVICE_PATH_DRM, SECTION_ID_DEVICE_INDEX_D3D11VA, SECTION_ID_DEVICE_INDEX_CUDA,
+                                          SECTION_ID_DEVICE_INFO_DRM, SECTION_ID_DEVICE_INFO_VAAPI, SECTION_ID_DEVICE_INFO_D3D11VA, SECTION_ID_DEVICE_INFO_QSV,
+                                          SECTION_ID_DEVICE_INFO_OPENCL, SECTION_ID_DEVICE_INFO_VULKAN, SECTION_ID_DEVICE_INFO_CUDA, SECTION_ID_DEVICE_INFO_AMF,
+                                          SECTION_ID_DEVICE_UTIL_DRM, SECTION_ID_DEVICE_UTIL_D3D11VA, SECTION_ID_DEVICE_UTIL_CUDA,
+                                          SECTION_ID_DEVICE_DECODERS_VAAPI, SECTION_ID_DEVICE_DECODERS_D3D11VA, SECTION_ID_DEVICE_DECODERS_QSV, SECTION_ID_DEVICE_DECODERS_CUDA,
+                                          SECTION_ID_DEVICE_ENCODERS_VAAPI, SECTION_ID_DEVICE_ENCODERS_QSV, SECTION_ID_DEVICE_ENCODERS_CUDA, SECTION_ID_DEVICE_ENCODERS_AMF,
+                                          SECTION_ID_DEVICE_ENCODERS_MF, SECTION_ID_DEVICE_FILTERS_VAAPI, SECTION_ID_DEVICE_FILTERS_QSV, -1 } },
+
+    [SECTION_ID_DEVICE_PATH_DRM] =         { SECTION_ID_DEVICE_PATH_DRM,         "device_path_drm",      0, { -1 } },
+    [SECTION_ID_DEVICE_INDEX_D3D11VA] =    { SECTION_ID_DEVICE_INDEX_D3D11VA,    "device_index_d3d11va", 0, { -1 } },
+    [SECTION_ID_DEVICE_INDEX_CUDA] =       { SECTION_ID_DEVICE_INDEX_CUDA,       "device_index_cuda",    0, { -1 } },
+
+    [SECTION_ID_DEVICE_INFO_DRM] =         { SECTION_ID_DEVICE_INFO_DRM,         "device_info_drm",      0, { -1 } },
+    [SECTION_ID_DEVICE_INFO_VAAPI] =       { SECTION_ID_DEVICE_INFO_VAAPI,       "device_info_vaapi",    0, { -1 } },
+    [SECTION_ID_DEVICE_INFO_D3D11VA] =     { SECTION_ID_DEVICE_INFO_D3D11VA,     "device_info_d3d11va",  0, { -1 } },
+    [SECTION_ID_DEVICE_INFO_QSV] =         { SECTION_ID_DEVICE_INFO_QSV,         "device_info_qsv",      0, { -1 } },
+    [SECTION_ID_DEVICE_INFO_OPENCL] =      { SECTION_ID_DEVICE_INFO_OPENCL,      "device_info_opencl",   0, { -1 } },
+    [SECTION_ID_DEVICE_INFO_VULKAN] =      { SECTION_ID_DEVICE_INFO_VULKAN,      "device_info_vulkan",   0, { -1 } },
+    [SECTION_ID_DEVICE_INFO_CUDA] =        { SECTION_ID_DEVICE_INFO_CUDA,        "device_info_cuda",     0, { -1 } },
+    [SECTION_ID_DEVICE_INFO_AMF] =         { SECTION_ID_DEVICE_INFO_AMF,         "device_info_amf",      0, { -1 } },
+
+    [SECTION_ID_DEVICE_UTIL_DRM] =         { SECTION_ID_DEVICE_UTIL_DRM,         "device_util_drm",      0, { -1 } },
+    [SECTION_ID_DEVICE_UTIL_D3D11VA] =     { SECTION_ID_DEVICE_UTIL_D3D11VA,     "device_util_d3d11va",  0, { -1 } },
+    [SECTION_ID_DEVICE_UTIL_CUDA] =        { SECTION_ID_DEVICE_UTIL_CUDA,        "device_util_cuda",     0, { -1 } },
+
+    [SECTION_ID_DEVICE_DECODERS_VAAPI] =   { SECTION_ID_DEVICE_DECODERS_VAAPI,   "device_decoders_vaapi",   AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_DEVICE_DECODER, -1 } },
+    [SECTION_ID_DEVICE_DECODERS_D3D11VA] = { SECTION_ID_DEVICE_DECODERS_D3D11VA, "device_decoders_d3d11va", AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_DEVICE_DECODER, -1 } },
+    [SECTION_ID_DEVICE_DECODERS_QSV] =     { SECTION_ID_DEVICE_DECODERS_QSV,     "device_decoders_qsv",     AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_DEVICE_DECODER, -1 } },
+    [SECTION_ID_DEVICE_DECODERS_CUDA] =    { SECTION_ID_DEVICE_DECODERS_CUDA,    "device_decoders_cuda",    AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_DEVICE_DECODER, -1 } },
+    [SECTION_ID_DEVICE_DECODER] =          { SECTION_ID_DEVICE_DECODER,          "device_decoder", 0, { SECTION_ID_DEVICE_PROFILES, SECTION_ID_DEVICE_PIX_FMTS, -1 } },
+
+    [SECTION_ID_DEVICE_ENCODERS_VAAPI] =   { SECTION_ID_DEVICE_ENCODERS_VAAPI,   "device_encoders_vaapi",   AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_DEVICE_ENCODER, -1 } },
+    [SECTION_ID_DEVICE_ENCODERS_QSV] =     { SECTION_ID_DEVICE_ENCODERS_QSV,     "device_encoders_qsv",     AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_DEVICE_ENCODER, -1 } },
+    [SECTION_ID_DEVICE_ENCODERS_CUDA] =    { SECTION_ID_DEVICE_ENCODERS_CUDA,    "device_encoders_cuda",    AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_DEVICE_ENCODER, -1 } },
+    [SECTION_ID_DEVICE_ENCODERS_AMF] =     { SECTION_ID_DEVICE_ENCODERS_AMF,     "device_encoders_amf",     AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_DEVICE_ENCODER, -1 } },
+    [SECTION_ID_DEVICE_ENCODERS_MF] =      { SECTION_ID_DEVICE_ENCODERS_MF,      "device_encoders_mf",      AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_DEVICE_ENCODER, -1 } },
+    [SECTION_ID_DEVICE_ENCODER] =          { SECTION_ID_DEVICE_ENCODER,          "device_encoder", 0, { SECTION_ID_DEVICE_PROFILES, SECTION_ID_DEVICE_PIX_FMTS, SECTION_ID_DEVICE_PRESETS, -1 } },
+
+    [SECTION_ID_DEVICE_FILTERS_VAAPI] =    { SECTION_ID_DEVICE_FILTERS_VAAPI,    "device_filters_vaapi",    AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_DEVICE_FILTER, -1 } },
+    [SECTION_ID_DEVICE_FILTERS_QSV] =      { SECTION_ID_DEVICE_FILTERS_QSV,      "device_filters_qsv",      AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_DEVICE_FILTER, -1 } },
+    [SECTION_ID_DEVICE_FILTER] =           { SECTION_ID_DEVICE_FILTER,           "device_filter",  0, { SECTION_ID_DEVICE_PIX_FMTS, -1 } },
+
+    [SECTION_ID_DEVICE_PROFILES] =         { SECTION_ID_DEVICE_PROFILES,         "profiles",   AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_DEVICE_PROFILE, -1 } },
+    [SECTION_ID_DEVICE_PROFILE] =          { SECTION_ID_DEVICE_PROFILE,          "profile", 0, { -1 } },
+    [SECTION_ID_DEVICE_PIX_FMTS] =         { SECTION_ID_DEVICE_PIX_FMTS,         "pix_fmts",   AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_DEVICE_PIX_FMT, -1 } },
+    [SECTION_ID_DEVICE_PIX_FMT] =          { SECTION_ID_DEVICE_PIX_FMT,          "pix_fmt", 0, { -1 } },
+    [SECTION_ID_DEVICE_PRESETS] =          { SECTION_ID_DEVICE_PRESETS,          "presets",    AV_TEXTFORMAT_SECTION_FLAG_IS_ARRAY, { SECTION_ID_DEVICE_PRESET, -1 } },
+    [SECTION_ID_DEVICE_PRESET] =           { SECTION_ID_DEVICE_PRESET,           "preset",  0, { -1 } },
 };
 
 typedef struct EntrySelection {
@@ -2875,8 +2866,8 @@ static int opt_format(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-static inline void mark_section_show_entries(SectionID section_id,
-                                             int show_all_entries, AVDictionary *entries)
+void mark_section_show_entries(SectionID section_id,
+                               int show_all_entries, AVDictionary *entries)
 {
     EntrySelection *selection = &selected_entries[section_id];
 
@@ -3234,6 +3225,77 @@ static int opt_show_versions(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
+static const char *const hwaccel_type_names[] = {
+    [AV_HWDEVICE_TYPE_VAAPI]   = "vaapi",
+    [AV_HWDEVICE_TYPE_D3D11VA] = "d3d11va",
+    [AV_HWDEVICE_TYPE_CUDA]    = "cuda",
+    [AV_HWDEVICE_TYPE_QSV]     = "qsv",
+    [AV_HWDEVICE_TYPE_AMF]     = "amf",
+};
+
+static int opt_show_hwaccel(void *optctx, const char *opt, const char *arg)
+{
+    for (unsigned i = 0; i < FF_ARRAY_ELEMS(hwaccel_type_names); i++) {
+        if (hwaccel_type_names[i] && !strcmp(hwaccel_type_names[i], arg)) {
+            hwaccel_type = i; break;
+        }
+    }
+    if (hwaccel_type == AV_HWDEVICE_TYPE_NONE) {
+        av_log(NULL, AV_LOG_ERROR, "hwaccel type '%s' is not supported!\n", arg);
+        av_log(NULL, AV_LOG_ERROR, "Available types are: vaapi, d3d11va, cuda, qsv, amf\n");
+        return AVERROR(EINVAL);
+    }
+
+    mark_section_show_entries(SECTION_ID_HWACCEL_DEVICES, 1, NULL);
+
+    return 0;
+}
+
+static int opt_hwaccel_flags(void* optctx, const char *opt, const char *arg)
+{
+    static const AVOption hwaccel_flags_opts[] = {
+        { "hwaccel_flags", NULL, 0, AV_OPT_TYPE_FLAGS, { .i64 = 0 }, INT64_MIN, INT64_MAX,        .unit = "flags" },
+        { "all",           NULL, 0, AV_OPT_TYPE_CONST, { .i64 = FFPROBE_HW_ALL_PRINT_FLAGS     }, .unit = "flags" },
+        { "dev",           NULL, 0, AV_OPT_TYPE_CONST, { .i64 = FFPROBE_HW_FLAG_PRINT_DEV      }, .unit = "flags" },
+        { "dec",           NULL, 0, AV_OPT_TYPE_CONST, { .i64 = FFPROBE_HW_FLAG_PRINT_DEC      }, .unit = "flags" },
+        { "enc",           NULL, 0, AV_OPT_TYPE_CONST, { .i64 = FFPROBE_HW_FLAG_PRINT_ENC      }, .unit = "flags" },
+        { "vpp",           NULL, 0, AV_OPT_TYPE_CONST, { .i64 = FFPROBE_HW_FLAG_PRINT_VPP      }, .unit = "flags" },
+        { "ocl",           NULL, 0, AV_OPT_TYPE_CONST, { .i64 = FFPROBE_HW_FLAG_PRINT_OPT_OCL  }, .unit = "flags" },
+        { "vk",            NULL, 0, AV_OPT_TYPE_CONST, { .i64 = FFPROBE_HW_FLAG_PRINT_OPT_VK   }, .unit = "flags" },
+        { "dx11",          NULL, 0, AV_OPT_TYPE_CONST, { .i64 = FFPROBE_HW_FLAG_PRINT_OPT_DX11 }, .unit = "flags" },
+        { "subdev",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = FFPROBE_HW_FLAG_PRINT_SUB_DEV  }, .unit = "flags" },
+        { "util",          NULL, 0, AV_OPT_TYPE_CONST, { .i64 = FFPROBE_HW_FLAG_PRINT_UTIL     }, .unit = "flags" },
+        { NULL },
+    };
+    static const AVClass class = {
+        .class_name = "hwaccelflags",
+        .item_name  = av_default_item_name,
+        .option     = hwaccel_flags_opts,
+        .version    = LIBAVUTIL_VERSION_INT,
+    };
+    const struct {
+        const AVClass *av_class;
+    } ctx = { &class };
+
+    if ((av_opt_eval_flags((void *)&ctx, &hwaccel_flags_opts[0], arg, &hwaccel_flags)) < 0) {
+        av_log(NULL, AV_LOG_ERROR, "hwaccel flags '%s' is not supported!\n", arg);
+        av_log(NULL, AV_LOG_ERROR, "Available flags are: all, dev, dec, enc, vpp, ocl, vk, dx11, subdev, util\n");
+        return AVERROR(EINVAL);
+    }
+
+    hwaccel_flags &= FFPROBE_HW_ALL_PRINT_FLAGS;
+
+    if (!(hwaccel_flags & FFPROBE_HW_FLAG_PRINT_DEV) &&
+        !(hwaccel_flags & FFPROBE_HW_FLAG_PRINT_DEC) &&
+        !(hwaccel_flags & FFPROBE_HW_FLAG_PRINT_ENC) &&
+        !(hwaccel_flags & FFPROBE_HW_FLAG_PRINT_VPP) &&
+        !(hwaccel_flags & FFPROBE_HW_FLAG_PRINT_UTIL)) {
+        hwaccel_flags |= FFPROBE_HW_DEFAULT_PRINT_FLAGS;
+    }
+
+    return 0;
+}
+
 #define DEFINE_OPT_SHOW_SECTION(section, target_section_id)             \
     static int opt_show_##section(void *optctx, const char *opt, const char *arg) \
     {                                                                   \
@@ -3306,6 +3368,11 @@ static const OptionDef real_options[] = {
     { "c",                     OPT_TYPE_FUNC, OPT_FUNC_ARG, { .func_arg = opt_codec}, "force decoder", "decoder_name" },
     { "codec",                 OPT_TYPE_FUNC, OPT_FUNC_ARG, { .func_arg = opt_codec}, "alias for -c (force decoder)", "decoder_name" },
     { "only_first_vframe",     OPT_TYPE_BOOL,        0, { &only_show_first_video_frame }, "only show first video frame when show_frames is used" },
+    { "show_hwaccel",          OPT_TYPE_FUNC, OPT_FUNC_ARG, { .func_arg = &opt_show_hwaccel },
+        "show details of the given hwaccel type (available types are: vaapi, d3d11va, cuda, qsv, amf)" },
+    { "hwaccel_flags",         OPT_TYPE_FUNC, OPT_FUNC_ARG, { .func_arg = &opt_hwaccel_flags },
+        "set hwaccel flags for showing (available flags are: all, dev, dec, enc, vpp, ocl, vk, dx11, subdev, util)" },
+    { "hwaccel_device",        OPT_TYPE_STRING,      0, { &hwaccel_device }, "set a hwaccel device for showing" },
     { NULL, },
 };
 
@@ -3321,6 +3388,16 @@ static inline int check_section_show_entries(int section_id)
         if (check_section_show_entries(*id))
             return 1;
     return 0;
+}
+
+static void ffprobe_show_hwaccel(AVTextFormatContext *tfc,
+                                 enum AVHWDeviceType hwaccel_type_opt,
+                                 int hwaccel_flags_opt,
+                                 const char *hwaccel_device_opt)
+{
+    avtext_print_section_header(tfc, NULL, SECTION_ID_HWACCEL_DEVICES);
+    ffprobe_show_hwaccel_internal(tfc, hwaccel_type_opt, hwaccel_flags_opt, hwaccel_device_opt);
+    avtext_print_section_footer(tfc);
 }
 
 #define SET_DO_SHOW(id, varname) do {                                   \
@@ -3390,6 +3467,8 @@ int main(int argc, char **argv)
     SET_DO_SHOW(PROGRAM_STREAM_TAGS, stream_tags);
     SET_DO_SHOW(STREAM_GROUP_STREAM_TAGS, stream_tags);
     SET_DO_SHOW(PACKET_TAGS, packet_tags);
+
+    SET_DO_SHOW(HWACCEL_DEVICES, hwaccel);
 
     if (do_bitexact && (do_show_program_version || do_show_library_versions)) {
         av_log(NULL, AV_LOG_ERROR,
@@ -3463,10 +3542,12 @@ int main(int argc, char **argv)
             ffprobe_show_library_versions(tctx);
         if (do_show_pixel_formats)
             ffprobe_show_pixel_formats(tctx);
+        if (do_show_hwaccel)
+            ffprobe_show_hwaccel(tctx, hwaccel_type, hwaccel_flags, hwaccel_device);
 
         if (!input_filename &&
             ((do_show_format || do_show_programs || do_show_stream_groups || do_show_streams || do_show_chapters || do_show_packets || do_show_error) ||
-             (!do_show_program_version && !do_show_library_versions && !do_show_pixel_formats))) {
+             (!do_show_program_version && !do_show_library_versions && !do_show_pixel_formats && !do_show_hwaccel))) {
             show_usage();
             av_log(NULL, AV_LOG_ERROR, "You have to specify one input file.\n");
             av_log(NULL, AV_LOG_ERROR, "Use -h to get full help or, even better, run 'man %s'.\n", program_name);

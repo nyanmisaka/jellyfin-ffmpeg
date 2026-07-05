@@ -2569,6 +2569,10 @@ SYSTEM_FUNCS="
 "
 
 SYSTEM_LIBRARIES="
+    advapi32
+    cfgmgr32
+    ole32
+    pdh
     bcrypt
     vaapi_drm
     vaapi_x11
@@ -2611,6 +2615,7 @@ TOOLCHAIN_FEATURES="
 
 TYPES_LIST="
     DPI_AWARENESS_CONTEXT
+    IDXGIAdapter3
     IDXGIOutput5
     __x_ABI_CWindows_CGraphics_CCapture_CIGraphicsCaptureSession5
     IDirect3DDxgiInterfaceAccess
@@ -4359,7 +4364,7 @@ ffplay_deps="avcodec avformat avfilter swscale swresample sdl2"
 ffplay_select="crop_filter transpose_filter hflip_filter vflip_filter rotate_filter"
 ffplay_suggest="shell32 libplacebo vulkan"
 ffprobe_deps="avcodec avformat"
-ffprobe_suggest="shell32"
+ffprobe_suggest="advapi32 cfgmgr32 ole32 shell32 pdh"
 
 # documentation
 podpages_deps="perl"
@@ -7074,6 +7079,8 @@ check_lib bcrypt   "windows.h bcrypt.h"   BCryptGenRandom      -lbcrypt &&
 check_lib ole32    "windows.h objbase.h"  CoTaskMemFree        -lole32
 check_lib shell32  "windows.h shellapi.h" CommandLineToArgvW   -lshell32
 check_lib psapi    "windows.h psapi.h"    GetProcessMemoryInfo -lpsapi
+check_lib cfgmgr32 "windows.h cfgmgr32.h" CM_Get_Version       -lcfgmgr32
+check_lib pdh      "windows.h pdh.h"      PdhCloseQuery        -lpdh
 
 check_lib android android/native_window.h ANativeWindow_acquire -landroid
 check_lib mediandk "stdint.h media/NdkMediaFormat.h" AMediaFormat_new -lmediandk
@@ -7135,6 +7142,7 @@ check_type "windows.h dxva.h" "DXVA_PicParams_VP9" -DWINAPI_FAMILY=WINAPI_FAMILY
 check_type "windows.h dxgi1_2.h" "DXGI_OUTDUPL_FRAME_INFO"
 check_type "windows.h dxgi1_2.h" "IDXGIOutput1"
 check_type "windows.h dxgi1_5.h" "IDXGIOutput5"
+check_type "windows.h dxgi1_4.h" "IDXGIAdapter3"
 check_type "windows.h d3d11.h" "ID3D11VideoDecoder"
 check_type "windows.h d3d11.h" "ID3D11VideoContext"
 check_type "windows.h d3d12.h" "ID3D12Device"

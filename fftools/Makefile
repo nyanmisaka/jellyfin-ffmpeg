@@ -39,6 +39,14 @@ OBJS-ffmpeg +=                  \
     $(RESOBJS)                        \
 
 OBJS-ffprobe +=                       \
+    fftools/ffprobe_hw.o              \
+    fftools/ffprobe_hw_vaapi.o        \
+    fftools/ffprobe_hw_dxgi.o         \
+    fftools/ffprobe_hw_cuda.o         \
+    fftools/ffprobe_hw_qsv.o          \
+    fftools/ffprobe_hw_amf.o          \
+    fftools/ffprobe_hw_mf.o           \
+    fftools/ffprobe_hw_opencl.o       \
     fftools/textformat/avtextformat.o \
     fftools/textformat/tf_compact.o   \
     fftools/textformat/tf_default.o   \

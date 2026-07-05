@@ -29,7 +29,7 @@
 #include "libavutil/hash.h"
 #include "avtextwriters.h"
 
-#define SECTION_MAX_NB_CHILDREN 11
+#define SECTION_MAX_NB_CHILDREN (11+14)
 
 typedef struct AVTextFormatSectionContext {
     char *context_id;
@@ -110,7 +110,7 @@ typedef struct AVTextFormatter {
 } AVTextFormatter;
 
 #define SECTION_MAX_NB_LEVELS    12
-#define SECTION_MAX_NB_SECTIONS 100
+#define SECTION_MAX_NB_SECTIONS (100+4)
 
 typedef struct AVTextFormatOptions {
     /**

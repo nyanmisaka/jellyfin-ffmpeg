@@ -64,4 +64,36 @@ static inline int ff_cuda_check(void *avctx,
 
 #define FF_CUDA_CHECK_DL(avclass, cudl, x) ff_cuda_check(avclass, cudl->cuGetErrorName, cudl->cuGetErrorString, (x), #x)
 
+typedef const char* NVML_API_CALL nvml_check_ErrorString(nvmlReturn_t result);
+
+/**
+ * Wrap a NVML function call and print error information if it fails.
+ */
+static inline int ff_nvml_check(void *avctx,
+                                void *nvmlErrorString_fn,
+                                nvmlReturn_t err, const char *func)
+{
+    const char *err_string;
+
+    av_log(avctx, AV_LOG_TRACE, "Calling %s\n", func);
+
+    if (err == NVML_SUCCESS)
+        return 0;
+
+    err_string = ((nvml_check_ErrorString *)nvmlErrorString_fn)(err);
+
+    av_log(avctx, AV_LOG_ERROR, "%s failed", func);
+    if (err_string)
+        av_log(avctx, AV_LOG_ERROR, " -> %d: %s", (int)err, err_string);
+    av_log(avctx, AV_LOG_ERROR, "\n");
+
+    return AVERROR_EXTERNAL;
+}
+
+/**
+ * Convenience wrapper for ff_nvml_check when dynamically loading nvml symbols.
+ */
+
+#define FF_NVML_CHECK_DL(avclass, nvmldl, x) ff_nvml_check(avclass, nvmldl->nvmlErrorString, (x), #x)
+
 #endif /* AVUTIL_CUDA_CHECK_H */
