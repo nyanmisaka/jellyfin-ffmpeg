@@ -108,13 +108,8 @@ prepare_extra_common() {
 
     # FONTCONFIG
     pushd ${SOURCE_DIR}
-    mkdir fontconfig
-    pushd fontconfig
-    fc_ver="2.17.1"
-    fc_link="https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/${fc_ver}/fontconfig-${fc_ver}.tar.xz"
-    wget ${fc_link} -O fc.tar.xz
-    tar xaf fc.tar.xz
-    meson setup fontconfig-${fc_ver} fontconfig_build \
+    git clone -b 2.17.1 --depth=1 https://chromium.googlesource.com/external/fontconfig
+    meson setup fontconfig fontconfig_build \
         ${MESON_CROSS_OPT} \
         --prefix=${TARGET_DIR} \
         --sysconfdir=/etc \
@@ -130,7 +125,6 @@ prepare_extra_common() {
     ninja -j$(nproc) -C fontconfig_build install
     cp -a ${TARGET_DIR}/lib/libfontconfig.so* ${SOURCE_DIR}/fontconfig
     echo "fontconfig/libfontconfig.so* usr/lib/jellyfin-ffmpeg/lib" >> ${DPKG_INSTALL_LIST}
-    popd
     popd
 
     # HARFBUZZ
@@ -352,7 +346,7 @@ prepare_extra_amd64() {
 
     # LIBVA
     pushd ${SOURCE_DIR}
-    git clone -b 2.24.0 --depth=1 https://github.com/intel/libva.git
+    git clone -b 2.24.1 --depth=1 https://github.com/intel/libva.git
     pushd libva
     sed -i 's|secure_getenv("LIBVA_DRIVERS_PATH")|"/usr/lib/jellyfin-ffmpeg/lib/dri:/usr/lib/x86_64-linux-gnu/dri:/usr/lib/dri:/usr/local/lib/dri"|g' va/va.c
     sed -i 's|secure_getenv("LIBVA_DRIVER_NAME")|secure_getenv("LIBVA_DRIVER_NAME_JELLYFIN")|g' va/va.c
@@ -369,7 +363,7 @@ prepare_extra_amd64() {
 
     # LIBVA-UTILS
     pushd ${SOURCE_DIR}
-    git clone -b 2.23.0 --depth=1 https://github.com/intel/libva-utils.git
+    git clone -b 2.24.0 --depth=1 https://github.com/intel/libva-utils.git
     pushd libva-utils
     ./autogen.sh
     ./configure --prefix=${TARGET_DIR}
@@ -587,6 +581,9 @@ prepare_extra_amd64() {
         # Fix setting VPE rotation with horizontal flip enabled
         wget -q -O - https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42408.patch | \
             sed 's#/mm/#/#g' | patch -p1 -d mesa-${mesa_ver}
+        # Fix setting chroma swizzle mode in VK Video on GFX9
+        wget -q -O - https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42763.patch | \
+            patch -p1 -d mesa-${mesa_ver}
         meson setup mesa-${mesa_ver} mesa_build \
             --prefix=${TARGET_DIR} \
             --libdir=lib \

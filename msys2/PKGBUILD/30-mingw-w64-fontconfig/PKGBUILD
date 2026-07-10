@@ -22,16 +22,16 @@ depends=("${MINGW_PACKAGE_PREFIX}-cc-libs"
          "${MINGW_PACKAGE_PREFIX}-jellyfin-libiconv")
 options=('staticlibs' 'strip')
 install=${_realname}-${MSYSTEM}.install
-source=("https://gitlab.freedesktop.org/fontconfig/fontconfig/-/archive/${pkgver}/fontconfig-${pkgver}.tar.gz"
+source=("${_realname}"::"git+https://chromium.googlesource.com/external/${_realname}#tag=${pkgver}"
         0011-conf-copy-instead-of-symlink.patch)
-sha256sums=('82e73b26adad651b236e5f5d4b3074daf8ff0910188808496326bd3449e5261d'
+sha256sums=('SKIP'
             '73ed74a1f4624466084d219e2fbc0d5780da9f63763f1307629251e58cccf2cd')
 
 export MINGW_TOOLCHAIN_PREFIX="${MINGW_PREFIX}"
 export FF_MINGW_PREFIX="${MINGW_TOOLCHAIN_PREFIX}/ffbuild"
 
 prepare() {
-  cd "${_realname}-${pkgver}"
+  cd "${srcdir}/${_realname}"
 
   patch -p1 -i ${srcdir}/0011-conf-copy-instead-of-symlink.patch
 }
@@ -54,7 +54,7 @@ build() {
       -Ddoc-pdf=disabled \
       -Ddoc-html=disabled \
       -Dcache-build=disabled \
-      ../"${_realname}-${pkgver}"
+      "../${_realname}"
 
   meson compile
 }
@@ -63,7 +63,7 @@ package() {
   cd "${srcdir}/build-${MSYSTEM}-static"
   DESTDIR="${pkgdir}" meson install
 
-  install -Dm644 "${srcdir}/${_realname}-${pkgver}/COPYING" "${pkgdir}${FF_MINGW_PREFIX}/share/licenses/${_realname}/COPYING"
+  install -Dm644 "${srcdir}/${_realname}/COPYING" "${pkgdir}${FF_MINGW_PREFIX}/share/licenses/${_realname}/COPYING"
 
   # Also install libintl lib
   cp "${MINGW_TOOLCHAIN_PREFIX}"/lib/libintl.a "${pkgdir}${FF_MINGW_PREFIX}/lib/"

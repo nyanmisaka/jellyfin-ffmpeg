@@ -1,7 +1,7 @@
 #!/bin/bash
 
-SCRIPT_REPO="https://gitlab.freedesktop.org/fontconfig/fontconfig.git"
-SCRIPT_COMMIT="04e45cdd5fc2223e8289aaf402717fadb536c3f1"
+SCRIPT_REPO="https://chromium.googlesource.com/external/fontconfig"
+SCRIPT_COMMIT="6d0a98982ec351c165c9224c8b7dbdfca3010e47"
 
 ffbuild_enabled() {
     return 0
