@@ -26,7 +26,7 @@ source=("https://github.com/madler/zlib/releases/download/v${pkgver}/zlib-${pkgv
         04-fix-largefile-support.patch
         07-Add-no-undefined-to-link-to-enable-build-shared-vers.patch
         08-Add-bzip2-library-to-pkg-config-file.patch
-        https://patch-diff.githubusercontent.com/raw/madler/zlib/pull/1165.patch)
+        09-Add-dependencies-to-ints-h-in-minizip-makefile-am.patch)
 sha256sums=('d7a0654783a4da529d1bb793b7ad9c3318020af77667bcae35f95d0e42a792f3'
             'SKIP'
             'b58b353d976d6fdd9a5094e60fa39439d4f14e9bf8be4a8bd475f2cd47f10226'
@@ -34,7 +34,7 @@ sha256sums=('d7a0654783a4da529d1bb793b7ad9c3318020af77667bcae35f95d0e42a792f3'
             '8e1cdf8edfc6ac08b0e660ca42a977942a88fab3ff59c01c87ba96500e2c3e63'
             'fb83292f494f649ea7f1835aa4abea61acc593d7f90625741d42cd99cac0e075'
             '0be98a7e660e7c068856f08b9e92d6c73a6b0d88c3e29a9716140b147f7c23c5'
-            '0774e1368851504115f732f66230ca4a8a9cd60d4ba014502f65cc19b0b4d8bc')
+            '0fdfd7ed5ce4825a66729853c72f2662b6c2e7be1df138d930a478ea772f7226')
 validpgpkeys=('5ED46A6721D365587791E2AA783FCD8E58BCAFBA')
 
 export FF_MINGW_PREFIX="${MINGW_PREFIX}/ffbuild"
@@ -53,7 +53,7 @@ prepare() {
     01-zlib-1.2.11-1-buildsys.mingw.patch \
     03-dont-put-sodir-into-L.mingw.patch \
     04-fix-largefile-support.patch \
-    1165.patch
+    09-Add-dependencies-to-ints-h-in-minizip-makefile-am.patch
 
   cd ${srcdir}/${_realname}-${pkgver}/contrib/minizip
   apply_patch_with_msg \

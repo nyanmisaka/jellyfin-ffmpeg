@@ -159,13 +159,8 @@ make install
 popd
 
 # FONTCONFIG
-mkdir fontconfig
-pushd fontconfig
-fc_ver="2.17.1"
-fc_link="https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/${fc_ver}/fontconfig-${fc_ver}.tar.xz"
-wget ${fc_link} -O fc.tar.xz
-tar xaf fc.tar.xz
-meson setup fontconfig-${fc_ver} fontconfig_build \
+git clone -b 2.17.1 --depth=1 https://chromium.googlesource.com/external/fontconfig
+meson setup fontconfig fontconfig_build \
     --prefix=${FF_DEPS_PREFIX} \
     --cross-file=${FF_MESON_TOOLCHAIN} \
     --buildtype=release \
@@ -176,7 +171,6 @@ meson setup fontconfig-${fc_ver} fontconfig_build \
     -D{cache-build,doc,tests,tools}=disabled
 meson configure fontconfig_build
 ninja -j$(nproc) -C fontconfig_build install
-popd
 
 # HARFBUZZ
 git clone -b 14.2.1 --depth=1 https://github.com/harfbuzz/harfbuzz.git
