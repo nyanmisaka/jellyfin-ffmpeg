@@ -17,16 +17,12 @@ Build-Depends:
  libgnutls28-dev | libgnutls-dev,
 # --enable-libbluray
  libbluray-dev,
-# --enable-libdrm
- libdrm-dev [!amd64],
 # --enable-gmp
  libgmp-dev,
 # --enable-libmp3lame
  libmp3lame-dev,
 # --enable-libopus
  libopus-dev,
-# --enable-libtheora
- libtheora-dev,
 # --enable-libvorbis
  libvorbis-dev,
 # --enable-libopenmpt
