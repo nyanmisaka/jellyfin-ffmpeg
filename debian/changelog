@@ -1,3 +1,13 @@
+jellyfin-ffmpeg (8.1.2-2) unstable; urgency=medium
+
+  * Add d3d11 overlay/tonemap/transpose/deint/scale filters
+  * Fix full range input for mjpeg_vaapi encoder
+  * Fix a typo in HDR10 metadata mapping in hevc_nvenc encoder
+  * Add misc enhancements to mfenc hw encoder
+  * Enable Mesa AMD drivers for arm64 builds
+
+ -- nyanmisaka <nst799610810@gmail.com>  Sat, 18 Jul 2026 18:39:50 +0800
+
 jellyfin-ffmpeg (8.1.2-1) unstable; urgency=medium
 
   * New upstream version 8.1.2
