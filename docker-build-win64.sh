@@ -623,6 +623,7 @@ fi
     --enable-opencl \
     --enable-dxva2 \
     --enable-d3d11va \
+    --enable-mediafoundation \
     --enable-amf \
     --enable-libvpl \
     --enable-ffnvcodec \
