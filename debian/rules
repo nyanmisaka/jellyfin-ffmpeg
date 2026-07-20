@@ -14,8 +14,11 @@ CONFIG := --prefix=${TARGET_DIR} \
 	--disable-ffplay \
 	--disable-static \
 	--disable-libxcb \
-	--disable-sdl2 \
+	--disable-libxcb-shm \
+	--disable-libxcb-xfixes \
+	--disable-libxcb-shape \
 	--disable-xlib \
+	--disable-sdl2 \
 	--enable-lto=auto \
 	--enable-gpl \
 	--enable-version3 \
@@ -46,6 +49,10 @@ CONFIG := --prefix=${TARGET_DIR} \
 	--enable-libzvbi \
 	--enable-libzimg \
 	--enable-libfdk-aac \
+	--enable-libshaderc \
+	--enable-libplacebo \
+	--enable-vulkan \
+	--enable-vaapi \
 	--enable-ffnvcodec \
 	--enable-cuda \
 	--enable-cuda-llvm \
@@ -54,10 +61,6 @@ CONFIG := --prefix=${TARGET_DIR} \
 	--enable-nvenc \
 
 CONFIG_x86 := --arch=amd64 \
-	--enable-libshaderc \
-	--enable-libplacebo \
-	--enable-vulkan \
-	--enable-vaapi \
 	--enable-libvpl \
 	--enable-amf \
 

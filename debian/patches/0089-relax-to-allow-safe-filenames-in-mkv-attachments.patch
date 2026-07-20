@@ -2,35 +2,77 @@ Index: FFmpeg/fftools/ffmpeg_demux.c
 ===================================================================
 --- FFmpeg.orig/fftools/ffmpeg_demux.c
 +++ FFmpeg/fftools/ffmpeg_demux.c
-@@ -1757,10 +1757,26 @@ static int is_windows_reserved_device_na
+@@ -1770,23 +1770,54 @@ static int is_windows_reserved_device_na
  {
  #if HAVE_DOS_PATHS
      for (const char *p = f; p && *p; ) {
 -        char stem[6], *s;
-+        char stem[16], *s;
+-        av_strlcpy(stem, p, sizeof(stem));
+-        if ((s = strchr(stem, '.')))
+-            *s = 0;
+-        if ((s = strpbrk(stem, "123456789")))
+-            *s = '1';
+-
+-        if( !av_strcasecmp(stem, "AUX") ||
+-            !av_strcasecmp(stem, "CON") ||
+-            !av_strcasecmp(stem, "NUL") ||
+-            !av_strcasecmp(stem, "PRN") ||
+-            !av_strcasecmp(stem, "COM1") ||
+-            !av_strcasecmp(stem, "LPT1")
+-        )
++        const char *next_slash;
++        const char *seg_end;
++        const char *dot;
 +        size_t len;
-         av_strlcpy(stem, p, sizeof(stem));
 +
-+        if ((s = strchr(stem, '/')))
-+            *s = 0;
++        next_slash = strchr(p, '/');
++        seg_end = next_slash ? next_slash : p + strlen(p);
 +
-+        /* Trim trailing spaces and dots */
-+        len = strlen(stem);
-+        while (len > 0 && (stem[len - 1] == ' ' || stem[len - 1] == '.'))
-+            stem[--len] = 0;
++        /* Trim trailing spaces and dots of the current component */
++        while (seg_end > p && (*(seg_end - 1) == ' ' || *(seg_end - 1) == '.'))
++            seg_end--;
 +
-         if ((s = strchr(stem, '.')))
-             *s = 0;
++        /* Discard extension if present (Windows stops checking at first dot) */
++        dot = p;
++        while (dot < seg_end && *dot != '.')
++            dot++;
++        if (dot < seg_end)
++            seg_end = dot;
 +
 +        /* Trim again after stripping extension */
-+        len = strlen(stem);
-+        while (len > 0 && (stem[len - 1] == ' ' || stem[len - 1] == '.'))
-+            stem[--len] = 0;
++        while (seg_end > p && (*(seg_end - 1) == ' ' || *(seg_end - 1) == '.'))
++            seg_end--;
 +
-         if ((s = strpbrk(stem, "123456789")))
-             *s = '1';
++        len = seg_end - p;
++
++        /* Match 3-byte legacy device names: AUX, CON, NUL, PRN */
++        if (len == 3 && (!av_strncasecmp(p, "AUX", 3) ||
++                         !av_strncasecmp(p, "CON", 3) ||
++                         !av_strncasecmp(p, "NUL", 3) ||
++                         !av_strncasecmp(p, "PRN", 3)))
+             return 1;
  
-@@ -1789,18 +1805,35 @@ static int safe_filename(const char *f,
+-        p = strchr(p, '/');
++        /* Match COM1-9 / LPT1-9 and their UTF-8 superscript aliases */
++        if ((len == 4 || len == 5) && (!av_strncasecmp(p, "COM", 3) ||
++                                       !av_strncasecmp(p, "LPT", 3))) {
++            /* Standard ASCII digits 1-9 */
++            if (len == 4 && *(seg_end - 1) >= '1' && *(seg_end - 1) <= '9')
++                return 1;
++
++            /* UTF-8 superscripts (¹, ², ³) */
++            if (len == 5 && (unsigned char)*(seg_end - 2) == 0xC2 &&
++                ((unsigned char)*(seg_end - 1) == 0xB9 ||
++                 (unsigned char)*(seg_end - 1) == 0xB2 ||
++                 (unsigned char)*(seg_end - 1) == 0xB3))
++                return 1;
++        }
++
++        p = next_slash;
+         if (p)
+             p++;
+     }
+@@ -1802,18 +1833,35 @@ static int safe_filename(const char *f,
          return 0;
  
      for (; *f; f++) {
@@ -74,7 +116,7 @@ Index: FFmpeg/fftools/ffmpeg_demux.c
  }
  
  static int dump_attachment(InputStream *ist, const char *filename)
-@@ -1817,8 +1850,8 @@ static int dump_attachment(InputStream *
+@@ -1830,8 +1878,8 @@ static int dump_attachment(InputStream *
      if (!*filename && (e = av_dict_get(st->metadata, "filename", NULL, 0))) {
          filename = e->value;
          if (!safe_filename(filename, 0)) {

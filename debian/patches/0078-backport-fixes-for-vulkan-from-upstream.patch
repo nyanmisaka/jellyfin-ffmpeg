@@ -1,3 +1,140 @@
+Index: FFmpeg/libavcodec/av1dec.c
+===================================================================
+--- FFmpeg.orig/libavcodec/av1dec.c
++++ FFmpeg/libavcodec/av1dec.c
+@@ -688,8 +688,8 @@ static int get_pixel_format(AVCodecConte
+ 
+ static void av1_frame_unref(AV1Frame *f)
+ {
+-    ff_progress_frame_unref(&f->pf);
+     av_refstruct_unref(&f->hwaccel_picture_private);
++    ff_progress_frame_unref(&f->pf);
+     av_refstruct_unref(&f->header_ref);
+     f->raw_frame_header = NULL;
+     f->spatial_id = f->temporal_id = 0;
+Index: FFmpeg/libavcodec/h264_picture.c
+===================================================================
+--- FFmpeg.orig/libavcodec/h264_picture.c
++++ FFmpeg/libavcodec/h264_picture.c
+@@ -44,9 +44,9 @@ void ff_h264_unref_picture(H264Picture *
+     if (!pic->f || !pic->f->buf[0])
+         return;
+ 
++    av_refstruct_unref(&pic->hwaccel_picture_private);
+     ff_thread_release_ext_buffer(&pic->tf);
+     av_frame_unref(pic->f_grain);
+-    av_refstruct_unref(&pic->hwaccel_picture_private);
+ 
+     av_refstruct_unref(&pic->qscale_table_base);
+     av_refstruct_unref(&pic->mb_type_base);
+Index: FFmpeg/libavcodec/hevc/refs.c
+===================================================================
+--- FFmpeg.orig/libavcodec/hevc/refs.c
++++ FFmpeg/libavcodec/hevc/refs.c
+@@ -38,6 +38,8 @@ void ff_hevc_unref_frame(HEVCFrame *fram
+     if (!(frame->flags & ~HEVC_FRAME_FLAG_CORRUPT))
+         frame->flags = 0;
+     if (!frame->flags) {
++        av_refstruct_unref(&frame->hwaccel_picture_private);
++
+         ff_progress_frame_unref(&frame->tf);
+         av_frame_unref(frame->frame_grain);
+         frame->needs_fg = 0;
+@@ -49,8 +51,6 @@ void ff_hevc_unref_frame(HEVCFrame *fram
+         frame->nb_rpl_elems = 0;
+         av_refstruct_unref(&frame->rpl_tab);
+         frame->refPicList = NULL;
+-
+-        av_refstruct_unref(&frame->hwaccel_picture_private);
+     }
+ }
+ 
+Index: FFmpeg/libavcodec/vp9.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vp9.c
++++ FFmpeg/libavcodec/vp9.c
+@@ -97,10 +97,10 @@ static void vp9_tile_data_free(VP9TileDa
+ 
+ static void vp9_frame_unref(VP9Frame *f)
+ {
++    av_refstruct_unref(&f->hwaccel_picture_private);
+     ff_progress_frame_unref(&f->tf);
+     av_refstruct_unref(&f->header_ref);
+     av_refstruct_unref(&f->extradata);
+-    av_refstruct_unref(&f->hwaccel_picture_private);
+     f->segmentation_map = NULL;
+ }
+ 
+Index: FFmpeg/libavcodec/vulkan_encode.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vulkan_encode.c
++++ FFmpeg/libavcodec/vulkan_encode.c
+@@ -28,6 +28,27 @@ const AVCodecHWConfigInternal *const ff_
+     NULL,
+ };
+ 
++static void vulkan_encode_free_pic(FFVulkanEncodeContext *ctx,
++                                   FFHWBaseEncodePicture *pic)
++{
++    FFVulkanFunctions *vk = &ctx->s.vkfn;
++
++    FFVulkanEncodePicture *vp = pic->priv;
++
++    if (vp->in.view)
++        vk->DestroyImageView(ctx->s.hwctx->act_dev, vp->in.view,
++                             ctx->s.hwctx->alloc);
++
++    if (!ctx->common.layered_dpb && vp->dpb.view)
++        vk->DestroyImageView(ctx->s.hwctx->act_dev, vp->dpb.view,
++                             ctx->s.hwctx->alloc);
++
++    vp->in.view = VK_NULL_HANDLE;
++    vp->dpb.view = VK_NULL_HANDLE;
++
++    ctx->slots[vp->dpb_slot.slotIndex] = NULL;
++}
++
+ av_cold void ff_vulkan_encode_uninit(FFVulkanEncodeContext *ctx)
+ {
+     FFVulkanContext *s = &ctx->s;
+@@ -42,10 +63,15 @@ av_cold void ff_vulkan_encode_uninit(FFV
+                                              ctx->session_params,
+                                              s->hwctx->alloc);
+ 
+-    ff_hw_base_encode_close(&ctx->base);
++    /* Destroy the image views of any pictures still in the queue,
++     * as ff_hw_base_encode_close() only frees the picture structs */
++    for (FFHWBaseEncodePicture *pic = ctx->base.pic_start; pic; pic = pic->next)
++        vulkan_encode_free_pic(ctx, pic);
+ 
+     av_buffer_pool_uninit(&ctx->buf_pool);
+ 
++    ff_hw_base_encode_close(&ctx->base);
++
+     ff_vk_video_common_uninit(s, &ctx->common);
+ 
+     ff_vk_uninit(s);
+@@ -95,19 +121,8 @@ static int vulkan_encode_init(AVCodecCon
+ static int vulkan_encode_free(AVCodecContext *avctx, FFHWBaseEncodePicture *pic)
+ {
+     FFVulkanEncodeContext *ctx = avctx->priv_data;
+-    FFVulkanFunctions *vk = &ctx->s.vkfn;
+-
+-    FFVulkanEncodePicture *vp = pic->priv;
+-
+-    if (vp->in.view)
+-        vk->DestroyImageView(ctx->s.hwctx->act_dev, vp->in.view,
+-                             ctx->s.hwctx->alloc);
+-
+-    if (!ctx->common.layered_dpb && vp->dpb.view)
+-        vk->DestroyImageView(ctx->s.hwctx->act_dev, vp->dpb.view,
+-                             ctx->s.hwctx->alloc);
+ 
+-    ctx->slots[vp->dpb_slot.slotIndex] = NULL;
++    vulkan_encode_free_pic(ctx, pic);
+ 
+     return 0;
+ }
 Index: FFmpeg/libavcodec/vulkan_encode.h
 ===================================================================
 --- FFmpeg.orig/libavcodec/vulkan_encode.h
@@ -11,11 +148,186 @@ Index: FFmpeg/libavcodec/vulkan_encode.h
      { "rc_mode", "Select rate control type", OFFSET(common.opts.rc_mode), AV_OPT_TYPE_INT, { .i64 = FF_VK_RC_MODE_AUTO }, 0, FF_VK_RC_MODE_AUTO, FLAGS, "rc_mode" }, \
          { "auto",    "Choose mode automatically based on parameters", 0, AV_OPT_TYPE_CONST, { .i64 = FF_VK_RC_MODE_AUTO }, INT_MIN, INT_MAX, FLAGS, "rc_mode" }, \
          { "driver",  "Driver-specific rate control", 0, AV_OPT_TYPE_CONST, { .i64 = VK_VIDEO_ENCODE_RATE_CONTROL_MODE_DEFAULT_KHR      }, INT_MIN, INT_MAX, FLAGS, "rc_mode" }, \
+Index: FFmpeg/libavcodec/vulkan_encode_av1.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vulkan_encode_av1.c
++++ FFmpeg/libavcodec/vulkan_encode_av1.c
+@@ -1023,7 +1023,7 @@ static int init_base_units(AVCodecContex
+     } else {
+         av_log(avctx, AV_LOG_ERROR, "Unable to get feedback for AV1 sequence header = %zu\n",
+                data_size);
+-        return err;
++        return AVERROR_EXTERNAL;
+     }
+ 
+     ret = vk->GetEncodedVideoSessionParametersKHR(s->hwctx->act_dev, &params_info,
+@@ -1031,7 +1031,8 @@ static int init_base_units(AVCodecContex
+                                                   &data_size, data);
+     if (ret != VK_SUCCESS) {
+         av_log(avctx, AV_LOG_ERROR, "Error writing feedback units\n");
+-        return err;
++        err = AVERROR_EXTERNAL;
++        goto end;
+     }
+ 
+     av_log(avctx, AV_LOG_VERBOSE, "Feedback units written, overrides: %i\n",
+@@ -1040,20 +1041,21 @@ static int init_base_units(AVCodecContex
+     params_feedback.hasOverrides = 1;
+ 
+     /* No need to sync any overrides */
++    err = 0;
+     if (!params_feedback.hasOverrides)
+-        return 0;
++        goto end;
+ 
+     /* Parse back tne units and override */
+     err = parse_feedback_units(avctx, data, data_size);
+     if (err < 0)
+-        return err;
++        goto end;
+ 
+     /* Create final session parameters */
+     err = create_session_params(avctx);
+-    if (err < 0)
+-        return err;
+ 
+-    return 0;
++end:
++    av_free(data);
++    return err;
+ }
+ 
+ static int vulkan_encode_av1_add_obu(AVCodecContext *avctx,
+@@ -1359,6 +1361,10 @@ static av_cold int vulkan_encode_av1_ini
+ static av_cold int vulkan_encode_av1_close(AVCodecContext *avctx)
+ {
+     VulkanEncodeAV1Context *enc = avctx->priv_data;
++
++    ff_cbs_fragment_free(&enc->current_access_unit);
++    ff_cbs_close(&enc->cbs);
++
+     av_free(enc->padding_payload);
+     ff_vulkan_encode_uninit(&enc->common);
+     return 0;
+Index: FFmpeg/libavcodec/vulkan_encode_h264.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vulkan_encode_h264.c
++++ FFmpeg/libavcodec/vulkan_encode_h264.c
+@@ -1148,7 +1148,7 @@ static int init_base_units(AVCodecContex
+             return AVERROR(ENOMEM);
+     } else {
+         av_log(avctx, AV_LOG_ERROR, "Unable to get feedback for H.264 units = %zu\n", data_size);
+-        return err;
++        return AVERROR_EXTERNAL;
+     }
+ 
+     ret = vk->GetEncodedVideoSessionParametersKHR(s->hwctx->act_dev, &params_info,
+@@ -1156,7 +1156,8 @@ static int init_base_units(AVCodecContex
+                                                   &data_size, data);
+     if (ret != VK_SUCCESS) {
+         av_log(avctx, AV_LOG_ERROR, "Error writing feedback units\n");
+-        return err;
++        err = AVERROR_EXTERNAL;
++        goto end;
+     }
+ 
+     av_log(avctx, AV_LOG_VERBOSE, "Feedback units written, overrides: %i (SPS: %i PPS: %i)\n",
+@@ -1168,22 +1169,23 @@ static int init_base_units(AVCodecContex
+     h264_params_feedback.hasStdPPSOverrides = 1;
+ 
+     /* No need to sync any overrides */
++    err = 0;
+     if (!params_feedback.hasOverrides)
+-        return 0;
++        goto end;
+ 
+     /* Parse back tne units and override */
+     err = parse_feedback_units(avctx, data, data_size,
+                                h264_params_feedback.hasStdSPSOverrides,
+                                h264_params_feedback.hasStdPPSOverrides);
+     if (err < 0)
+-        return err;
++        goto end;
+ 
+     /* Create final session parameters */
+     err = create_session_params(avctx);
+-    if (err < 0)
+-        return err;
+ 
+-    return 0;
++end:
++    av_free(data);
++    return err;
+ }
+ 
+ static int vulkan_encode_h264_add_nal(AVCodecContext *avctx,
+@@ -1561,6 +1563,13 @@ static av_cold int vulkan_encode_h264_in
+ static av_cold int vulkan_encode_h264_close(AVCodecContext *avctx)
+ {
+     VulkanEncodeH264Context *enc = avctx->priv_data;
++
++    ff_cbs_fragment_free(&enc->current_access_unit);
++    ff_cbs_close(&enc->cbs);
++
++    av_freep(&enc->sei_a53cc_data);
++    av_freep(&enc->sei_identifier_string);
++
+     ff_vulkan_encode_uninit(&enc->common);
+     return 0;
+ }
 Index: FFmpeg/libavcodec/vulkan_encode_h265.c
 ===================================================================
 --- FFmpeg.orig/libavcodec/vulkan_encode_h265.c
 +++ FFmpeg/libavcodec/vulkan_encode_h265.c
-@@ -1595,23 +1595,21 @@ static av_cold int vulkan_encode_h265_in
+@@ -1317,7 +1317,7 @@ static int init_base_units(AVCodecContex
+             return AVERROR(ENOMEM);
+     } else {
+         av_log(avctx, AV_LOG_ERROR, "Unable to get feedback for H.265 units = %zu\n", data_size);
+-        return err;
++        return AVERROR_EXTERNAL;
+     }
+ 
+     ret = vk->GetEncodedVideoSessionParametersKHR(s->hwctx->act_dev, &params_info,
+@@ -1325,7 +1325,8 @@ static int init_base_units(AVCodecContex
+                                                   &data_size, data);
+     if (ret != VK_SUCCESS) {
+         av_log(avctx, AV_LOG_ERROR, "Error writing feedback units\n");
+-        return err;
++        err = AVERROR_EXTERNAL;
++        goto end;
+     }
+ 
+     av_log(avctx, AV_LOG_VERBOSE, "Feedback units written, overrides: %i (SPS: %i PPS: %i VPS: %i)\n",
+@@ -1339,22 +1340,23 @@ static int init_base_units(AVCodecContex
+     h265_params_feedback.hasStdPPSOverrides = 1;
+ 
+     /* No need to sync any overrides */
++    err = 0;
+     if (!params_feedback.hasOverrides)
+-        return 0;
++        goto end;
+ 
+     /* Parse back tne units and override */
+     err = parse_feedback_units(avctx, data, data_size,
+                                h265_params_feedback.hasStdSPSOverrides,
+                                h265_params_feedback.hasStdPPSOverrides);
+     if (err < 0)
+-        return err;
++        goto end;
+ 
+     /* Create final session parameters */
+     err = create_session_params(avctx);
+-    if (err < 0)
+-        return err;
+ 
+-    return 0;
++end:
++    av_free(data);
++    return err;
+ }
+ 
+ static int vulkan_encode_h265_add_nal(AVCodecContext *avctx,
+@@ -1595,23 +1597,21 @@ static av_cold int vulkan_encode_h265_in
  
      av_log(avctx, AV_LOG_VERBOSE, "    Capability flags:\n");
      av_log(avctx, AV_LOG_VERBOSE, "        hdr_compliance: %i\n",
@@ -47,6 +359,19 @@ Index: FFmpeg/libavcodec/vulkan_encode_h265.c
  
      av_log(avctx, AV_LOG_VERBOSE, "    Capabilities:\n");
      av_log(avctx, AV_LOG_VERBOSE, "        maxLevelIdc: %i\n",
+@@ -1698,6 +1698,12 @@ static av_cold int vulkan_encode_h265_in
+ static av_cold int vulkan_encode_h265_close(AVCodecContext *avctx)
+ {
+     VulkanEncodeH265Context *enc = avctx->priv_data;
++
++    ff_cbs_fragment_free(&enc->current_access_unit);
++    ff_cbs_close(&enc->cbs);
++
++    av_freep(&enc->sei_a53cc_data);
++
+     ff_vulkan_encode_uninit(&enc->common);
+     return 0;
+ }
 Index: FFmpeg/libavutil/hwcontext_vulkan.c
 ===================================================================
 --- FFmpeg.orig/libavutil/hwcontext_vulkan.c
@@ -119,7 +444,12 @@ Index: FFmpeg/libavutil/hwcontext_vulkan.c
          if (use_ded_mem)
              ded_alloc.image = f->img[img_cnt];
  
-@@ -2854,7 +2871,8 @@ static void try_export_flags(AVHWFramesC
+@@ -2850,11 +2867,12 @@ static void try_export_flags(AVHWFramesC
+     VkPhysicalDeviceImageFormatInfo2 pinfo = {
+         .sType  = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+         .pNext  = !exp ? NULL : &enext,
+-        .format = vk_find_format_entry(hwfc->sw_format)->vkf,
++        .format = hwctx->format[0],
          .type   = VK_IMAGE_TYPE_2D,
          .tiling = hwctx->tiling,
          .usage  = hwctx->usage,

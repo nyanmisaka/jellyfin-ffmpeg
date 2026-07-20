@@ -89,6 +89,7 @@ PKG_CONFIG_PATH=/clang64/ffbuild/lib/pkgconfig ./configure \
     --enable-dxva2 \
     --enable-d3d11va \
     --enable-d3d12va \
+    --enable-mediafoundation \
     --enable-amf \
     --enable-libvpl \
     --enable-ffnvcodec \
