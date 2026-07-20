@@ -1171,7 +1171,7 @@ Index: FFmpeg/libavfilter/d3d11/tonemap.hlsl
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/d3d11/tonemap.hlsl
-@@ -0,0 +1,629 @@
+@@ -0,0 +1,626 @@
 +/*
 + * D3D11 tonemap
 + *
@@ -1628,15 +1628,13 @@ Index: FFmpeg/libavfilter/d3d11/tonemap.hlsl
 +    return mul(dovi_rgb_matrix, yuv) + dovi_ycc2rgb_offset;
 +}
 +
-+float3 dovi_lms2rgb(float3 c)
++float3 dovi_lms2linear_rgb(float3 c)
 +{
 +    c = float3(eotf_st2084_common(c.x),
 +               eotf_st2084_common(c.y),
 +               eotf_st2084_common(c.z));
-+    c = mul(dovi_lms2rgb_matrix, c);
-+    return float3(inverse_eotf_st2084_common(c.x),
-+                  inverse_eotf_st2084_common(c.y),
-+                  inverse_eotf_st2084_common(c.z));
++    c = max(mul(dovi_lms2rgb_matrix, c), float3(0.0, 0.0, 0.0));
++    return c * (ST2084_MAX_LUMINANCE / REFERENCE_WHITE_ALT);
 +}
 +
 +float dovi_poly(float s, float4 coeffs)
@@ -1693,7 +1691,7 @@ Index: FFmpeg/libavfilter/d3d11/tonemap.hlsl
 +    float s = clamp(sig[ch], 0.0, 1.0);
 +
 +    int ci = 0;
-+    if (num > 2) {
++    if (ch == 0 && num > 2) {
 +        [unroll] for (int i = 0; i < 7; i++)
 +            ci += s >= dovi_pivots[po + (i >> 2)][i & 3] ? 1 : 0;
 +    }
@@ -1722,8 +1720,7 @@ Index: FFmpeg/libavfilter/d3d11/tonemap.hlsl
 +    float3 c;
 +    if (APPLY_DOVI_VAL != 0) {
 +        c = dovi_ycc2rgb(yuv);
-+        c = dovi_lms2rgb(c);
-+        c = linearize(c);
++        c = dovi_lms2linear_rgb(c);
 +    } else {
 +        c = yuv2rgb(yuv.x, yuv.y, yuv.z);
 +        c = linearize(c);
