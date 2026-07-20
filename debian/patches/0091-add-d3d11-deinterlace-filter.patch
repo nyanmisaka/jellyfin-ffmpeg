@@ -1192,7 +1192,7 @@ Index: FFmpeg/libavfilter/d3d11_filter.c
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/d3d11_filter.c
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,285 @@
 +/*
 + * Common D3D11 filter helpers
 + *
@@ -1256,7 +1256,8 @@ Index: FFmpeg/libavfilter/d3d11_filter.c
 +    HRESULT hr;
 +
 +    hr = compile(source, strlen(source), NULL, macros, NULL, entry, target,
-+                 D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &cs_blob, &err_blob);
++                 D3DCOMPILE_OPTIMIZATION_LEVEL3 |
++                 D3DCOMPILE_IEEE_STRICTNESS, 0, &cs_blob, &err_blob);
 +    if (FAILED(hr)) {
 +        if (err_blob) {
 +            av_log(ctx, AV_LOG_ERROR, "Failed compiling %s shader %s: %.*s\n",
@@ -1481,7 +1482,7 @@ Index: FFmpeg/libavfilter/d3d11_filter.h
 ===================================================================
 --- /dev/null
 +++ FFmpeg/libavfilter/d3d11_filter.h
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,84 @@
 +/*
 + * Common D3D11 filter helpers
 + *
@@ -1511,6 +1512,9 @@ Index: FFmpeg/libavfilter/d3d11_filter.h
 +
 +#ifndef D3DCOMPILE_OPTIMIZATION_LEVEL3
 +#define D3DCOMPILE_OPTIMIZATION_LEVEL3 (1 << 15)
++#endif
++#ifndef D3DCOMPILE_IEEE_STRICTNESS
++#define D3DCOMPILE_IEEE_STRICTNESS (1 << 13)
 +#endif
 +
 +typedef HRESULT (WINAPI *FFD3DCompileProc)(LPCVOID, SIZE_T, LPCSTR,
