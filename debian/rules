@@ -52,6 +52,7 @@ CONFIG := --prefix=${TARGET_DIR} \
 	--enable-libshaderc \
 	--enable-libplacebo \
 	--enable-vulkan \
+	--enable-vulkan-static \
 	--enable-vaapi \
 	--enable-ffnvcodec \
 	--enable-cuda \
