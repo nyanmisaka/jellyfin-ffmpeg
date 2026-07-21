@@ -804,7 +804,17 @@ Index: FFmpeg/libavfilter/vf_yadif_videotoolbox.m
 ===================================================================
 --- FFmpeg.orig/libavfilter/vf_yadif_videotoolbox.m
 +++ FFmpeg/libavfilter/vf_yadif_videotoolbox.m
-@@ -436,7 +436,8 @@ const FFFilter ff_vf_yadif_videotoolbox
+@@ -95,9 +95,6 @@ static void call_kernel(AVFilterContext
+ 
+     [buffer commit];
+     [buffer waitUntilCompleted];
+-
+-    ff_objc_release(&encoder);
+-    ff_objc_release(&buffer);
+ }
+ 
+ static void filter(AVFilterContext *ctx, AVFrame *dst,
+@@ -436,7 +433,8 @@ const FFFilter ff_vf_yadif_videotoolbox
      .p.name         = "yadif_videotoolbox",
      .p.description  = NULL_IF_CONFIG_SMALL("YADIF for VideoToolbox frames using Metal compute"),
      .p.priv_class   = &yadif_videotoolbox_class,
