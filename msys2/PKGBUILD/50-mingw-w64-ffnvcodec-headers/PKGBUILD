@@ -3,7 +3,7 @@
 _realname=ffnvcodec-headers
 pkgbase=mingw-w64-jellyfin-${_realname}
 pkgname="${MINGW_PACKAGE_PREFIX}-jellyfin-${_realname}"
-pkgver=12.0.16.1
+pkgver=13.1.15.0
 pkgrel=1
 pkgdesc='FFmpeg version of headers required to interface with Nvidias codec APIs (mingw-w64)'
 arch=('any')
@@ -11,11 +11,9 @@ mingw_arch=('mingw32' 'mingw64' 'ucrt64' 'clang64' 'clang32' 'clangarm64')
 url=https://github.com/FFmpeg/nv-codec-headers.git
 license=('spdx:MIT')
 makedepends=("git")
-_tag=451da99614412a7f9526ef301a5ee0c7a6f9ad76
-source=("git+https://github.com/FFmpeg/nv-codec-headers.git#tag=${_tag}"
-        "01-Load-nvEncodeAPI-dll-for-native-Windows-ARM64.patch")
-sha256sums=('SKIP'
-            '43c248049c16e207635a9e56a26365b26014d2dc2d7c0e0688aa09ad649208f9')
+_tag=0a6fba9a2820628b8103464f4c8753ee05838baa
+source=("git+https://github.com/FFmpeg/nv-codec-headers.git#tag=${_tag}")
+sha256sums=('SKIP')
 
 export MINGW_TOOLCHAIN_PREFIX="${MINGW_PREFIX}"
 export FF_MINGW_PREFIX="${MINGW_TOOLCHAIN_PREFIX}/ffbuild"
@@ -24,12 +22,6 @@ pkgver() {
   cd nv-codec-headers
 
   git describe --tags | sed 's/^n//'
-}
-
-prepare() {
-  cd nv-codec-headers
-
-  patch -p1 -i "${srcdir}/01-Load-nvEncodeAPI-dll-for-native-Windows-ARM64.patch"
 }
 
 build() {
