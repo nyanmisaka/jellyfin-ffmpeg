@@ -1,0 +1,44 @@
+Index: FFmpeg/libavcodec/vulkan_encode.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vulkan_encode.c
++++ FFmpeg/libavcodec/vulkan_encode.c
+@@ -1052,7 +1052,9 @@ av_cold int ff_vulkan_encode_init(AVCode
+ 
+     /* Create session */
+     session_create.pVideoProfile = &ctx->profile;
+-    session_create.flags = 0x0;
++    /* Allow the implementation to optimize codec parameters for the selected
++     * quality level (e.g. CU size). Matches typical encode-sample usage. */
++    session_create.flags = VK_VIDEO_SESSION_CREATE_ALLOW_ENCODE_PARAMETER_OPTIMIZATIONS_BIT_KHR;
+     session_create.queueFamilyIndex = ctx->qf_enc->idx;
+     session_create.maxCodedExtent = ctx->caps.maxCodedExtent;
+     session_create.maxDpbSlots = ctx->caps.maxDpbSlots;
+Index: FFmpeg/libavcodec/vulkan_encode_h265.c
+===================================================================
+--- FFmpeg.orig/libavcodec/vulkan_encode_h265.c
++++ FFmpeg/libavcodec/vulkan_encode_h265.c
+@@ -793,14 +793,21 @@ static av_cold int init_sequence_headers
+     else if (enc->caps.transformBlockSizes & VK_VIDEO_ENCODE_H265_TRANSFORM_BLOCK_SIZE_4_BIT_KHR)
+         max_tb_size = 4;
+ 
+-    units->raw_sps.log2_min_luma_coding_block_size_minus3 = 0;
+-    units->raw_sps.log2_diff_max_min_luma_coding_block_size = av_log2(max_ctb_size) - 3;
++    /* Prefer 16x16 min CU when the CTB is at least 32; 8x8 min CU is much
++     * more expensive on some implementations for the common quality levels. */
++    if (max_ctb_size >= 32) {
++        units->raw_sps.log2_min_luma_coding_block_size_minus3 = 1;
++        units->raw_sps.log2_diff_max_min_luma_coding_block_size = av_log2(max_ctb_size) - 4;
++    } else {
++        units->raw_sps.log2_min_luma_coding_block_size_minus3 = 0;
++        units->raw_sps.log2_diff_max_min_luma_coding_block_size = av_log2(max_ctb_size) - 3;
++    }
+     units->raw_sps.log2_min_luma_transform_block_size_minus2 = av_log2(min_tb_size) - 2;
+     units->raw_sps.log2_diff_max_min_luma_transform_block_size = av_log2(max_tb_size) - av_log2(min_tb_size);
+ 
+     max_transform_hierarchy = av_log2(max_ctb_size) - av_log2(min_tb_size);
+     units->raw_sps.max_transform_hierarchy_depth_intra = max_transform_hierarchy;
+-    units->raw_sps.max_transform_hierarchy_depth_intra = max_transform_hierarchy;
++    units->raw_sps.max_transform_hierarchy_depth_inter = max_transform_hierarchy;
+ 
+     units->raw_sps.vui.bitstream_restriction_flag = 0;
+     units->raw_sps.vui.max_bytes_per_pic_denom = 2;
