@@ -881,7 +881,7 @@ Index: FFmpeg/fftools/ffprobe_hw.c
 ===================================================================
 --- /dev/null
 +++ FFmpeg/fftools/ffprobe_hw.c
-@@ -0,0 +1,575 @@
+@@ -0,0 +1,569 @@
 +/*
 + * Copyright (C) 2026 NyanMisaka
 + *
@@ -1379,12 +1379,6 @@ Index: FFmpeg/fftools/ffprobe_hw.c
 +        return AVERROR(EINVAL);
 +
 +#if CONFIG_VIDEOTOOLBOX
-+    if (hwaccel_device && hwaccel_device[0] && strcmp(hwaccel_device, "0"))
-+        av_log(NULL, AV_LOG_WARNING,
-+               "VideoToolbox device selection is unsupported; "
-+               "ignoring '%s'.\n",
-+               hwaccel_device);
-+
 +    mark_section_show_entries(SECTION_ID_HWACCEL_DEVICE, 1, NULL);
 +    avtext_print_section_header(tfc, NULL, SECTION_ID_HWACCEL_DEVICE);
 +
