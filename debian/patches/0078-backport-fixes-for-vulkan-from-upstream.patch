@@ -350,52 +350,6 @@ Index: FFmpeg/libavcodec/vulkan_encode_av1.c
      seq_obu->header.obu_type = AV1_OBU_SEQUENCE_HEADER;
      *seq = (AV1RawSequenceHeader) {
          .seq_profile = avctx->profile,
-@@ -1023,7 +1023,7 @@ static int init_base_units(AVCodecContex
-     } else {
-         av_log(avctx, AV_LOG_ERROR, "Unable to get feedback for AV1 sequence header = %zu\n",
-                data_size);
--        return err;
-+        return AVERROR_EXTERNAL;
-     }
- 
-     ret = vk->GetEncodedVideoSessionParametersKHR(s->hwctx->act_dev, &params_info,
-@@ -1031,7 +1031,8 @@ static int init_base_units(AVCodecContex
-                                                   &data_size, data);
-     if (ret != VK_SUCCESS) {
-         av_log(avctx, AV_LOG_ERROR, "Error writing feedback units\n");
--        return err;
-+        err = AVERROR_EXTERNAL;
-+        goto end;
-     }
- 
-     av_log(avctx, AV_LOG_VERBOSE, "Feedback units written, overrides: %i\n",
-@@ -1040,20 +1041,21 @@ static int init_base_units(AVCodecContex
-     params_feedback.hasOverrides = 1;
- 
-     /* No need to sync any overrides */
-+    err = 0;
-     if (!params_feedback.hasOverrides)
--        return 0;
-+        goto end;
- 
-     /* Parse back tne units and override */
-     err = parse_feedback_units(avctx, data, data_size);
-     if (err < 0)
--        return err;
-+        goto end;
- 
-     /* Create final session parameters */
-     err = create_session_params(avctx);
--    if (err < 0)
--        return err;
- 
--    return 0;
-+end:
-+    av_free(data);
-+    return err;
- }
- 
- static int vulkan_encode_av1_add_obu(AVCodecContext *avctx,
 @@ -1229,6 +1231,8 @@ static av_cold int vulkan_encode_av1_ini
  
      if (avctx->profile == AV_PROFILE_UNKNOWN)
@@ -452,54 +406,6 @@ Index: FFmpeg/libavcodec/vulkan_encode_h264.c
  
      return 0;
  }
-@@ -1148,7 +1152,7 @@ static int init_base_units(AVCodecContex
-             return AVERROR(ENOMEM);
-     } else {
-         av_log(avctx, AV_LOG_ERROR, "Unable to get feedback for H.264 units = %zu\n", data_size);
--        return err;
-+        return AVERROR_EXTERNAL;
-     }
- 
-     ret = vk->GetEncodedVideoSessionParametersKHR(s->hwctx->act_dev, &params_info,
-@@ -1156,7 +1160,8 @@ static int init_base_units(AVCodecContex
-                                                   &data_size, data);
-     if (ret != VK_SUCCESS) {
-         av_log(avctx, AV_LOG_ERROR, "Error writing feedback units\n");
--        return err;
-+        err = AVERROR_EXTERNAL;
-+        goto end;
-     }
- 
-     av_log(avctx, AV_LOG_VERBOSE, "Feedback units written, overrides: %i (SPS: %i PPS: %i)\n",
-@@ -1168,22 +1173,23 @@ static int init_base_units(AVCodecContex
-     h264_params_feedback.hasStdPPSOverrides = 1;
- 
-     /* No need to sync any overrides */
-+    err = 0;
-     if (!params_feedback.hasOverrides)
--        return 0;
-+        goto end;
- 
-     /* Parse back tne units and override */
-     err = parse_feedback_units(avctx, data, data_size,
-                                h264_params_feedback.hasStdSPSOverrides,
-                                h264_params_feedback.hasStdPPSOverrides);
-     if (err < 0)
--        return err;
-+        goto end;
- 
-     /* Create final session parameters */
-     err = create_session_params(avctx);
--    if (err < 0)
--        return err;
- 
--    return 0;
-+end:
-+    av_free(data);
-+    return err;
- }
- 
- static int vulkan_encode_h264_add_nal(AVCodecContext *avctx,
 @@ -1474,6 +1480,12 @@ static av_cold int vulkan_encode_h264_in
          return err;
  
@@ -586,54 +492,6 @@ Index: FFmpeg/libavcodec/vulkan_encode_h265.c
                  enc->units.raw_sps.max_transform_hierarchy_depth_inter = sps->max_transform_hierarchy_depth_inter;
                  enc->units.raw_sps.max_transform_hierarchy_depth_intra = sps->max_transform_hierarchy_depth_intra;
              }
-@@ -1317,7 +1336,7 @@ static int init_base_units(AVCodecContex
-             return AVERROR(ENOMEM);
-     } else {
-         av_log(avctx, AV_LOG_ERROR, "Unable to get feedback for H.265 units = %zu\n", data_size);
--        return err;
-+        return AVERROR_EXTERNAL;
-     }
- 
-     ret = vk->GetEncodedVideoSessionParametersKHR(s->hwctx->act_dev, &params_info,
-@@ -1325,7 +1344,8 @@ static int init_base_units(AVCodecContex
-                                                   &data_size, data);
-     if (ret != VK_SUCCESS) {
-         av_log(avctx, AV_LOG_ERROR, "Error writing feedback units\n");
--        return err;
-+        err = AVERROR_EXTERNAL;
-+        goto end;
-     }
- 
-     av_log(avctx, AV_LOG_VERBOSE, "Feedback units written, overrides: %i (SPS: %i PPS: %i VPS: %i)\n",
-@@ -1339,22 +1359,23 @@ static int init_base_units(AVCodecContex
-     h265_params_feedback.hasStdPPSOverrides = 1;
- 
-     /* No need to sync any overrides */
-+    err = 0;
-     if (!params_feedback.hasOverrides)
--        return 0;
-+        goto end;
- 
-     /* Parse back tne units and override */
-     err = parse_feedback_units(avctx, data, data_size,
-                                h265_params_feedback.hasStdSPSOverrides,
-                                h265_params_feedback.hasStdPPSOverrides);
-     if (err < 0)
--        return err;
-+        goto end;
- 
-     /* Create final session parameters */
-     err = create_session_params(avctx);
--    if (err < 0)
--        return err;
- 
--    return 0;
-+end:
-+    av_free(data);
-+    return err;
- }
- 
- static int vulkan_encode_h265_add_nal(AVCodecContext *avctx,
 @@ -1595,23 +1616,21 @@ static av_cold int vulkan_encode_h265_in
  
      av_log(avctx, AV_LOG_VERBOSE, "    Capability flags:\n");
